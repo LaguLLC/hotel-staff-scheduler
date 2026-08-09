@@ -1,0 +1,1204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Hotel Staff Scheduler</title>
+<!-- Supabase JS (realtime). If it can't load, the app runs in LOCAL mode. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<style>
+  :root{--brand:#1b2a4a;--line:#dfe4ea;--ok:#0e7c46;--warn:#b8860b;--err:#b30000;--bg:#f4f6f8;}
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:Calibri,Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2d3d;}
+  header{background:var(--brand);color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:fixed;top:0;left:0;right:0;width:100%;z-index:2000;box-shadow:0 2px 6px rgba(0,0,0,.2);}
+  body{padding-top:64px;}
+  header h1{font-size:18px;margin:0;}
+  .ver{opacity:.7;font-size:12px;}
+  .tag{margin-left:auto;display:flex;gap:8px;align-items:center;}
+  button{font-family:inherit;cursor:pointer;border:1px solid var(--line);background:#fff;border-radius:6px;padding:5px 10px;font-size:13px;}
+  button.brand{background:#2c9e5f;color:#fff;border-color:#2c9e5f;}
+  button.ghostw{background:transparent;color:#fff;border-color:rgba(255,255,255,.5);}
+  .deptbtn{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;}
+  .deptbtn.active{background:#fff;color:var(--brand);font-weight:700;}
+  .wrap{max-width:1500px;margin:0 auto;padding:14px 16px 60px;}
+  .card{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-bottom:14px;}
+  h2{font-size:15px;margin:0 0 8px;}
+  table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;table-layout:fixed;}
+  col.dayc{width:92px;} col.namec{width:200px;} col.hrc{width:70px;} col.costc{width:80px;}
+  @media(max-width:820px){ col.namec{width:130px;} col.dayc{width:64px;} body{font-size:12px;} }
+  th,td{border-right:1px solid var(--line);border-bottom:1px solid var(--line);padding:3px 5px;text-align:center;vertical-align:middle;}
+  tr:first-child th,tr:first-child td{border-top:1px solid var(--line);}
+  th:first-child,td:first-child{border-left:1px solid var(--line);}
+  #grid tr td:last-child,#grid tr th:last-child{border-right:1px solid var(--line);}
+  thead th{background:#eef2f6;position:sticky;position:-webkit-sticky;top:0;z-index:20;}
+  /* sticky first column = staff names AND the role label (single-column cells stick reliably) */
+  #grid td:first-child,#grid th:first-child{position:sticky;left:0;z-index:15;background:#fff;}
+  #grid thead th:first-child{z-index:25;background:#eef2f6;}
+  #grid td.rolelabel{position:sticky;left:0;z-index:16;background:#f0f3f6;text-align:left;font-weight:700;color:var(--brand);white-space:nowrap;}
+  #grid td.rolerest{background:#f0f3f6;text-align:left;font-weight:700;color:var(--brand);box-shadow:inset 0 -1px 0 var(--line);}
+  #grid tbody td.name{background:#fff;}
+  #grid tbody tr.wktotal td{font-weight:700;border-bottom:1px solid var(--line);}
+  #grid tbody tr.wktotal td.name{background:#eef2f6!important;}
+
+  td.name{text-align:left;white-space:normal;overflow-wrap:anywhere;min-width:150px;font-weight:600;}
+  td.demand{background:#fafbfc;font-weight:600;line-height:1.3;padding:10px 8px;white-space:normal;height:auto;vertical-align:middle;}
+  #grid tbody td{position:relative;}
+
+  #demandBody td:not(.demand){text-align:center;}
+  #demandBody th{background:#eef2f6;}
+  #demandBody thead th,#demandBody tr:first-child th{position:static;}
+  #demandBody td.demand{padding:12px 10px;line-height:1.25;white-space:normal;overflow-wrap:normal;}
+  #demandBody td{padding-top:8px;padding-bottom:8px;}
+  #demandBody table td:first-child,#demandBody table th:first-child{position:sticky;left:0;z-index:5;}
+  #demandBody table td.demand:first-child{background:#fafbfc;}
+  #demandBody table th:first-child{background:#eef2f6;}
+  #demandBody table{table-layout:fixed;width:100%;min-width:720px;}
+  #demandBody .tblwrap{overflow:auto;max-height:none;position:relative;}
+  #demandBody td:not(.demand) *{text-align:center;margin:0 auto;}
+
+  select.cell,input.cell{width:100%;border:1px solid transparent;background:transparent;font:inherit;text-align:center;border-radius:4px;padding:2px;}
+  select.cell:hover,input.cell:hover{border-color:var(--line);}
+  .off{background:#eef0f2;color:#6b7a8d;} /* OFF/R-OFF = grey (rest) */
+  .loa{background:#eef0f2;color:#6b7a8d;} /* LOA = grey (leave) */
+  .leave{background:#eef0f2;color:#6b7a8d;} /* PTO/LWOP/LOA = grey leave */
+  .special{background:#eaf1fb;color:#1b4b8a;} /* OC / TASK FORCE / PROJECT */
+  .work{background:#fff;}
+  .caution{background:#fff6d6!important;outline:1px solid #e0c060;}
+  .short{background:#fff6e5;}
+  .flagcell{position:relative;outline:2px solid #e0a800;outline-offset:-2px;}
+  input.dayhrs{background:#fff;}
+  #demandBody input[type=number]::-webkit-inner-spin-button,#demandBody input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+  #demandBody input[type=number]{-moz-appearance:textfield;text-align:center!important}
+  #demandBody td{text-align:center!important}
+  .cellbtn{display:block;min-height:18px;cursor:pointer;padding:2px;border-radius:4px;}
+  .cellbtn:hover{background:#eef4fd;}
+  .modalbg{position:fixed;inset:0;background:rgba(0,0,0,.4);display:none;align-items:center;justify-content:center;z-index:9999;}
+  .modal{background:#fff;border-radius:12px;padding:16px 18px;min-width:340px;max-width:440px;box-shadow:0 12px 40px rgba(0,0,0,.3);}
+  .seg{display:flex;gap:6px;align-items:center;margin:4px 0;}
+  .seg input[type=time]{width:120px;border:1px solid var(--line);border-radius:6px;padding:5px;font:inherit;}
+  .seg input{width:120px;border:1px solid var(--line);border-radius:6px;padding:5px;font:inherit;}
+  .mflag{background:#fdf0d0;color:#8a6d00;border-radius:6px;padding:4px 8px;font-size:12px;margin:3px 0;}
+  .mrow{display:flex;flex-wrap:wrap;gap:6px;margin:8px 0;}
+  #smCodes button,#smCodes select{font-family:inherit;font-size:13px;height:30px;box-sizing:border-box;vertical-align:middle;}
+  .cellflag{position:absolute;top:0;right:2px;font-size:10px;color:#b8860b;}
+  .pdmark{position:absolute;top:0;right:0;width:0;height:0;border-top:10px solid #e0a800;border-left:10px solid transparent;}
+  .pill{display:inline-block;border-radius:20px;padding:1px 8px;font-size:11px;font-weight:700;}
+  .pill.ok{background:#e6f4ec;color:var(--ok);}
+  .pill.warn{background:#fbf0d6;color:var(--warn);}
+  .pill.err{background:#fdecec;color:var(--err);}
+  .dot{width:9px;height:9px;border-radius:50%;display:inline-block;}
+  .small{font-size:11.5px;color:#6b7a8d;}
+  th,td{overflow-wrap:anywhere;word-break:break-word;}
+  .pill{white-space:normal;}
+  .flags li{margin:2px 0;}
+  .cfgrow{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin:6px 0;}
+  .sfield{max-width:100%;}
+  input[type=checkbox]{width:15px;height:15px;vertical-align:middle;cursor:pointer;}
+  .cbx{width:16px;height:16px;}
+  #grid input:disabled,#grid select:disabled,#demandBody input:disabled{pointer-events:none;}
+  @media(max-width:820px){ .cfgrow>input.sfield,.cfgrow>input.txt{flex:1 1 100%;min-width:0;} }
+  input.txt{border:1px solid var(--line);border-radius:6px;padding:5px 8px;font:inherit;min-width:240px;}
+  .sfield{border:1px solid var(--line);border-radius:6px;padding:0 7px;height:30px;box-sizing:border-box;font:inherit;background:#fff;vertical-align:middle;}
+  .sfield[type=checkbox]{height:auto;}
+  /* standard: all input/select/button heights consistent */
+  .cfgrow input:not([type=checkbox]),.cfgrow select,.cfgrow button,.mrow input:not([type=checkbox]),.mrow select,.mrow button{height:30px;box-sizing:border-box;vertical-align:middle;}
+  .card>div[style*="overflow"]{border-radius:8px;overflow:hidden;}
+  .card>.tblwrap{border-radius:8px;}
+  #demandBody .tblwrap{overflow:auto;}
+  .tblwrap{border:1px solid var(--line);}
+  .tblwrap>table tr:first-child th,.tblwrap>table tr:first-child td{border-top:none;}
+  .tblwrap>table th:first-child,.tblwrap>table td:first-child{border-left:none;}
+  .tblwrap>table tr td:last-child,.tblwrap>table tr th:last-child{border-right:none;}
+  .tblwrap>table tr:last-child td{border-bottom:none;}
+  #settingsBody table input,#settingsBody table select{border:1px solid var(--line)!important;border-radius:6px!important;padding:4px 6px;}
+  .muted{color:#6b7a8d;}
+  .status{font-size:12px;display:flex;align-items:center;gap:6px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏨 Hotel Staff Scheduler</h1><span class="ver" id="ver"></span>
+  <button class="deptbtn active" id="btnFO" onclick="setDept('FO')">Front Office</button>
+  <button class="deptbtn" id="btnHSK" onclick="setDept('HSK')">Housekeeping</button>
+  <button class="deptbtn" id="btnSET" onclick="setView('settings')">Settings</button>
+  <button class="deptbtn" id="btnREAD" onclick="setView('readme')">Readme</button>
+  <div class="tag">
+    <button class="ghostw" onclick="prevWeek()">◀ Prev</button>
+    <span id="weekLabel" style="min-width:150px;text-align:center;font-weight:700"></span>
+    <button class="ghostw" onclick="nextWeek()">Next ▶</button>
+    <span class="status" id="syncStatus"><span class="dot" style="background:#c7d0da"></span>local</span>
+    <button class="ghostw" id="authBtn" onclick="toggleEdit()">🔒 View-only</button>
+  </div>
+</header>
+<div class="wrap">
+
+  <div class="card" id="readmeCard" style="display:none"><h2>How this app works</h2><div class="small" id="readmeBody"></div></div>
+  <div class="card" id="settingsCard" style="display:none"><h2>Settings</h2><div id="settingsBody"></div></div>
+  <div class="card" id="demandCard">
+    <h2 id="demandTitle">Demand & coverage</h2>
+    <div id="demandBody"></div>
+  </div>
+
+  <div class="card">
+    <h2 id="gridTitle">Weekly schedule</h2>
+    <div style="overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px;position:relative"><table id="grid"></table></div>
+    <div class="small" style="margin-top:6px">Cells: type or pick a shift (e.g. <b>14:00-22:30</b>), or a code — <b>OFF</b>, <b>PTO</b>, <b>LWOP</b>, <b>R-OFF</b>, <b>OC</b>. Blank = unassigned.</div>
+  </div>
+
+  <div class="card">
+    <h2>Checks</h2>
+    <ul class="flags" id="flags"></ul>
+  </div>
+
+  <div style="display:none"><input id="supaUrl"><input id="supaKey"><input type="file" id="imp" accept=".json" onchange="importJSON(event)"><div id="cfgNote"></div></div>
+</div>
+<div id="lastEdited" style="position:fixed;left:10px;bottom:8px;font-size:11px;color:#8a94a0;background:rgba(255,255,255,.85);padding:2px 8px;border-radius:6px;z-index:400"></div>
+
+<div class="modalbg" id="shiftModal"><div class="modal">
+  <h2 id="smTitle">Edit shift</h2>
+  <div class="mrow" id="smCodes"></div>
+  <div id="smSegs"></div>
+  <button class="ghost" onclick="addSeg()" style="margin-top:4px">+ Add split segment</button>
+  <div id="smHours" class="small" style="margin-top:6px"></div>
+  <div id="smFlags"></div>
+  <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeShift()">Cancel</button><button class="brand" onclick="saveShift()">Save</button></div>
+</div></div>
+
+<script>
+const APP_VERSION="1.0";
+document.getElementById("ver").textContent="v"+APP_VERSION;
+
+/* ---------- IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
+function uiAlert(msg){return uiDialog(msg,["OK"]).then(()=>{});}
+function uiConfirm(msg){return uiDialog(msg,["Cancel","OK"]).then(b=>b==="OK");}
+function uiPrompt(msg,def){return uiDialog(msg,["Cancel","OK"],true,def||"");}
+function uiDialog(msg,btns,withInput,def){
+  return new Promise(res=>{
+    const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";
+    const inp=withInput?`<input id="uiIn" style="width:100%;margin-top:8px;padding:6px;border:1px solid #ccc;border-radius:6px" value="${(def||"").replace(/"/g,'&quot;')}">`:"";
+    bg.innerHTML=`<div class="modal" style="${btns.length>3?'max-width:640px':''}"><div style="white-space:pre-wrap">${String(msg).replace(/</g,"&lt;")}</div>${inp}<div class="mrow" style="justify-content:flex-end;margin-top:12px">${btns.map(b=>`<button data-b="${b}" class="${b!=='Cancel'?'brand':''}" style="${b==='Cancel'?'color:#8a94a0':''}">${b}</button>`).join("")}</div></div>`;
+    document.body.appendChild(bg);
+    const done=v=>{const val=withInput&&v!=="Cancel"?(bg.querySelector("#uiIn").value):v;bg.remove();res(val);};
+    bg.querySelectorAll("button").forEach(b=>b.onclick=()=>done(b.dataset.b));
+    bg.addEventListener("mousedown",e=>{if(e.target===bg)done(withInput?"Cancel":(btns.includes("Cancel")?"Cancel":btns[0]));});
+    if(withInput){const i=bg.querySelector("#uiIn");i.focus();i.select();i.onkeydown=e=>{if(e.key==="Enter")done("OK");if(e.key==="Escape")done("Cancel");};}
+  });
+}
+/* ---------- SHIFT PRESETS & CODES ---------- */
+const CODES=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB","HU","OC","TASK FORCE","PROJECT","GC","LAUNDRY","ROOMS","CONTROLLER"];
+const CODES_COMMON=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB","OC"];
+const CODES_FO=CODES_COMMON.concat(["TASK FORCE","PROJECT"]);
+const CODES_HSK=CODES_COMMON.concat(["GC","LAUNDRY","ROOMS","CONTROLLER","PROJECT"]);
+function codesFor(dept){return dept==="HSK"?CODES_HSK:CODES_FO;}
+const SHIFTS_FO=["07:00-15:30","11:00-19:30","14:00-22:30","22:30-07:00","07:00-15:30","09:00-17:00"];
+const SHIFTS_HSK=["07:00-15:30","08:00-16:30","09:00-17:30","15:00-23:30","22:30-07:00"];
+
+const TYPE_LABEL={FT:"FT",PT:"PT",OC:"On-call",INT:"Intern",OUT:"3rd-party"};
+const HRS_PER_SHIFT=7.5;               // used for hours/cost estimate when a cell is a coded shift
+const DEFAULT_RATE={FT:12.0, PT:11.0, OC:11.0, INT:9.5}; // $/hr placeholders — edit per person in Config
+const OT_AFTER=40, OT_MULT=1.5;
+function rateOf(s){return (s.rate!=null&&s.rate!=="")?(+s.rate):(DEFAULT_RATE[s.type]||11.0);}
+function shiftHours(v){ // parse "14:00-22:30" -> hours; coded shifts -> HRS_PER_SHIFT; OFF/leave -> 0
+  if(!v)return 0; const cls=classify(v); if(cls==="off"||cls==="leave")return 0;
+  const m=v.match(/(\d{1,2}):?(\d{2})?\s*(am|pm)?\s*[-–]\s*(\d{1,2}):?(\d{2})?\s*(am|pm)?/i);
+  if(m){let h1=+m[1]+(m[2]?+m[2]/60:0),h2=+m[4]+(m[5]?+m[5]/60:0);
+    const ap1=(m[3]||"").toLowerCase(),ap2=(m[6]||"").toLowerCase();
+    if(ap1==="pm"&&h1<12)h1+=12; if(ap1==="am"&&h1===12)h1=0;
+    if(ap2==="pm"&&h2<12)h2+=12; if(ap2==="am"&&h2===12)h2=0;
+    let d=h2-h1; if(d<0)d+=24; if(d>0&&d<16)return Math.round(d*2)/2;}
+  return null; // NOT parseable as a time window -> unknown hours (flagged, not silently 7.5)
+}
+/* ---------- SEED DATA (from the affiliate's Aug 2026 sheets) ---------- */
+function seed(){
+ return {
+  meta:{version:APP_VERSION},
+  FO:{
+    label:"Front Office",
+    roles:["Front Desk Supervisor","Front Desk Agents","Concierge Agent","Greeter","Bell Captain","Bell Attendants","Interns"],
+    coverage:{ "Greeter":{min:2,note:"at least 1 downstairs"} },
+    rules:{ ptMin:20, ptMax:32, breakHrs:0 }, /* breakHrs: unpaid break subtracted per shift — VERIFY; 0 = none */
+    staff:[
+      {n:"Prince Tarape",role:"Front Desk Agents",type:"FT"},
+      {n:"Irish Gonzales",role:"Front Desk Agents",type:"FT"},
+      {n:"Ahmylyn Cabrera",role:"Front Desk Agents",type:"FT",trn:true,note:"TTH class 10-13:30; F 09-12",unavailable:{Tue:"class 10-13:30",Thu:"class 10-13:30",Fri:"class 09-12"}},
+      {n:"Jema Rokop",role:"Front Desk Agents",type:"FT",trn:true},
+      {n:"Jackrine Jimmy",role:"Front Desk Agents",type:"PT"},
+      {n:"Sungbin Kang",role:"Front Desk Agents",type:"FT"},
+      {n:"Jessica Basaliza",role:"Front Desk Agents",type:"PT",note:"MW off; req 11-3 mon/wed",off:["Mon","Wed"],prefer:{Mon:"11:00-15:00",Wed:"11:00-15:00"}},
+      {n:"Shane Ricoy",role:"Front Desk Agents",type:"PT",trn:true,note:"M-Th 3PM; S-Sun AM/night",prefer:{Mon:"15:00-",Tue:"15:00-",Wed:"15:00-",Thu:"15:00-"}},
+      {n:"Aira Calilung",role:"Front Desk Agents",type:"OC"},
+      {n:"Kimberly German",role:"Front Desk Agents",type:"OC"},
+      {n:"Clarence Dimalanta",role:"Front Desk Agents",type:"PT"},
+      {n:"Marin Cruz",role:"Concierge Agent",type:"PT"},
+      {n:"Bella Millonzi",role:"Greeter",type:"PT",trn:true},
+      {n:"Jada (Abi) Deem-Hinson",role:"Greeter",type:"PT",trn:true},
+      {n:"Mc Lester Camara",role:"Bell Captain",type:"FT"},
+      {n:"Mark Angelo Mendoza",role:"Bell Attendants",type:"OC"},
+      {n:"Haeun Song (Emily)",role:"Interns",type:"INT"},
+      {n:"Eunju Sin (Sarah)",role:"Interns",type:"INT"},
+      {n:"Youjung Kim (Stella)",role:"Interns",type:"INT",note:"no GY 2 wks + 1 weekend off",noGY:true,needWeekendOff:true},
+      {n:"Jiwon Choi (Joy)",role:"Interns",type:"INT"},
+      {n:"Thanh Nhan Pham",role:"Interns",type:"INT"}
+    ]
+  },
+  HSK:{
+    label:"Housekeeping",
+    roles:["Managers","Supervisors","Public Area","Specialist","Room Controller","Room Attendants","PM Turndown RA","AM Houseman","PM Houseman","Laundry/Uniform","Graveyard PA","Relievers (on-call)","Outsourced \u2014 JJ Global","Outsourced \u2014 J4 Janitorial","Outsourced \u2014 Chutter"],
+    coverage:{},
+    rules:{ creditsPerRA:14, roomsTotal:421, creditMult:1.14, arrivalsPerSup:25, breakHrs:0 }, /* from the HSK sheet formulas: credits=(rooms-deductions)*1.14; RAs=credits/14; sups=arrivals/25 */
+    // demand entered per week (rooms math) — seeded blank; user fills occupancy/arr/dep or credits
+    staff:[
+      {n:"Elsa Aguilo",role:"Supervisors",type:"FT"},
+      {n:"Ma.Seline Senior",role:"Supervisors",type:"FT"},
+      {n:"Jade Soram",role:"Supervisors",type:"FT"},
+      {n:"Julie Serrano",role:"Supervisors",type:"FT"},
+      {n:"Maria Teresa Ibanez",role:"Supervisors",type:"FT"},
+      {n:"Daisy Anne Nalicat",role:"Supervisors",type:"FT"},
+      {n:"Nemia Zapanta",role:"Supervisors",type:"FT",note:"Proj/Training"},
+      {n:"Florencia (Au) Orino",role:"Supervisors",type:"FT"},
+      {n:"Ros Calma",role:"Supervisors",type:"FT",note:"PM"},
+      {n:"Flory Unas",role:"Public Area",type:"FT",note:"GY"},
+      {n:"Ulisses De Guzman",role:"Public Area",type:"FT",note:"AM"},
+      {n:"Dante Vergara",role:"Public Area",type:"FT",note:"PM"},
+      {n:"Marcelo",role:"Public Area",type:"FT"},
+      {n:"Jacob Verhoeff",role:"Specialist",type:"FT",note:"GY"},
+      {n:"Maricel Carbon",role:"Room Controller",type:"FT"},
+      {n:"Ma. Lourdes Gueco",role:"Room Controller",type:"FT"},
+      {n:"Kathy Javier",role:"Room Controller",type:"FT"},
+      {n:"Wilma Mendoza",role:"Room Attendants",type:"FT"},
+      {n:"Jocelyn Lumanlan",role:"Room Attendants",type:"FT"},
+      {n:"Meslynn Valentine",role:"Room Attendants",type:"FT"},
+      {n:"Kercy Mikey",role:"Room Attendants",type:"FT"},
+      {n:"Myline Sahagun",role:"Room Attendants",type:"FT"},
+      {n:"Arleen Lazarus",role:"Room Attendants",type:"FT"},
+      {n:"Marietta Escoto",role:"Room Attendants",type:"FT"},
+      {n:"Suhlinda Wapol",role:"Room Attendants",type:"FT"},
+      {n:"Myrna Villacorta",role:"Room Attendants",type:"PT"},
+      {n:"Lillyjean Deleon",role:"Room Attendants",type:"FT"},
+      {n:"Magnonia Jacinto",role:"Room Attendants",type:"FT"},
+      {n:"Monica Santos",role:"Room Attendants",type:"FT"},
+      {n:"Jenny Sos",role:"Room Attendants",type:"FT"},
+      {n:"Blesilda Carlos",role:"Room Attendants",type:"FT"},
+      {n:"Sosariy Gideon",role:"Room Attendants",type:"FT"},
+      {n:"Jojo Roces",role:"PM Turndown RA",type:"FT"},
+      {n:"Generose dela Cruz",role:"PM Turndown RA",type:"FT"},
+      {n:"Donna Mojica",role:"PM Turndown RA",type:"FT"},
+      {n:"Teria Naputi",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Lorien Stephen",role:"Relievers (on-call)",type:"OC",oncall:true,note:"10:AM"},
+      {n:"Daralynn William",role:"Relievers (on-call)",type:"OC",oncall:true,note:"10:AM"},
+      {n:"Tamperina Jacinto",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Kelly Jacinto",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Carolina Calilung",role:"Relievers (on-call)",type:"PT",oncall:true},
+      {n:"Marian Lacsina",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Kayleen Ruda",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Ernoleen Welter",role:"Relievers (on-call)",type:"OC",oncall:true},
+      {n:"Marlon Nabua",role:"Outsourced \u2014 JJ Global",type:"OUT",oncall:true,note:"Supervisor"},
+      {n:"Clouie Manarang",role:"Outsourced \u2014 JJ Global",type:"OUT",oncall:true,note:"Supervisor"},
+      {n:"Suferina Kinoch",role:"Outsourced \u2014 JJ Global",type:"OUT",oncall:true},
+      {n:"Mitnin Kimiuo",role:"Outsourced \u2014 JJ Global",type:"OUT",oncall:true},
+      {n:"Alesha Padama",role:"Outsourced \u2014 J4 Janitorial",type:"OUT",oncall:true},
+      {n:"Julieta Hare",role:"Outsourced \u2014 J4 Janitorial",type:"OUT",oncall:true},
+      {n:"Darleen Ruben",role:"Outsourced \u2014 J4 Janitorial",type:"OUT",oncall:true},
+      {n:"Salome Remikio",role:"Outsourced \u2014 J4 Janitorial",type:"OUT",oncall:true}
+    ]
+  }
+ };
+}
+
+/* ---------- STATE ---------- */
+let DB=null, CHAN=null;                    // Supabase client + realtime channel
+let CFG=load("hotel_cfg",seed());
+function migrateAvail(){try{
+  function parseNoteToAvail(note){
+    const out={}; if(!note) return {avail:out,noGY:false};
+    let noGY=/\bno\s*gy\b/i.test(note)||/no\s*graveyard/i.test(note);
+    note.split(/[;,]/).forEach(function(chunk){
+      chunk=chunk.trim(); if(!chunk) return;
+      var dayTok=chunk.match(/^([A-Za-z]{1,4}(?:-[A-Za-z]{1,3})?)/);
+      var days=dayTok?daysFromToken(dayTok[1]):[];
+      if(!days.length) return;
+      var isOff=/\boff\b/i.test(chunk);
+      var tm=chunk.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*[-\u2013]\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+      var reason=chunk.replace(/^[A-Za-z]{1,4}(?:-[A-Za-z]{1,3})?/,"").replace(/\boff\b/i,"").replace(tm?tm[0]:"","").trim();
+      days.forEach(function(d){
+        if(isOff){out[d]={off:true,from:"00:00",to:"23:59",reason:reason||"Off"};}
+        else if(tm){out[d]={off:false,from:to24loose(tm[1]),to:to24loose(tm[2]),reason:reason||""};}
+      });
+    });
+    return {avail:out,noGY:noGY};
+  }
+  ["FO","HSK"].forEach(function(dp){(CFG[dp].staff||[]).forEach(function(st){
+    // legacy structured "unavailable" -> avail
+    if(st.unavailable&&!st._uMig){st.avail=st.avail||{};Object.entries(st.unavailable).forEach(function(e){var d=e[0],txt=e[1];var tm=String(txt).match(/(\d{1,2}(?::\d{2})?)\s*[-\u2013]\s*(\d{1,2}(?::\d{2})?)/);if(tm){var p=function(x){var mm=x.match(/^(\d{1,2})(?::(\d{2}))?$/);var h=+mm[1],mi=mm[2]?+mm[2]:0;if(h<7)h+=12;return String(h).padStart(2,"0")+":"+String(mi).padStart(2,"0");};st.avail[d]={off:false,from:p(tm[1]),to:p(tm[2]),reason:String(txt).replace(tm[0],"").trim()||"Class"};}});st._uMig=true;}
+    // free-text NOTE -> avail (only if not already availability-migrated and note present)
+    if(st.note&&!st._nMig){var r=parseNoteToAvail(st.note);st.avail=st.avail||{};Object.keys(r.avail).forEach(function(d){if(!st.avail[d])st.avail[d]=r.avail[d];});if(r.noGY)st.noGY=true;st._nMig=true;}
+  });});
+  try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+}catch(e){console.warn("avail migration skipped:",e);}};
+if(!CFG.FO.shifts)CFG.FO.shifts=["07:00-15:30","11:00-19:30","14:00-22:30","22:30-07:00"];
+if(!CFG.HSK.shifts||(CFG.HSK.shifts[0]||"").match(/[ap]m/i)||CFG.HSK.shifts.includes("Project"))CFG.HSK.shifts=["07:00-15:30","08:00-16:30","09:00-17:30","15:00-23:30","22:30-07:00"];
+let ASSIGN=load("hotel_assign",{});        // ASSIGN[dept][weekKey][staffName][dayIdx] = "shift or code"
+let DEMAND=load("hotel_demand",{});        // DEMAND[weekKey][dayIdx] = {occ,arr,dep,co,credits}
+let DEPT="FO"; let VIEW="schedule"; let EDIT=false; let EDIT_DEPT=null; let EDITMEM={}; 
+let WEEK_START=mondayOfWeekStartThu(new Date());
+
+function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){try{return MEM[k]?JSON.parse(MEM[k]):d;}catch(_){return d;}}}
+let MEM={};function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}}
+function el(id){return document.getElementById(id);}
+
+/* weeks run Thursday -> Wednesday (matches the hotel sheets) */
+function mondayOfWeekStartThu(d){const x=new Date(d);const dow=x.getDay();/*0 Sun..6 Sat*/const diff=(dow-4+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
+function weekKey(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
+function fmt(d){return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
+function dayDate(i){const d=new Date(WEEK_START);d.setDate(d.getDate()+i);return d;}
+const DOW=["Thu","Fri","Sat","Sun","Mon","Tue","Wed"];
+
+/* ---------- RENDER ---------- */
+function setDept(d){setTimeout(()=>window.scrollTo(0,0),0);if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;updateAuth&&updateAuth();syncNav();render();}
+function setView(v){setTimeout(()=>window.scrollTo(0,0),0);VIEW=(VIEW===v?"schedule":v);syncNav();render();}
+function syncNav(){const hv=CFG.hideForViewers&&!EDIT;if(el("btnSET"))el("btnSET").style.display=hv?"none":"";if(el("btnREAD"))el("btnREAD").style.display=hv?"none":"";el("btnFO").classList.toggle("active",VIEW==="schedule"&&DEPT==="FO");el("btnHSK").classList.toggle("active",VIEW==="schedule"&&DEPT==="HSK");if(el("btnSET"))el("btnSET").classList.toggle("active",VIEW==="settings");if(el("btnREAD"))el("btnREAD").classList.toggle("active",VIEW==="readme");}
+function prevWeek(){WEEK_START.setDate(WEEK_START.getDate()-7);render();}
+function nextWeek(){WEEK_START.setDate(WEEK_START.getDate()+7);render();}
+
+let LOCKS=load("hotel_locks",{});   // LOCKS[dept][week]=true (manually locked)
+function weekIsPast(){const end=dayDate(6);const today=new Date();today.setHours(0,0,0,0);return end<today;}
+function weekLocked(){const wk=weekKey(WEEK_START);const lk=(LOCKS[DEPT]||{})[wk];if(lk==="override")return false;return weekIsPast()||!!lk;}
+async function toggleLock(){const wk=weekKey(WEEK_START);
+  if(weekIsPast()){ const lk=(LOCKS[DEPT]||{})[wk];
+    if(lk==="override"){LOCKS[DEPT][wk]=true;save("hotel_locks",LOCKS);render();return;}
+    if(!(await uiConfirm("This is a PAST week (historical record). Unlock it for editing?\n\nEditing history should be deliberate.")))return;
+    LOCKS[DEPT]=LOCKS[DEPT]||{};LOCKS[DEPT][wk]="override";save("hotel_locks",LOCKS);render();return; }
+  LOCKS[DEPT]=LOCKS[DEPT]||{};LOCKS[DEPT][wk]=!LOCKS[DEPT][wk];save("hotel_locks",LOCKS);render();}
+function curAssign(){const wk=weekKey(WEEK_START);ASSIGN[DEPT]=ASSIGN[DEPT]||{};ASSIGN[DEPT][wk]=ASSIGN[DEPT][wk]||{};return ASSIGN[DEPT][wk];}
+function cellVal(name,day){const a=curAssign()[name];return (a&&a[day]!=null)?a[day]:"";}
+function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[day]+" = "+(val||"(clear)"));/* snapshot handled lazily on boot for weeks that have become past */if(weekLocked()){uiAlert("This week is locked"+(weekIsPast()?" (past week — historical record).":".")+" Unlock to edit.");render();return;}if(!DB){PENDING=true;}const wk=weekKey(WEEK_START);const a=curAssign();a[name]=a[name]||{};if(val==="")delete a[name][day];else a[name][day]=val;save("hotel_assign",ASSIGN);pushCell(DEPT,wk,name,day,val);autoSnap();
+  // reverse-sync: if a leave code was placed, record it as a one-off availDate for that person+date
+  try{const st=CFG[DEPT].staff.find(x=>x.n===name);if(st){const iso=weekKey(dayDate(day));st.availDates=st.availDates||{};const isLeave=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB","HU"].includes((val||"").toUpperCase());const id="D"+iso+"_"+iso;if(isLeave){st.availDates[id]={from:iso,to:iso,part:false,code:val.toUpperCase(),reason:"from schedule"};save("hotel_cfg",CFG);}else if(st.availDates[id]&&st.availDates[id].reason==="from schedule"){delete st.availDates[id];save("hotel_cfg",CFG);}}}catch(e){}
+  render();}
+
+function classify(v){if(!v)return "";let u=v.toUpperCase().trim();u=u.replace(/\u00ae/g,"");if(u==="OFF")return "off";if(u==="OFF R"||u==="OFFR")return "off";if(u==="R-OFF"||u.includes("LOA")||["PTO","LWOP","FMLA","E-LEAVE","BDH","AB"].includes(u))return "leave";if(["OC","TASK FORCE","PROJECT","GC","LAUNDRY","ROOMS","CONTROLLER"].includes(u))return "special";return "work";}
+
+function outsourcedShift(name){const n=(name||"").toLowerCase();
+  if(n.indexOf("erich")>=0)return "09:00-17:00"; if(n.indexOf("kaio")>=0)return "11:00-19:00";
+  if(n.indexOf("nabua")>=0||n.indexOf("manarang")>=0)return "10:00-17:00"; // JJ supervisors (7h)
+  return "10:00-18:00"; /* J4/JJ staff (8h) */ }
+function seedOutsourcedWeek(){ // stamp the constant Thu-Sun pattern (OFF Mon-Wed) for outsourced crews, once per week, only when blank
+  try{const wk=weekKey(WEEK_START);ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
+    (CFG.HSK.staff||[]).forEach(s=>{ if(s.type!=="OUT"||String(s.role).indexOf("Outsourced")!==0)return;
+      const row=ASSIGN.HSK[wk][s.n]; const hasAny=row&&Object.keys(row).length;
+      const LEGACY={"9:AM":"09:00-17:00","11AM":"11:00-19:00","10am-5pm":"10:00-17:00","10am-6pm":"10:00-18:00"};
+      if(hasAny){let ch=false;Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];ch=true;}});if(ch)save("hotel_assign",ASSIGN);return;}
+      ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"}; });
+    save("hotel_assign",ASSIGN);
+  }catch(e){console.warn("outsourced seed skipped",e);} }
+function render(){
+  const sched=(VIEW==="schedule");
+  if(DEPT==="HSK")seedOutsourcedWeek();
+  document.querySelectorAll(".wrap > .card").forEach(c=>{ if(c.id==="readmeCard"||c.id==="settingsCard")return; c.style.display=sched?"block":"none"; });
+  el("readmeCard").style.display=(VIEW==="readme")?"block":"none";
+  el("settingsCard").style.display=(VIEW==="settings")?"block":"none";
+  if(VIEW==="readme"){renderReadme();return;}
+  if(VIEW==="settings"){renderSettings();return;}
+  const dept=CFG[DEPT];
+  el("weekLabel").textContent=fmt(WEEK_START)+" – "+fmt(dayDate(6));
+  el("gridTitle").innerHTML=dept.label+" \u2014 weekly schedule "+(weekLocked()?`<span class="pill err">\ud83d\udd12 LOCKED${weekIsPast()?" (past week)":""}</span>`:``)+(EDIT&&!weekLocked()?` <button class="mini" onclick="optimizeWeek()" style="font-size:11px">\u2728 Auto-fill</button> <button class="mini" onclick="clearScope(&quot;week&quot;)" style="font-size:11px">Clear week</button> <button class="mini" onclick="clearScope(&quot;day&quot;)" style="font-size:11px">Clear a day\u2026</button>`:"");
+  const _skip="";{const lc=el("lastEdited");if(lc)lc.textContent=lastEditedLine();}
+  renderDemand();
+  // build grid
+  let h="<colgroup><col class='namec'>"+Array(7).fill("<col class='dayc'>").join("")+"<col class='hrc'><col class='costc'></colgroup>";
+  h+="<thead><tr><th>Staff</th>";
+  for(let i=0;i<7;i++)h+=`<th>${DOW[i]}<br><span class='small'>${fmt(dayDate(i))}</span></th>`;
+  h+="<th>Hrs</th><th>Cost</th></tr></thead><tbody>";
+  let _outOpen=false;
+  dept.roles.forEach(role=>{
+    const _isOut=role.indexOf("Outsourced")===0;
+    const inRole=dept.staff.filter(s=>s.role===role).filter(s=>s.employed!==false||[0,1,2,3,4,5,6].some(d=>cellVal(s.n,d)));
+    if(!inRole.length)return;
+    if(_isOut&&!_outOpen){_outOpen=true;h+=`<tr><td class="rolelabel" style="cursor:pointer" onclick="CFG._outCollapsed=!CFG._outCollapsed;save('hotel_cfg',CFG);render()">${CFG._outCollapsed?"\u25b6":"\u25bc"} Outsourced crews</td><td class="rolerest" colspan="9"><span class="muted">JJ Global \u00b7 J4 Janitorial \u00b7 Chutter \u2014 click to ${CFG._outCollapsed?"show":"hide"}</span></td></tr>`;}
+    if(_isOut&&CFG._outCollapsed)return;
+    h+=`<tr><td class="rolelabel">${role}</td><td class="rolerest" colspan="9">${dept.coverage[role]?`<span class='pill warn'>need \u2265${dept.coverage[role].min} ${role.toLowerCase()}s${dept.coverage[role].note?" · "+dept.coverage[role].note:""}</span>`:""}</td></tr>`;
+    inRole.forEach(s=>{
+      let wk=0;
+      h+=`<tr><td class="name">${s.n} <span class="small">(${TYPE_LABEL[s.type]||s.type}${s.trn?" · TRN":""})</span>${s.note?`<div class="small">${s.note}</div>`:""}${s.noGY?`<div class="small" style="color:#e0a800">\u26a0 No graveyard</div>`:""}${(DEPT==="HSK"&&(s.role==="Room Attendants"||s.role==="Supervisors"))?`<div class="small"><span class="muted">Floor/zone:</span> ${floorSelect(s.n,EDIT)}</div>`:""}</td>`;
+      let _cum=0;const _brk=(CFG[DEPT].rules&&CFG[DEPT].rules.breakHrs)||0;
+      for(let i=0;i<7;i++){const _ad=actualDay(s.n,i);const _dh=(_ad!=null)?(+_ad):((classify(cellVal(s.n,i))==="work")?(Math.max(0,(shiftHours(cellVal(s.n,i))||0)-_brk)):0);const _pre=_cum;_cum+=_dh;const _cellOT=(_cum>40)&&(_dh>0);
+        const v=cellVal(s.n,i);const cls=classify(v);
+        let mark="",title="";
+        let _avState="",_avLabel="";
+        {const _es=effStaff(s);const _dn=DOW[i];const _iso=weekKey(dayDate(i));
+          let _a=availForDate(_es,_iso)||(_es.avail&&_es.avail[_dn])||(_es.off&&_es.off.includes&&_es.off.includes(_dn)?{off:true}:null);
+          if(_a){ if(_a.off){_avState="off";_avLabel=_a.reason||"Unavailable";} else if(_a.from||_a.to){_avState="part";_avLabel=(_a.from||"00:00")+"\u2013"+(_a.to||"23:59");} }
+          if(!_avState&&_es.noGY){_avState="part";_avLabel="No graveyard";} }
+        if(cls==="work"&&!weekIsPast()){
+          const dn=DOW[i];
+          if(_avState==="off"){mark="\u26a0";title="Unavailable all day"+(_avLabel&&_avLabel!=="Unavailable"?" ("+_avLabel+")":"");}
+          else if(_avState==="part"){ const _pp=_avLabel.split("\u2013"); if(_pp.length===2&&shiftOverlaps(v,_pp[0],_pp[1])){mark="\u26a0";title="Shift overlaps unavailable "+_avLabel;} }
+          if(!mark&&shiftHours(v)==null){mark="?";title="Hours can\u2019t be read \u2014 use a time window like 14:00-22:30";}
+        }
+        const _bg=_cellOT?"#fdecec":(_avState==="off"&&cls!=="work"?"#eef0f2":"");const _avTitle="";h+=`<td class="${mark&&cls==="work"?"caution":cls}${mark?" flagcell":""}${(_avState==="part"&&cls==="work"&&mark)?" flagcell":""}" title="${title}${_avTitle}" style="${_bg?'background:'+_bg:''}"><span class="cellbtn" data-nm="${encodeURIComponent(s.n)}" data-day="${i}"${_avState==="part"?` title="Unavailable ${_avLabel}"`:""}>${v?v.replace(/</g,"&lt;"):(_avState==="off"?`<span class='small' style='color:#8a94a0'>${(_avLabel&&_avLabel.toUpperCase()!=="UNAVAILABLE"&&_avLabel.toUpperCase()!=="OFF")?esc(_avLabel):"OFF"}</span>`:"<span class='muted'>\u2013</span>")}</span>${(_avState==="part")?`<span class="pdmark" title="Unavailable ${_avLabel}"></span>`:""}${mark?`<span class="cellflag">${mark}</span>`:""}${(cls==="work")?(function(){const _ad=actualDay(s.n,i);const _est=shiftHours(v);const _val=(_ad!=null)?_ad:_est;const _isA=(_ad!=null);const nm=encodeURIComponent(s.n);return `<div class="hrsline" style="margin-top:1px;font-size:10px">`+(EDIT?`<span class="hrsview" data-nm="${nm}" data-day="${i}" style="color:${_isA?'#0e7c46':'#9aa5b1'};cursor:pointer" title="${_isA?'actual':'estimate'} \u2014 click \u270e to enter actual">${_val!=null&&_val!==''?_val+'h':'\u2013'}</span> <span class="hrsedit" data-nm="${nm}" data-day="${i}" style="cursor:pointer;color:#1b4b8a;display:inline-block;transform:scaleX(-1)" title="Edit hours">\u270e</span>`:`<span style="color:${_isA?'#0e7c46':'#9aa5b1'}">${_val!=null&&_val!==''?_val+'h':'\u2013'}</span>`)+`</div>`;})():""}</td>`;
+      }
+      const wk2=personWeek(s);
+      const _ah=actualHrs(s.n);const _proj=wk2.hrs||0;const _isAct=_ah!=null;const _shown=_isAct?_ah:(_proj||"");const _tot=_isAct?_ah:_proj;const _ot=_tot>40;
+      h+=`<td class="small" style="${_ot?'background:#fdecec':''}"><input value="${_shown}" ${EDIT?"":"disabled"} onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected \u2014 type to override'}" placeholder="${_proj||''}" style="width:52px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')};font-weight:${_ot?'700':'400'}">${wk2.unk?` <span class="pill warn" title="Unreadable hours">?</span>`:""}</td><td class="small" title="${wk2.reg}h reg + ${wk2.ot}h OT @ $${rateOf(s)}/h" style="color:#0e7c46">${(+wk2.cost)?"$"+wk2.cost:"\u2014"}</td></tr>`;
+    });
+  });
+  // department weekly totals
+  let tH=0,tC=0; dept.staff.forEach(s=>{const w=personWeek(s);tH+=w.hrs;tC+=+w.cost;});
+  h+=`<tr class="wktotal"><td class="name" style="background:#eef2f6">WEEK TOTAL</td><td colspan="7" style="text-align:right;background:#eef2f6">Hours · Cost \u2192</td><td style="background:#eef2f6">${tH.toFixed(1)}h</td><td style="color:#0e7c46;background:#eef2f6">$${tC.toFixed(2)}</td></tr>`;
+  el("grid").innerHTML=h+"</tbody>"+datalist();
+  el("grid").querySelectorAll(".cellbtn").forEach(b=>b.addEventListener("click",()=>{openShiftEditor(decodeURIComponent(b.dataset.nm),+b.dataset.day);}));
+  el("grid").querySelectorAll(".hrsedit,.hrsview").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();const nm=decodeURIComponent(b.dataset.nm),day=+b.dataset.day;const line=b.closest(".hrsline");const cur=actualDay(nm,day);const _pf=(cur!=null)?cur:(shiftHours(cellVal(nm,day))||"");line.innerHTML=`<input class="dayhrsin" type="number" step="0.5" min="0" max="24" value="${_pf}" placeholder="${shiftHours(cellVal(nm,day))||""}" style="width:44px;text-align:center;font-size:10px" onclick="event.stopPropagation()">`;const inp=line.querySelector("input");inp.focus();try{inp.setSelectionRange(inp.value.length,inp.value.length);}catch(e){}const commit=()=>{let x=inp.value.trim();if(x!==""){let n=parseFloat(x);if(isNaN(n))x="";else{n=Math.max(0,Math.min(24,Math.round(n*10)/10));x=n;}}setActualDay(nm,day,x);};inp.addEventListener("blur",commit);inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")commit();if(ev.key==="Escape"){inp.value="";commit();}});}));
+  renderFlags();
+  el("cfgNote").textContent = DB? "Live sync ON — edits broadcast to everyone on this project." : "Local mode — edits stay on this device until you Connect a Supabase project.";
+}
+
+function datalist(){
+  const base=(CFG[DEPT].shifts&&CFG[DEPT].shifts.length)?CFG[DEPT].shifts:(DEPT==="FO"?SHIFTS_FO:SHIFTS_HSK);const opts=base.concat(codesFor(DEPT));
+  return `<datalist id="opts_${DEPT}">`+[...new Set(opts)].map(o=>`<option value="${o}">`).join("")+`</datalist>`;
+}
+
+function renderDemand(){
+  const wk=weekKey(WEEK_START);DEMAND[wk]=DEMAND[wk]||{};
+  if(DEPT==="HSK"){
+    el("demandTitle").textContent="Room demand → attendants needed";
+    let h=`<table><colgroup><col style="width:160px">`+DOW.map(()=>`<col>`).join("")+`</colgroup><tr><th>Metric</th>`+DOW.map((d,i)=>`<th>${d}</th>`).join("")+`</tr>`;
+    const rows=[["ooo","OOO / OOS rooms"],["house","House-use rooms"],["tol","TOL rooms"],["outsourced","Outsourced rooms"],["credits","Credits <span class='small'>(auto)</span>"],["arr","Arrivals"],["dep","Departures"],["occ","Occupancy %"],["co","Check-outs"]];
+    rows.forEach(([k,lbl])=>{
+      h+=`<tr><td class="demand" style="text-align:left">${lbl}</td>`;
+      for(let i=0;i<7;i++){let v=(DEMAND[wk][i]&&DEMAND[wk][i][k]!=null)?DEMAND[wk][i][k]:((k==="outsourced")?OUTSOURCED_DEFAULT:"");let disp=(v==="")?"":((k==="occ")?Math.round(v*100)+"%":Math.round(v));const _dro=(!EDIT||weekLocked());const _mx=(k==="occ")?"100":((k==="ooo"||k==="house"||k==="tol"||k==="outsourced")?String(CFG.HSK.rules.roomsTotal||421):"99999");const _vv=(k==="occ"&&v!=="")?Math.round(v*100):disp;const _credDisp=(function(){const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};const has=(dd.ooo!=null)||(dd.house!=null)||(dd.tol!=null)||(dd.outsourced!=null);return has?String(Math.round(creditsFor(wk,i))):"\u2013";});h+=`<td>${_dro?`<span class="cell" data-dk="${k}" data-day="${i}" onclick="lockedClick()" style="cursor:pointer;display:inline-block;width:100%;text-align:center;color:#333">${disp!==""?disp:((k==="credits")?_credDisp():"\u2013")}</span>`:`<span style="display:inline-flex;align-items:center;justify-content:center;gap:0"><input class="cell" type="number" min="0" max="${_mx}" step="1" style="width:${k==="occ"?26:40}px;text-align:${k==="occ"?"right":"center"};padding:0" value="${_vv}" placeholder="${(k==='credits'&&v==='')?_credDisp():''}" data-dk="${k}" data-day="${i}" onfocus="if(this.value===''&&this.placeholder&&this.placeholder!=='\u2013'){this.value=this.placeholder;this.select();}">${k==="occ"?"<span class='small' style='color:#333;pointer-events:none'>%</span>":""}</span>`}</td>`;}
+      h+=`</tr>`;
+    });
+    // needed row
+    h+=`<tr><td class="demand" style="text-align:left"><b>RAs needed</b> <span class="small">(÷${CFG.HSK.rules.creditsPerRA||14})</span></td>`;
+    let needTotal=0;
+    for(let i=0;i<7;i++){const need=raNeeded(wk,i);needTotal+=need;h+=`<td class="demand"><b>${need?need:(EDIT?"":"\u2013")}</b></td>`;}
+    h+=`</tr>`;
+    // scheduled row (working RAs)
+    h+=`<tr><td class="demand" style="text-align:left">RAs scheduled</td>`;
+    for(let i=0;i<7;i++){const sch=countWorking("Room Attendants",i);const need=raNeeded(wk,i);const cls=(need&&sch<need)?"short":"";h+=`<td class="${cls}">${sch}</td>`;}
+    h+=`</tr></table>`;
+    el("demandBody").innerHTML='<div class="tblwrap" style="border-radius:8px">'+h+'</div>';
+    el("demandBody").querySelectorAll("input[data-dk]").forEach(inp=>{const _dfn=e=>{
+      const k=e.target.dataset.dk,i=+e.target.dataset.day;DEMAND[wk][i]=DEMAND[wk][i]||{};const val=e.target.value.trim();
+      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);if(ci.tagName==="INPUT")ci.placeholder=_c?Math.round(_c):"";else ci.textContent=_c?Math.round(_c):"\u2013";}}
+    };inp.addEventListener("input",_dfn);inp.addEventListener("keydown",function(e){const all=[...el("demandBody").querySelectorAll("input[data-dk]")];const ix=all.indexOf(e.target);if(e.key==="Enter"){e.preventDefault();if(ix>=0&&ix+1<all.length){all[ix+1].focus();try{all[ix+1].select();}catch(_){}}else{e.target.blur();}}});inp.addEventListener("blur",function(){setTimeout(function(){const a=document.activeElement;const box=el("demandBody");if(!box||!a||!box.contains(a)){render();}},0);});});if(PENDING_DFOCUS){const _q=el("demandBody").querySelector('input[data-dk="'+PENDING_DFOCUS.k+'"][data-day="'+PENDING_DFOCUS.i+'"]');if(_q){_q.focus();try{_q.select();}catch(_e){}}PENDING_DFOCUS=null;}
+  } else {
+    el("demandTitle").textContent="Occupancy & arrivals (reference)";
+    let h=`<table><colgroup><col style="width:160px">`+DOW.map(()=>`<col>`).join("")+`</colgroup><tr><th>Metric</th>`+DOW.map(d=>`<th>${d}</th>`).join("")+`</tr>`;
+    [["occ","Occupancy %"],["arr","Arrivals"],["dep","Departures"]].forEach(([k,lbl])=>{
+      h+=`<tr><td class="demand" style="text-align:left">${lbl}</td>`;
+      for(let i=0;i<7;i++){let v=(DEMAND[wk][i]&&DEMAND[wk][i][k]!=null)?DEMAND[wk][i][k]:"";let disp=(v==="")?"":((k==="occ")?Math.round(v*100)+"%":Math.round(v));const _dro=(!EDIT||weekLocked());const _mx=(k==="occ")?"100":((k==="ooo"||k==="house"||k==="tol"||k==="outsourced")?String(CFG.HSK.rules.roomsTotal||421):"99999");const _vv=(k==="occ"&&v!=="")?Math.round(v*100):disp;h+=`<td>${_dro?`<span class="cell" data-dk="${k}" data-day="${i}" onclick="lockedClick()" style="cursor:pointer;display:inline-block;width:100%;text-align:center;color:#333">${disp!==""?disp:((k==="credits")?(function(){const d=(DEMAND[wk]&&DEMAND[wk][i])||{};const has=(d.ooo!=null)||(d.house!=null)||(d.tol!=null)||(d.outsourced!=null);return has?Math.round(creditsFor(wk,i)):"\u2013";})():"\u2013")}</span>`:`<span style="display:inline-flex;align-items:center;justify-content:center;gap:0"><input class="cell" type="number" min="0" max="${_mx}" step="1" style="width:${k==="occ"?26:40}px;text-align:${k==="occ"?"right":"center"};padding:0" value="${_vv}" placeholder="${(k==='credits'&&v==='')?(function(){const _c=creditsFor(wk,i);return _c?Math.round(_c):'';})():''}" data-dk="${k}" data-day="${i}" onfocus="if(this.value===''&&this.placeholder){this.value=this.placeholder;this.select();}">${k==="occ"?"<span class='small' style='color:#333;pointer-events:none'>%</span>":""}</span>`}</td>`;}
+      h+=`</tr>`;
+    });
+    h+=`</table>`;el("demandBody").innerHTML='<div class="tblwrap" style="border-radius:8px">'+h+'</div>';
+    el("demandBody").querySelectorAll("input[data-dk]").forEach(inp=>{const _dfn=e=>{
+      const k=e.target.dataset.dk,i=+e.target.dataset.day;DEMAND[wk][i]=DEMAND[wk][i]||{};const val=e.target.value.trim();
+      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);if(ci.tagName==="INPUT")ci.placeholder=_c?Math.round(_c):"";else ci.textContent=_c?Math.round(_c):"\u2013";}}
+    };inp.addEventListener("input",_dfn);inp.addEventListener("keydown",function(e){const all=[...el("demandBody").querySelectorAll("input[data-dk]")];const ix=all.indexOf(e.target);if(e.key==="Enter"){e.preventDefault();if(ix>=0&&ix+1<all.length){all[ix+1].focus();try{all[ix+1].select();}catch(_){}}else{e.target.blur();}}});inp.addEventListener("blur",function(){setTimeout(function(){const a=document.activeElement;const box=el("demandBody");if(!box||!a||!box.contains(a)){render();}},0);});});if(PENDING_DFOCUS){const _q=el("demandBody").querySelector('input[data-dk="'+PENDING_DFOCUS.k+'"][data-day="'+PENDING_DFOCUS.i+'"]');if(_q){_q.focus();try{_q.select();}catch(_e){}}PENDING_DFOCUS=null;}
+  }
+}
+
+const OUTSOURCED_DEFAULT=50; /* JJ+J4 crews clean a constant ~50 rooms/day (Thu-Sun) across every sheet */
+function creditsFor(wk,i){const R=CFG.HSK.rules;const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if(d.credits!=null)return d.credits;const hasAny=(d.ooo!=null)||(d.house!=null)||(d.tol!=null)||(d.outsourced!=null);if(!hasAny)return 0;const ooo=d.ooo||0,house=d.house||0,tol=d.tol||0,out=(d.outsourced!=null?d.outsourced:OUTSOURCED_DEFAULT);const net=R.roomsTotal-ooo-house-tol-out;return Math.max(0,net)*R.creditMult;}
+function raNeeded(wk,i){const R=CFG.HSK.rules;const d=(DEMAND[wk]&&DEMAND[wk][i])||{};let credits=d.credits;
+  if(credits==null){ // need occupancy OR credits; if neither entered -> 0 (don't assume full house)
+    if(d.occ==null)return 0;
+    const occ=d.occ>1?d.occ/100:d.occ; const deducted=R.roomsTotal*occ;
+    credits=Math.max(0,deducted)*R.creditMult;
+  }
+  if(credits==null||isNaN(credits))return 0;
+  return Math.ceil(credits/R.creditsPerRA);
+}
+function supsNeeded(wk,i){const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if(d.arr==null)return 0;return Math.ceil(d.arr/CFG.HSK.rules.arrivalsPerSup);}
+function countWorking(role,day){const dept=CFG[DEPT];return dept.staff.filter(s=>s.role===role&&classify(cellVal(s.n,day))==="work").length;}
+function personWeek(s){let hrs=0,unk=0,wd=0;const brk=(CFG[DEPT].rules&&CFG[DEPT].rules.breakHrs)||0;for(let i=0;i<7;i++){const v=cellVal(s.n,i);const ad=actualDay(s.n,i);if(ad!=null){hrs+=(+ad);if(classify(v)==="work")wd++;}else if(classify(v)==="work"){wd++;const hh=shiftHours(v);if(hh==null)unk++;else hrs+=Math.max(0,hh-brk);}}hrs=Math.round(hrs*2)/2;const r=rateOf(s);const reg=Math.min(hrs,OT_AFTER),ot=Math.max(0,hrs-OT_AFTER);const cost=(reg*r+ot*r*OT_MULT);return {hrs,unk,reg:Math.round(reg*2)/2,ot:Math.round(ot*2)/2,cost:cost.toFixed(2)};}
+
+/* ---------- CHECKS ---------- */
+function availForDate(person,iso){const d=(person.availDates||{});for(const k in d){const a=d[k];if(!a.from)continue;if(iso<a.from||iso>a.to)continue;
+    if(!a.part)return {off:true,reason:a.reason||a.code};
+    const isFirst=(iso===a.from),isLast=(iso===a.to);
+    if(isFirst&&isLast)return {off:false,from:a.startTime||"00:00",to:a.endTime||"23:59",reason:a.reason||a.code};
+    if(isFirst)return {off:false,from:a.startTime||"00:00",to:"23:59",reason:a.reason||a.code};
+    if(isLast)return {off:false,from:"00:00",to:a.endTime||"23:59",reason:a.reason||a.code};
+    return {off:true,reason:a.reason||a.code}; // middle day
+  } return null;}
+function suggestFor(dept,role,day){const dn=DOW[day];return dept.staff.filter(s=>{if(s.role!==role)return false;if(s.employed===false)return false;const c=classify(cellVal(s.n,day));if(c==="work"||c==="leave"||c==="loa")return false;
+    if(s.avail&&s.avail[dn]&&s.avail[dn].off)return false;
+    const iso=weekKey(dayDate(day));if(s.availDates&&s.availDates[iso]&&s.availDates[iso].off)return false;
+    return true;
+  }).map(s=>s.n);}
+function renderFlags(){
+  const dept=CFG[DEPT];const out=[];const wk=weekKey(WEEK_START);
+  // coverage minima
+  Object.entries(dept.coverage).forEach(([role,rule])=>{
+    for(let i=0;i<7;i++){const have=countWorking(role,i);if(have<rule.min){const cand=suggestFor(dept,role,i);out.push(`<li><span class="pill err">UNDERSTAFFED</span> ${role}: ${have}/${rule.min} on ${DOW[i]}.${cand.length?` <span class="muted">Could assign: ${cand.slice(0,6).join(", ")}${cand.length>6?` <a href="javascript:void(0)" onclick="this.nextSibling.style.display='inline';this.style.display='none';return false" style="color:#1b4b8a">(+${cand.length-6} more)</a><span style="display:none">, ${cand.slice(6).join(", ")}</span>`:""}.</span>`:""}</li>`);}}
+  });
+  // HSK RA coverage
+  if(DEPT==="HSK"){for(let i=0;i<7;i++){const need=raNeeded(wk,i);const have=countWorking("Room Attendants",i);const margin=have-need;
+    if(need&&have<need){const offToday=suggestFor(dept,"Room Attendants",i);out.push(`<li><span class="pill err">UNDERSTAFFED</span> Room Attendants: ${have}/${need} on ${DOW[i]}.${offToday.length?` <span class="muted">Could assign: ${offToday.slice(0,6).join(", ")}${offToday.length>6?` <a href="javascript:void(0)" onclick="this.nextSibling.style.display='inline';this.style.display='none';return false" style="color:#1b4b8a">(+${offToday.length-6} more)</a><span style="display:none">, ${offToday.slice(6).join(", ")}</span>`:""}.</span>`:""}</li>`);}
+    else if(need&&margin<2)out.push(`<li><span class="pill warn">THIN MARGIN</span> Room Attendants: only ${margin} above needed on ${DOW[i]} (&lt;2).</li>`);
+    const sneed=supsNeeded(wk,i);const shave=countWorking("Supervisors",i);if(sneed&&shave<sneed)out.push(`<li><span class="pill err">UNDERSTAFFED</span> Supervisors: ${shave}/${sneed} on ${DOW[i]} (arrivals\u00f725).${(function(){const o=dept.staff.filter(x=>x.role==="Supervisors"&&classify(cellVal(x.n,i))==="off").map(x=>x.n);return o.length?` <span class="muted">Off (could be called): ${o.slice(0,6).join(", ")}.</span>`:"";})()}</li>`);}}
+  // busy-day marker (FO: arrivals/departures >= 100)
+  if(DEPT==="FO"){for(let i=0;i<7;i++){const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if((d.arr>=100)||(d.dep>=100))out.push(`<li><span class="pill warn">BUSY</span> ${DOW[i]}: ${d.arr||0} arr / ${d.dep||0} dep (\u2265100) \u2014 heavy day.</li>`);}}
+  // PT hour caps (FO)
+  if(DEPT==="FO"){/* OT not listed in checks — shown red on the hours cell instead */
+  const {ptMin,ptMax}=dept.rules;dept.staff.filter(s=>s.type==="PT").forEach(s=>{let days=0;for(let i=0;i<7;i++)if(classify(cellVal(s.n,i))==="work")days++;const est=days*7.5; if(est>ptMax)out.push(`<li><span class="pill warn">PT CAP</span> ${s.n}: ~${est}h > ${ptMax}h max.</li>`); if(days>0&&est<ptMin)out.push(`<li><span class="pill warn">PT MIN</span> ${s.n}: ~${est}h < ${ptMin}h min.</li>`);});}
+  // everyone has ≥ required off? (hotel norm: ≥2 R-OFF/OFF per week)
+  /* OFFs norm check removed — too noisy on partial schedules */
+  if(!weekIsPast())dept.staff.forEach(s=>{for(let i=0;i<7;i++){if(classify(cellVal(s.n,i))!=="work")continue;const dn=DOW[i];const av=(s.avail&&s.avail[dn])||(s.off&&s.off.includes(dn)?{off:true}:null);if(av){const sched=cellVal(s.n,i);const clashes=av.off?true:shiftOverlaps(sched,av.from||"00:00",av.to||"23:59");if(clashes){const un=av.off?"all day":`${av.from||"00:00"}\u2013${av.to||"23:59"}`;out.push(`<li><span class="pill warn">CONFLICT</span> ${s.n} is unavailable ${dn} (${un})${av.reason?" \u2014 "+av.reason:""}, but is scheduled ${sched}.</li>`);}}}});
+  dept.staff.forEach(s=>{const w=personWeek(s);if(w.unk)out.push(`<li><span class="pill warn">HOURS?</span> ${s.n}: ${w.unk} day(s) with unreadable hours \u2014 enter a time window (e.g. 14:00-22:30).</li>`);});
+  if(!weekIsPast()){const una=[];for(let i=0;i<7;i++){const list=dept.staff.filter(s=>s.employed!==false&&!s.oncall&&s.role!=="Relievers (on-call)"&&!(s.role||"").startsWith("Outsourced")&&!cellVal(s.n,i)).map(s=>s.n);if(list.length){const _sid="una_"+DEPT+"_"+i;una.push(`<li><span class="pill" style="background:#eef2f6;color:#4a4a4a">UNASSIGNED</span> ${DOW[i]}: ${list.length} \u2014 <span class="muted">${list.slice(0,8).join(", ")}</span>${list.length>8?` <a href="javascript:void(0)" onclick="this.nextSibling.style.display='inline';this.style.display='none';return false" style="color:#1b4b8a">(+${list.length-8} more)</a><span style="display:none" class="muted">, ${list.slice(8).join(", ")}</span>`:""}</li>`);}}if(una.length)out.push(...una);}
+  el("flags").innerHTML=(function(){
+    if(!out.length)return `<li><span class="pill ok">OK</span> No issues for this week.</li>`;
+    const grp={"Understaffed":[],"Overtime":[],"Availability conflicts":[],"Unassigned by day":[],"Data to fix":[],"Other":[]};
+    out.forEach(li=>{ if(li.includes("UNDERSTAFFED")||li.includes("THIN MARGIN"))grp["Understaffed"].push(li);
+      else if(li.includes(">OT<"))grp["Overtime"].push(li);
+      else if(li.includes(">CHECK<")||li.includes(">PT CAP<")||li.includes(">PT MIN<")||li.includes(">OFFs<"))grp["Availability conflicts"].push(li);
+      else if(li.includes(">UNASSIGNED<"))grp["Unassigned by day"].push(li);
+      else if(li.includes(">HOURS?<")||li.includes(">BUSY<"))grp["Data to fix"].push(li);
+      else grp["Other"].push(li); });
+    let html="";Object.keys(grp).forEach(g=>{if(grp[g].length)html+=`<li style="list-style:none;margin-top:6px"><b style="color:#1b2a4a">${g} (${grp[g].length})</b><ul style="margin:2px 0">${grp[g].join("")}</ul></li>`;});
+    return html;
+  })();
+}
+
+/* ---------- REALTIME (Supabase) ----------
+   One row per (dept, week, staff) with a JSON of day->value, upserted on edit.
+   Table: schema below in cfgNote / README. Falls back to localStorage if not connected. */
+let PENDING=false; // true if local edits happened while not live
+function setStatus(txt,color){el("syncStatus").innerHTML=`<span class="dot" style="background:${color}"></span>${txt}${PENDING?" \u2022 <a href='#' onclick='pushPending();return false' style='color:#ffd54f;font-weight:700'>\u2b06 Upload to live</a>":""}`;}
+window.addEventListener("offline",()=>{if(DB)setStatus("unsynced","#e0a800");});
+window.addEventListener("online",async()=>{if(DB){setStatus("live","#2c9e5f");if(PENDING){if(await uiConfirm("You\u2019re back online. Upload the changes you made while offline to the live copy?\n\n(Any newer changes made elsewhere may be overwritten \u2014 review the change log after.)"))pushPending();}}});
+async function pushPending(){ if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return;} 
+  // push every week that has local data for this dept + demand + snapshots
+  for(const dept of ["FO","HSK"]){const wks=ASSIGN[dept]||{};for(const wk of Object.keys(wks)){await pushWeekAll(dept,wk);}}
+  for(const wk of Object.keys(DEMAND)){await pushDemand(wk);}
+  PENDING=false;setStatus("live","#2c9e5f");flashNote("Local changes uploaded to live.");}
+async function maybeUploadOnConnect(){ if(PENDING){ if(await uiConfirm("You have local changes not yet on the live copy. Upload them now?")) await pushPending(); } }
+function connect(){
+  const url=el("supaUrl").value.trim(),key=el("supaKey").value.trim();
+  if(!url||!key){uiAlert("Enter both the Supabase URL and anon key.");return;}
+  if(!window.supabase){uiAlert("Supabase library didn't load (need internet). Running local-only.");return;}
+  try{
+    DB=window.supabase.createClient(url,key);
+    save("hotel_supa",{url,key});
+    subscribe();pullAll();maybeUploadOnConnect();
+    setStatus("live","#2c9e5f");
+    render();
+  }catch(e){uiAlert("Connect failed: "+e.message);DB=null;setStatus("local","#c7d0da");}
+}
+function disconnect(){if(CHAN)DB.removeChannel(CHAN);DB=null;CHAN=null;localStorage.removeItem("hotel_supa");setStatus("local","#c7d0da");render();}
+function subscribe(){
+  if(!DB)return;
+  CHAN=DB.channel("sched")
+    .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{
+      const r=payload.new||payload.old;if(!r)return;
+      ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};
+      ASSIGN[r.dept][r.week][r.staff]=r.days||{};save("hotel_assign",ASSIGN);
+      if(r.dept===DEPT&&r.week===weekKey(WEEK_START))render();
+    })
+    .on("postgres_changes",{event:"*",schema:"public",table:"demand"},payload=>{
+      const r=payload.new||payload.old;if(!r)return;DEMAND[r.week]=r.days||{};save("hotel_demand",DEMAND);
+      if(r.week===weekKey(WEEK_START))render();
+    })
+    .subscribe();
+}
+async function pullAll(){
+  if(!DB)return;
+  const {data:as}=await DB.from("assignments").select("*");
+  (as||[]).forEach(r=>{ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};ASSIGN[r.dept][r.week][r.staff]=r.days||{};});
+  const {data:dm}=await DB.from("demand").select("*");
+  (dm||[]).forEach(r=>{DEMAND[r.week]=r.days||{};});
+  save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);render();
+}
+async function pushCell(dept,wk,name,day,val){
+  if(!DB)return;
+  const days=(ASSIGN[dept][wk][name])||{};
+  await DB.from("assignments").upsert({dept,week:wk,staff:name,days},{onConflict:"dept,week,staff"});
+}
+async function pushDemand(wk){ if(!DB)return; await DB.from("demand").upsert({week:wk,days:DEMAND[wk]||{}},{onConflict:"week"}); }
+
+/* ---------- DATA UTILS ---------- */
+function exportJSON(){const blob={cfg:CFG,assign:ASSIGN,demand:DEMAND};const s=JSON.stringify(blob,null,2);const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([s],{type:"application/json"}));a.download="hotel_schedule_backup.json";a.click();}
+function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const b=JSON.parse(r.result);if(b.cfg)CFG=b.cfg;if(b.assign)ASSIGN=b.assign;if(b.demand)DEMAND=b.demand;save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);render();}catch(err){uiAlert("Bad file: "+err.message);}};r.readAsText(f);}
+
+/* ---------- XLSX EXPORT (approximate the hotel's sheet layout) ---------- */
+function exportXLSX(){
+  if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}
+  const dept=CFG[DEPT];const wb=XLSX.utils.book_new();const aoa=[];
+  aoa.push([dept.label+" Schedule",""].concat(DOW.map((d,i)=>d+" "+fmt(dayDate(i)))));
+  const wk=weekKey(WEEK_START);
+  // demand rows
+  if(DEPT==="HSK"){["occ","arr","dep","co","credits"].forEach(k=>{const lbl={occ:"Occupancy",arr:"Arrivals",dep:"Departures",co:"Check-outs",credits:"Credits"}[k];aoa.push([lbl,""].concat([0,1,2,3,4,5,6].map(i=>((DEMAND[wk]||{})[i]||{})[k]??"")));});
+    aoa.push(["Room Attendants Needed",""].concat([0,1,2,3,4,5,6].map(i=>raNeeded(wk,i)||"")));}
+  else {["occ","arr","dep"].forEach(k=>{const lbl={occ:"Occupancy",arr:"Arrivals",dep:"Departures"}[k];aoa.push([lbl,""].concat([0,1,2,3,4,5,6].map(i=>((DEMAND[wk]||{})[i]||{})[k]??"")));});}
+  aoa.push([]);
+  dept.roles.forEach(role=>{const inR=dept.staff.filter(s=>s.role===role);if(!inR.length)return;
+    aoa.push([role]);
+    inR.forEach(s=>{aoa.push([s.n+" ("+s.type+")",""].concat([0,1,2,3,4,5,6].map(i=>cellVal(s.n,i)||"OFF")));});
+  });
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  XLSX.utils.book_append_sheet(wb,ws,weekKey(WEEK_START));
+  XLSX.writeFile(wb,dept.label.replace(/ /g,"_")+"_"+weekKey(WEEK_START)+".xlsx");
+}
+
+/* ---------- VERSION HISTORY (snapshots of THIS dept+week over time) ---------- */
+let SNAPS=load("hotel_snaps",{});   // SNAPS[dept][week] = [{ts, note, days:{staff:{d:v}}}]
+function autoSnap(){try{const wk=weekKey(WEEK_START);SNAPS[DEPT]=SNAPS[DEPT]||{};const arr=SNAPS[DEPT][wk]=SNAPS[DEPT][wk]||[];const last=arr[0];const now=Date.now();
+  if(last&&last.auto&&(now-new Date(last.ts).getTime())<3600000)return; // at most one auto-version per hour
+  const snap={ts:new Date().toISOString(),note:"auto",auto:true,days:JSON.parse(JSON.stringify(curAssign()))};
+  const prev=last?JSON.stringify(last.days):"";if(prev===JSON.stringify(snap.days))return; // skip if unchanged
+  arr.unshift(snap);SNAPS[DEPT][wk]=arr.slice(0,30);save("hotel_snaps",SNAPS);}catch(e){}}
+async function saveSnapshot(){const wk=weekKey(WEEK_START);const note=(await uiPrompt("Label for this version? (optional)",""))||"";if(note==="Cancel")return;
+  SNAPS[DEPT]=SNAPS[DEPT]||{};SNAPS[DEPT][wk]=SNAPS[DEPT][wk]||[];
+  SNAPS[DEPT][wk].unshift({ts:new Date().toISOString(),note,days:JSON.parse(JSON.stringify(curAssign()))});
+  SNAPS[DEPT][wk]=SNAPS[DEPT][wk].slice(0,30);save("hotel_snaps",SNAPS);pushSnap(DEPT,wk);showHistory();flashNote("Version saved.");}
+function showHistory(){const wk=weekKey(WEEK_START);const list=((SNAPS[DEPT]||{})[wk])||[];
+  const hb=el("historyBox");if(!hb)return;if(!list.length){hb.innerHTML="<i>No saved versions for this week yet. Click ‘Save version’ to snapshot the current schedule.</i>";return;}
+  hb.innerHTML="<b>Versions (this week):</b><br>"+list.map((s,i)=>`• ${new Date(s.ts).toLocaleString()} ${s.note?"— "+esc(s.note):""} <a href="javascript:void(0)" onclick="restoreSnap(${i});return false">restore</a> · <span class="muted">${Object.keys(s.days).length} staff</span>`).join("<br>");}
+async function restoreSnap(i){const wk=weekKey(WEEK_START);const s=((SNAPS[DEPT]||{})[wk]||[])[i];if(!s)return;
+  if(!await uiConfirm("Restore this version? Current schedule for this week will be replaced (a snapshot of the current state is saved first)."))return;
+  saveSnapshot(); // keep the current before overwriting
+  ASSIGN[DEPT][wk]=JSON.parse(JSON.stringify(s.days));save("hotel_assign",ASSIGN);
+  Object.keys(ASSIGN[DEPT][wk]).forEach(nm=>pushCell(DEPT,wk,nm,0,null));render();}
+function esc(x){return String(x).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&":"&amp;"}[c]));}
+function flashNote(m){el("cfgNote").textContent=m+" ("+new Date().toLocaleTimeString()+")";}
+
+/* ---------- OPTIMIZATION SCAFFOLD (auditable auto-fill) ----------
+   Structure for a future real optimizer. Today: a greedy, EXPLAINABLE suggester that
+   fills unstaffed coverage gaps from eligible, available people ranked by fewest weekly hours.
+   Every pick is logged so a human can verify — no black box. */
+function eligibleFor(dept,role,day,name){
+  const s=dept.staff.find(x=>x.n===name);if(!s)return{ok:false,why:"unknown"};
+  if(s.role!==role)return{ok:false,why:"different role"};
+  const cur=cellVal(name,day);if(classify(cur)==="work")return{ok:false,why:"already working"};
+  if(classify(cur)==="leave")return{ok:false,why:"on leave/PTO"};
+  const _dn=DOW[day];if(s.avail&&s.avail[_dn]&&s.avail[_dn].off)return{ok:false,why:"unavailable ("+_dn+")"};
+  const dname=DOW[day];
+  if(s.off&&s.off.includes(dname))return{ok:false,why:"scheduled off ("+dname+")"};
+  if(s.unavailable&&s.unavailable[dname])return{ok:false,why:s.unavailable[dname]};
+  // weekly off norm: don't schedule a 6th working day
+  let work=0;for(let i=0;i<7;i++)if(classify(cellVal(name,i))==="work")work++;
+  if(work>=5)return{ok:false,why:"already 5+ days"};
+  // PT cap (FO)
+  if(DEPT==="FO"&&s.type==="PT"){const est=(work+1)*HRS_PER_SHIFT;if(est>dept.rules.ptMax)return{ok:false,why:"PT cap"};}
+  return {ok:true, hrs:personWeek(s).hrs};
+}
+async function optimizeWeek(){
+  if(!EDIT||weekLocked()){uiAlert("Enter edit mode on an unlocked week to auto-fill.");return;}
+  if(!(await uiConfirm("Auto-fill fills only EMPTY cells for understaffed roles, spreading hours to the least-scheduled eligible staff. Existing entries are untouched. Proceed?")))return;
+  const dept=CFG[DEPT];const wk=weekKey(WEEK_START);const log=[];let filled=0;
+  function need(role,day){ if(dept.coverage[role])return dept.coverage[role].min;
+    if(DEPT==="HSK"&&role==="Room Attendants")return raNeeded(wk,day); return 0; }
+  const defShift=(DEPT==="FO"?SHIFTS_FO[2]:SHIFTS_HSK[2]); // a sensible default working shift
+  dept.roles.forEach(role=>{
+    for(let day=0;day<7;day++){
+      let have=countWorking(role,day);const want=need(role,day);
+      if(!want||have>=want)continue;
+      // rank eligible people by fewest weekly hours (spread the load)
+      const cands=dept.staff.filter(s=>s.role===role).map(s=>({s,e:eligibleFor(dept,role,day,s.n)}))
+        .filter(x=>x.e.ok).sort((a,b)=>a.e.hrs-b.e.hrs);
+      for(const c of cands){ if(have>=want)break; setCellQuiet(c.s.n,day,defShift);have++;filled++;
+        log.push(`${DOW[day]} ${role}: +${c.s.n} (had ${c.e.hrs}h) → ${defShift}`); }
+      if(have<want)log.push(`${DOW[day]} ${role}: still short ${want-have} (no eligible staff)`);
+    }
+  });
+  save("hotel_assign",ASSIGN);pushWeekAll(DEPT,wk);render();
+  uiAlert("Auto-fill placed "+filled+" shift(s). Review before posting.\n\n"+(log.slice(0,20).join("\n")||"Nothing to fill."));
+}
+function setCellQuiet(name,day,val){const a=curAssign();a[name]=a[name]||{};a[name][day]=val;}
+async function pushWeekAll(dept,wk){ if(!DB)return; const a=ASSIGN[dept][wk]||{}; for(const nm of Object.keys(a)){await DB.from("assignments").upsert({dept,week:wk,staff:nm,days:a[nm]},{onConflict:"dept,week,staff"});} }
+async function pushSnap(dept,wk){ if(!DB)return; const list=(SNAPS[dept]||{})[wk]||[]; await DB.from("snapshots").upsert({dept,week:wk,versions:list},{onConflict:"dept,week"}); }
+
+/* ---------- SHIFT EDITOR (split shifts + flag-at-pick) ---------- */
+let SM={name:null,day:null,segs:[],code:""};
+function openShiftEditor(name,day){
+  if(!EDIT){return;}
+  if(weekLocked()){uiAlert("This week is locked.");return;}
+  const cur=cellVal(name,day);SM={name,day,segs:[],code:"",preset:null,offMode:false,hard:[],override:false,overrideReason:""};
+  if(cur&&classify(cur)!=="work"){SM.code=cur.toUpperCase();SM.offMode=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB"].includes(SM.code);}
+  else if(cur){cur.split(/\s*,\s*/).forEach(part=>{const m=part.match(/(\d{1,2}:?\d{0,2}\s*(?:am|pm)?)\s*[-\u2013]\s*(\d{1,2}:?\d{0,2}\s*(?:am|pm)?)/i);if(m)SM.segs.push({a:to24(m[1].trim()),b:to24(m[2].trim())});});}
+  if(!SM.segs.length&&!SM.code)SM.segs.push({a:"",b:""});
+  el("smTitle").textContent=name+" \u2014 "+DOW[day]+" "+fmt(dayDate(day));
+  const _pre=(CFG[DEPT].shifts&&CFG[DEPT].shifts.length)?CFG[DEPT].shifts:(DEPT==="FO"?SHIFTS_FO:SHIFTS_HSK);
+  editorButtonsHTML();
+  drawSegs();el("shiftModal").style.display="flex";
+}
+function shiftOverlaps(shiftStr,uaFrom,uaTo){if(!shiftStr)return false;const uf=hm2min(uaFrom),ut=hm2min(uaTo);if(uf==null||ut==null)return false;let clash=false;String(shiftStr).split(/\s*,\s*/).forEach(seg=>{const m=seg.match(/(\d{1,2}:?\d{0,2}\s*(?:am|pm)?)\s*[-\u2013]\s*(\d{1,2}:?\d{0,2}\s*(?:am|pm)?)/i);if(!m)return;const a=hm2min(to24(m[1])),b=hm2min(to24(m[2]));if(a==null||b==null)return;if(b<=a){ // overnight: split
+    if(a<ut&&1440>uf)clash=true;if(0<ut&&b>uf)clash=true;
+  } else { if(a<ut&&b>uf)clash=true; }});return clash;}
+function hm2min(t){if(!t)return null;const m=String(t).match(/^(\d{1,2}):(\d{2})$/);return m?(+m[1]*60+ +m[2]):null;}
+function to24(t){if(!t)return"";t=String(t).trim();const m=t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/i);if(!m)return/^\d{2}:\d{2}$/.test(t)?t:"";let h=+m[1],mi=m[2]?+m[2]:0;const ap=(m[3]||"").toLowerCase();if(ap==="pm"&&h<12)h+=12;if(ap==="am"&&h===12)h=0;return String(h).padStart(2,"0")+":"+String(mi).padStart(2,"0");}
+function editorButtonsHTML(){const _pre=(CFG[DEPT].shifts&&CFG[DEPT].shifts.length)?CFG[DEPT].shifts:(DEPT==="FO"?SHIFTS_FO:SHIFTS_HSK);
+  const preH=_pre.map(p=>`<button onclick="usePreset('${p}')" style="${SM.preset===p?'background:#1b2a4a;color:#fff':''}">${p}</button>`).join("");
+  const all=codesFor(DEPT);
+  const offCodes=["OFF","R-OFF"].concat(all.filter(c=>["PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB"].includes(c))); // not-working
+  const taskCodes=all.filter(c=>["TASK FORCE","PROJECT","GC","LAUNDRY","ROOMS","CONTROLLER"].includes(c)); // working assignments
+  const hasOC=all.includes("OC");
+  const offActive=SM.offMode||offCodes.includes(SM.code);
+  const offBtn=`<button onclick="offMode()" style="font-size:13px;${offActive?'background:#1b2a4a;color:#fff':''}">Off</button>`;
+  const offSub=offActive?`<select onchange="pickCode(this.value)" style="height:30px;border-radius:6px;border:1px solid var(--line);font-size:13px"><option value="">Type\u2026</option>${offCodes.map(c=>`<option ${SM.code===c?"selected":""}>${c}</option>`).join("")}</select>`:"";
+  const ocBtn=hasOC?`<button onclick="pickCode('OC')" style="font-size:13px;${SM.code==='OC'?'background:#1b2a4a;color:#fff':''}">OC</button>`:"";
+  const taskSel=`<select onchange="pickCode(this.value)" style="height:30px;border-radius:6px;border:1px solid var(--line);font-size:13px"><option value="">Task</option>${taskCodes.map(c=>`<option ${SM.code===c?"selected":""}>${c}</option>`).join("")}</select>`;
+  el("smCodes").innerHTML=`<span class="small" style="width:100%">Presets:</span>`+preH+`<span class="small" style="width:100%;margin-top:4px">Set status / assignment:</span>`+offBtn+" "+offSub+" "+ocBtn+" "+taskSel;}
+function usePreset(p){SM.code="";SM.offMode=false;SM.preset=(SM.preset===p?null:p);if(!SM.preset){SM.segs=[{a:"",b:""}];}else{const m=p.match(/(.+?)\s*[-\u2013]\s*(.+)/);SM.segs=m?[{a:to24(m[1]),b:to24(m[2])}]:[{a:"",b:""}];}drawSegs();editorButtonsHTML();}
+const OFFSET=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB"];
+function offMode(){SM.offMode=true;SM.code="";SM.preset=null;SM.segs=[];drawSegs();editorButtonsHTML();}
+function pickCode(c){SM.code=(SM.code===c?"":c);SM.offMode=OFFSET.includes((c||"").toUpperCase());if(SM.code){SM.segs=[];SM.preset=null;}drawSegs();editorButtonsHTML();}
+function addSeg(){SM.code="";SM.offMode=false;SM.segs.push({a:"",b:""});drawSegs();editorButtonsHTML();}
+function drawSegs(){
+  el("smSegs").innerHTML=SM.code?`<div class="small">Marked <b>${SM.code}</b> (no hours). Add a segment to switch to a working shift.</div>`
+    :SM.segs.map((sg,i)=>`<div class="seg"><input type="time" value="${to24(sg.a)}" onchange="SM.segs[${i}].a=this.value;recalc()"> to <input type="time" value="${to24(sg.b)}" onchange="SM.segs[${i}].b=this.value;recalc()"> <button onclick="SM.segs.splice(${i},1);drawSegs()">\u2715</button></div>`).join("");
+  recalc();
+}
+function recalc(){
+  let hrs=0,bad=false;
+  if(!SM.code)SM.segs.forEach(sg=>{if(sg.a&&sg.b){const hh=shiftHours(sg.a+"-"+sg.b);if(hh==null)bad=true;else hrs+=hh;}});
+  el("smHours").innerHTML=SM.code?"":(bad?"<span style='color:#b30000'>One segment isn\u2019t a readable time window.</span>":`Total: <b>${Math.round(hrs*2)/2} h</b>`);
+  const s=CFG[DEPT].staff.find(x=>x.n===SM.name);const dn=DOW[SM.day];const fl=[];SM.hard=[];
+  if(s&&!SM.code&&!weekIsPast()&&SM.segs.some(sg=>sg.a&&sg.b)){
+    if(s.off&&s.off.includes(dn)){SM.hard.push("Scheduled OFF on "+dn);}
+    if(s.avail&&s.avail[dn]&&s.avail[dn].off){SM.hard.push("Marked unavailable on "+dn+(s.avail[dn].reason?" ("+s.avail[dn].reason+")":""));}
+    if(s.unavailable&&s.unavailable[dn])fl.push("Unavailable: "+s.unavailable[dn]+".");
+    if(DEPT==="FO"&&s.type==="PT"){let d=0;for(let i=0;i<7;i++)if(i!==SM.day&&classify(cellVal(s.n,i))==="work")d++;const est=(d+1)*(hrs||7.5);if(est>CFG.FO.rules.ptMax)fl.push("PT weekly hours ~"+est.toFixed(0)+" would exceed "+CFG.FO.rules.ptMax+".");}
+    if(s.noGY&&SM.segs.some(sg=>{const a=hm2min(sg.a);return a!=null&&(a>=hm2min("22:00")||a<hm2min("06:00"));}))SM.hard.push("Requested NO graveyard shifts (starts overnight)");
+  }
+  const hardHtml=(SM.hard&&SM.hard.length)?`<div class="mflag" style="background:#fdecec;color:#b30000"><b>Blocked:</b> ${SM.hard.join("; ")}.<div style="margin-top:4px"><label><input type="checkbox" id="ovChk" ${SM.override?"checked":""} onchange="SM.override=this.checked;recalc()"> Override with reason:</label> <input id="ovRsn" value="${(SM.overrideReason||"").replace(/"/g,'&quot;')}" oninput="SM.overrideReason=this.value" style="width:60%" placeholder="Reason (required)"></div></div>`:"";
+  el("smFlags").innerHTML=hardHtml+fl.map(f=>`<div class="mflag">\u26a0 ${f}</div>`).join("");
+}
+function saveShift(){
+  let val="";
+  if(SM.code)val=SM.code;
+  else{const parts=SM.segs.filter(sg=>sg.a&&sg.b).map(sg=>sg.a+"-"+sg.b);val=parts.join(", ");}
+  if(SM.hard&&SM.hard.length){
+    if(!SM.override){uiAlert("This assignment is blocked:\n\n"+SM.hard.join("\n")+"\n\nTick \u2018Override with reason\u2019 to proceed.");return;}
+    if(!(SM.overrideReason||"").trim()){uiAlert("An override reason is required.");return;}
+    const st=CFG[DEPT].staff.find(x=>x.n===SM.name);OVERRIDES.push({ts:new Date().toISOString(),dept:DEPT,week:weekKey(WEEK_START),name:SM.name,day:DOW[SM.day],reason:SM.overrideReason.trim(),issue:SM.hard.join("; ")});save("hotel_overrides",OVERRIDES);
+    if(st){st._lastOverride=SM.overrideReason.trim();}
+  }
+  setCell(SM.name,SM.day,val);closeShift();
+}
+function closeShift(){el("shiftModal").style.display="none";}
+document.addEventListener("mousedown",e=>{const sm=el("shiftModal");if(sm&&sm.style.display==="flex"&&e.target===sm)closeShift();const av=el("avModal");if(av&&e.target===av)closeAvail();});
+
+/* ---------- AUTH (view-only vs scheduler) ---------- */
+function lockedClick(){if(EDIT&&weekLocked()){uiAlert("This week is locked. Use the lock button (top-right) to unlock.");}}
+let PENDING_DFOCUS=null;
+document.addEventListener("click",function(ev){if(EDIT)return;const t=ev.target;if(t.closest("header"))return;if(t.closest(".modalbg"))return;if(t.closest("#settingsCard")||t.closest("#readmeCard"))return;if(VIEW!=="schedule")return;const _dc=t.closest?t.closest("#demandBody [data-dk]"):null;if(_dc)PENDING_DFOCUS={k:_dc.getAttribute("data-dk"),i:_dc.getAttribute("data-day")};toggleEdit();},true);
+async function toggleEdit(){
+  if(EDIT){ EDIT=false; // leaving edit mode: re-lock a past week we had overridden
+    const wk=weekKey(WEEK_START); if(weekIsPast()&&(LOCKS[DEPT]||{})[wk]==="override"){LOCKS[DEPT][wk]=true;save("hotel_locks",LOCKS);}
+    CURRENT_USER=null;EDITMEM[EDIT_DEPT]=null;updateAuth(); return; }
+  if(EDITMEM[DEPT]){const mm=EDITMEM[DEPT];EDIT=true;EDIT_DEPT=DEPT;CURRENT_USER=(mm&&mm!==true)?mm:CURRENT_USER;updateAuth();return;}
+  if(SUPA_USER){const ok=supaCanEdit(DEPT);if(!ok){uiAlert(SUPA_USER.email+" does not have edit access to "+CFG[DEPT].label+".");return;}CURRENT_USER={name:SUPA_USER.email,role:SUPA_USER.role};EDIT=true;EDIT_DEPT=DEPT;EDITMEM[DEPT]=CURRENT_USER;updateAuth();return;}
+  const pin=await uiPrompt("Enter your PIN to edit:","");
+  if(pin===null||pin==="Cancel")return;
+  const u=userByPin(pin);
+  if(!u){uiAlert("PIN not recognized.");return;}
+  if(u.role==="viewer"){uiAlert(u.name+" has view-only access.");return;}
+  CURRENT_USER=u;
+
+  if(weekIsPast()){
+    if(!(await uiConfirm("This is a PAST week (historical record). Edit it anyway?\n\nChanges to history should be deliberate.")))return;
+    const wk=weekKey(WEEK_START);LOCKS[DEPT]=LOCKS[DEPT]||{};LOCKS[DEPT][wk]="override";save("hotel_locks",LOCKS);
+  }
+  EDIT=true; EDIT_DEPT=DEPT; EDITMEM[DEPT]=CURRENT_USER||true; updateAuth();
+}
+function updateAuth(){const b=el("authBtn");if(b){b.textContent=EDIT?("🔓 "+(CURRENT_USER?CURRENT_USER.name:"Edit")+(weekIsPast()?" (history)":"")):"🔒 View-only";b.style.background=EDIT?"#2c9e5f":"";}render();}
+
+/* ---------- README TAB ---------- */
+function renderReadme(){
+  el("readmeBody").innerHTML=`
+  <p><b>What it is:</b> One scheduler for Front Office and Housekeeping. Weeks run Thursday\u2013Wednesday. Click a cell to set a shift window (or a split shift) or a code (OFF/LOA/PTO\u2026).</p>
+  <p><b>Editing &amp; roles:</b> The app opens <b>view-only</b>. Click the lock button (top-right), enter the scheduler PIN to edit. <b>Edit mode ends when the page is refreshed or reopened</b> (it returns to view-only); there is no idle timeout yet. Past weeks are a locked historical record \u2014 unlocking one asks for confirmation. A PIN in a static page is a casual gate, not real security; use Supabase Auth for true access control.</p>
+  <p><b>Flags carried over from the Excel sheets:</b> the cell colours are OFF / R-OFF / PTO / LWOP / LOA \u2192 grey (rest/leave); On-call / Task Force / Project \u2192 blue; a typed shift or blank \u2192 white; a shift on an unavailable day \u2192 amber caution (both departments).</p>
+  <p><b>R-OFF vs OFF vs Unavailable</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> The app treats <b>OFF</b> and <b>R-OFF</b> the same (a scheduled non-working rest day, grey), and <b>Unavailable</b> (Availability editor) as a hard constraint that blocks scheduling. In the sheets, FO uses OFF and HSK uses R-OFF for rest days, and only FO records availability constraints (class times, no-GY) as notes \u2014 HSK has none. Whether R-OFF and OFF should differ, and whether HSK needs an availability concept, is unverified.</p>
+  <p><b>Understaffing suggestions</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> When a role is short on a day, the app suggests staff who are eligible (right role, not on PTO/LOA), idle that day (unassigned, OFF, or R-OFF), and not marked unavailable that day. Because OFF, R-OFF, and Unavailable are treated as above, this rule may need adjusting once the hotel clarifies whether R-OFF/OFF/Unavailable mean different things (e.g. if R-OFF should not be \u201ccallable\u201d). HSK thin margin when RAs scheduled minus needed is &lt;2 (the sheet\u2019s &lt;2 rule); FO busy day when arrivals or departures \u2265100. Plus coverage shortfalls, PT 20\u201332h cap, \u22652 days off, unreadable-hours.</p>
+  <p><b>Demand math (from HSK formulas):</b> credits = (total rooms 421 \u2212 OOO/OOS \u2212 house-use \u2212 TOL \u2212 outsourced rooms) \u00d7 1.14; Room Attendants needed = credits \u00f7 14; Supervisors needed = arrivals \u00f7 25. Verified to the cent against the current sheet (D6 and =D6/14). <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> the meaning of \u201cTOL\u201d (a per-day rooms deduction, ~94 on the sample day) is not spelled out in the sheet. The flat \u00d71.14 is the entire credit weighting \u2014 there is no separate check-out vs stayover minute split, so a minute-based tally is not applied.</p>
+  <p><b>Overtime basis</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> Overtime is flagged after 40 hours within the schedule week (<b>Thursday\u2013Wednesday</b>). Whether this matches how the hotel and Guam law define the overtime workweek is unverified; a different 7-day span (e.g. Sunday\u2013Saturday) would require adjusting the threshold window.</p>
+  <p><b>Live sync:</b> The Supabase project URL is prefilled; enter the anon key in Settings and Connect to sync across devices. Until connected the app is local-only; once connected, edits appear on every device in about a second, and offline edits prompt to upload when you\u2019re back online.</p>
+  <p><b>Concurrent editing:</b> Edits save per person-row, so two schedulers on different people/departments won\u2019t clash. If two people edit the <b>same</b> person\u2019s same week at once, the last save wins for that row \u2014 coordinate when jointly editing the same staff.</p>
+  <p><b>Past-week settings:</b> Current and upcoming weeks always use the live settings, so a change made today (e.g. \u201cno Saturdays from this week\u201d) immediately flags the affected days. When a week rolls into the past it is <b>frozen</b> \u2014 a one-time snapshot of each person\u2019s availability/constraints is kept so history reflects the rules that were actually in effect then, not today\u2019s. Leave stamped onto the schedule stays on past weeks regardless.</p>
+  <p><b>Data &amp; history:</b> Settings has Export/Import JSON, Save version + Version history (whole-week snapshots with restore), Auto-fill suggestions, and Export .xlsx in the hotel layout. History records whole-week snapshots with a timestamp/label; per-cell who-changed-what needs Auth (roadmap).</p>
+  <hr><p><b>Patterns found in past data</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION</mark></p>
+  <ul class="small">
+    <li><b>Occupancy differs by department:</b> for the same week (e.g. FO ~61\u201369% vs HSK ~68\u201382%; even arrivals differ, Sat 83 vs 90). The source of each figure is not documented; the reporting basis for each is unverified. The app keeps a separate occupancy row per department.</li>
+    <li><b>HSK staffing tracks demand:</b> occupancy vs RAs-needed correlation \u2248 0.76); rule of thumb \u2248 +2.3 room attendants per +10% occupancy.</li>
+    <li><b>Scheduled RAs run ~2\u20135 below the formula\u2019s \u201cneeded\u201d:</b> most weeks, the gap is absorbed by relievers/outsourced crews, so \u201cneeded\u201d is treated as a soft target (the app flags it, does not block).</li>
+    <li><b>Tuesday is the heaviest RA day:</b> ~23 needed despite mid occupancy; suggests a recurring project/checkout load; unverified.</li>
+    <li><b>Front Office staffing driver:</b> FO headcount does not track occupancy (nearly flat) and only loosely tracks arrivals; it appears driven by day-of-week + fixed role coverage. The real staffing rule is undetermined, so FO understaffing is not auto-flagged yet.</li>
+    <li><b>Departures vs Check-outs (HSK):</b> the sheet has both as separate rows; Departures = guests leaving, Check-outs = rooms actually checked out (weighted heavier in the credit math). The app weights check-outs more heavily in credits; the distinction needs verification.</li>
+    <li><b>Note types:</b> staff notes mix unavailability (\u201cMW off\u201d), shift preferences (\u201cTTH 12-8pm\u201d), and date-range leave (\u201cAira 02/01-03/02 lwop\u201d); the app auto-converts only the unavailability parts.</li>
+    <li><b>Outsourced crew shifts:</b> the sheet lists JJ Global, J4 Janitorial, and Chutter with start-only labels (e.g. \u201c9:AM\u201d, \u201c11AM\u201d) or am/pm ranges. The app assumes an 8-hour shift (supervisors 7h) from each start time so hours and cost compute; confirm actual durations. These crews are paid indirectly, so they are included in the hours/cost totals.</li>
+    <li><b>Standard shift times:</b> FO: 07:00, 11:00, 14:00, 19:30, 22:30. HSK: 7\u20133:30pm, 8\u20134:30pm, 9am\u20135:30pm, 3pm\u201311:30pm, 10:30\u20137am (GY).</li>
+    <li><b>Pay rates:</b> the per-person $/h values are placeholders (FT $12, PT $11, etc.); actual wages are unverified.</li>
+    <li><b>Breaks:</b> the Excel does not subtract break time from shift hours; whether paid hours should be net of a break is unverified (set it in Settings).</li>
+  </ul>
+  <hr>
+  <p><b>Roadmap (not yet built).</b></p>
+  <ul class="small">
+    <li><b>Server-enforced login:</b> Supabase Auth + row-level security so staff truly cannot write (the in-app PIN is only a casual gate). Per-department scopes are supported in the SQL (FO-only, HSK-only, etc.).</li>
+    <li><b>Idle auto-lock:</b> return to view-only after a period of inactivity.</li>
+    <li><b>Auto-send mechanism</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> How the finished schedule reaches staff today (file-watch flow, messaging app, etc.) so the app can feed the same pipeline.</li>
+    <li><b>Staff sort order within a role</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> The Excel orders room attendants by a persistent seniority/hire number (not alphabetical); confirm the intended sort so new staff slot correctly.</li>
+    <li><b>Sticky assignments</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> Whether a new week should prefill from the previous week\u2019s schedule (edit only the changes) or start blank.</li>
+    <li><b>Auto-fill optimizer</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> A one-click auto-fill exists (fills empty cells for understaffed roles). Making it reliable needs the rule for how many staff each role requires per day, plus analysis of historical staffing patterns to weight preferences and fairness.</li>
+  </ul>
+  <hr><details><summary style="cursor:pointer"><b>Build conventions</b> <span class="muted">(collapsed \u2014 click to expand)</span></summary>
+  <ul class="small">
+    <li><b>Capitalization:</b> all UI labels, buttons, tooltips, placeholders, and dropdown options start with a capital letter.</li>
+    <li><b>Decimals:</b> dollar values show 2 decimals ($0.00); hours show 1 decimal (0.0h). Occupancy is a whole-number percent (0\u2013100%). Arrivals/departures/credits are whole numbers.</li>
+    <li><b>Number restrictions:</b> apply common-sense bounds \u2014 hours 0\u201324, occupancy 0\u2013100, counts \u22650; clamp on entry. HSK room deductions (OOO/OOS, house-use, TOL, outsourced) are each 0\u2013421 and their <b>sum</b> cannot exceed total rooms (421); the last-entered value is capped so the sum stays \u2264421.</li>
+    <li><b>Prefilled inputs are editable:</b> an auto-filled/estimated value must be selectable and backspaceable (place the caret, don\u2019t force overwrite).</li>
+    <li><b>Checkboxes</b> are a consistent size app-wide; dropdowns show only valid options for the context (e.g. HSK zones are role-specific) plus an \u201cOther\u2026\u201d free-text fallback.</li>
+    <li><b>Colour code:</b> OFF/R-OFF/PTO/LWOP/LOA = grey (rest/leave); On-call/Task Force/Project = blue; a typed shift or blank = white; a shift on an unavailable day = amber caution; hours over 40 = red from the crossover cell onward.</li>
+    <li><b>Verification flags</b> appear only in this Readme, never in the working tabs.</li>
+    <li><b>No native dialogs</b> (alert/confirm/prompt are blocked in sandboxes) \u2014 use the in-page modal helpers.</li>
+    <li><b>Edit mode</b> is per-department and ends on refresh; the whole app opens view-only behind a PIN (Auth replaces this when configured).</li>
+    <li><b>Weeks</b> run Thursday\u2013Wednesday; current/future weeks always reflect live settings, past weeks use a frozen settings snapshot.</li>
+    <li><b>Every change is validated headlessly</b> (the file must boot without throwing) before shipping.</li>
+    <li><b>Borders &amp; corners:</b> all data tables use border-radius 8px with overflow:hidden and border-collapse:separate; border-spacing:0 (collapse leaves a 1px corner gap under a sticky header). Cards use 10px radius.</li>
+    <li><b>Field heights</b> are uniform (30px) across inputs, selects, and buttons in a row; time/date/text/number fields must line up.</li>
+    <li><b>Dates are local (Guam / UTC+10):</b> never use toISOString() for a date key \u2014 build YYYY-MM-DD from local get*(); UTC shifts the day and breaks stamping.</li>
+    <li><b>PIN prompt:</b> a click anywhere on the schedule/occupancy in view-only opens the PIN once (owned by a single document-level handler; disabled inputs use pointer-events:none so the click passes through). Edit mode is per-department \u2014 unlocking FO must not unlock HSK, and vice-versa.</li>
+    <li><b>De-dup redundancies:</b> a single source of truth per behaviour (one lock control, one leave module, one PIN handler, one demand-input handler) \u2014 avoid duplicate sections/handlers that double-fire or double-render.</li>
+    <li><b>Sticky header</b> (grid thead) uses position:sticky; do NOT put overflow:hidden on the table (clips sticky) \u2014 round the scroll wrapper instead.</li>
+    <li><b>Demand cells must not clip</b> \u2014 the metric/occupancy labels wrap to two lines; keep line-height ~1.25 with vertical padding and never wrap them in overflow:hidden. A rounded overflow:hidden wrapper clipped the top of \u201cOccupancy %\u201d. Final fix: the demand table header must not be position:sticky (it inherited the global thead sticky and overlapped the first data row); force #demandBody thead th to position:static and add vertical padding on td.demand.</li>
+    <li><b>Sticky-cell borders</b> \u2014 with a sticky header or first column, a cell\u2019s real border on the sticky edge can drop (when scrolled) or double against a box-shadow, causing an offset/thick line and a missing line under the Staff row. Fix: keep border-collapse:separate, draw the sticky edge with box-shadow only, and remove the real border on that edge so nothing stacks.</li>
+    <li><b>Punctuation:</b> em-dash (\u2014) with spaces for asides; no serial-comma tables; use a colon only to introduce a value inline, not on standalone headers; parentheses for supplementary notes; sentence case for all UI text.</li></ul></details>
+  <p class="muted">Version ${APP_VERSION}.</p>`;
+}
+/* ---------- SETTINGS TAB ---------- */
+let SETDEPT=null; let SFILT={role:"",type:"",name:""};
+function setRule(k,v,def){const D=CFG[SETDEPT];D.rules=D.rules||{};D.rules[k]=parseFloat(v)||def;save("hotel_cfg",CFG);render();}
+function setGreeter(v){const D=CFG[SETDEPT];D.coverage=D.coverage||{};D.coverage.Greeter=D.coverage.Greeter||{};D.coverage.Greeter.min=parseFloat(v)||2;save("hotel_cfg",CFG);render();}
+function renderSettings(){
+  const b=el("settingsBody"); if(!SETDEPT)SETDEPT=DEPT;
+  const D=CFG[SETDEPT];
+  const url=(el('supaUrl')&&el('supaUrl').value)||'https://rrvxbvpcbbmdabgzqykp.supabase.co';
+  const key=(el('supaKey')&&el('supaKey').value)||'sb_publishable_JkMtNhQ-HUO80fMtG1n7ZA_1zItxTdq';
+  let h=`<div class="cfgrow"><b>Live sync:</b> <span class="muted">Paste your Supabase URL + anon key to sync across devices; blank = local only.</span></div>
+  <div class="cfgrow"><input class="sfield" style="min-width:260px" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield" style="min-width:220px" id="supaKey2" placeholder="anon public key" value="${key}">${DB?'<button onclick="disconnect()">Disconnect</button>':'<button class="brand" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button onclick="supaLogin()">\ud83d\udd11 Sign in</button>'}</div>
+  <div class="cfgrow"><button class="brand" onclick="dataMenu()">\u2b07 Export\u2026</button> <button onclick="backupMenu()">\ud83d\udcbe Backup &amp; versions\u2026</button></div><div id="historyBox" class="small"></div>
+  <div class="cfgrow" style="background:#f4f6f8;border-radius:6px;padding:6px 10px"><label><input type="checkbox" id="hideChk" ${CFG.hideForViewers?"checked":""} onchange="CFG.hideForViewers=this.checked;save('hotel_cfg',CFG);render();"> <b>Hide Settings &amp; Readme from view-only users</b> <span class="muted">(for sharing the link with staff)</span></label></div>
+  <div class="cfgrow"><b>PIN to edit:</b> <input class="sfield" id="pinBox" value="${esc(CFG.editPin||'1234')}" style="min-width:120px"><button onclick="setPin()">Save PIN</button> <span class="muted">Casual gate only; real access control needs Auth (roadmap).</span></div>
+  <div class="cfgrow"><b>Unpaid break per shift (hrs):</b> <input class="sfield" id="brkBox" style="min-width:80px" value="${(D.rules&&D.rules.breakHrs)||0}"><button onclick="setBreak()">Save</button> <span class="muted">\u26a0 The Excel does not subtract breaks \u2014 verify with the hotel.</span></div>
+  <hr>
+  <div class="cfgrow"><b>Users &amp; roles</b> <span class="muted">Viewer = read-only \u00b7 Scheduler = edit \u00b7 Manager = edit + manage</span></div>
+  <div id="usersBox" class="small"></div>
+  <div class="cfgrow"><input class="sfield" id="uName" placeholder="Name" style="width:130px"><select class="sfield" id="uRole"><option value="viewer">Viewer</option><option value="scheduler">Scheduler</option><option value="manager">Manager</option></select><input class="sfield" id="uPin" placeholder="PIN" style="width:80px"><button onclick="addUser()">Add user</button></div>
+  <div id="auditBox" class="small" style="max-height:180px;overflow:auto"></div>
+  <hr>
+  <div class="cfgrow" style="background:#1b2a4a;color:#fff;border-radius:8px;padding:10px 12px;font-size:15px"><b>Now editing: ${D.label}</b> <span style="opacity:.8">\u2014 switch department:</span>
+    <button style="background:${SETDEPT==='FO'?'#fff':'transparent'};color:${SETDEPT==='FO'?'#1b2a4a':'#fff'};border:1px solid rgba(255,255,255,.6);font-weight:${SETDEPT==='FO'?'700':'400'}" onclick="setSetDept('FO')">Front Office</button>
+    <button style="background:${SETDEPT==='HSK'?'#fff':'transparent'};color:${SETDEPT==='HSK'?'#1b2a4a':'#fff'};border:1px solid rgba(255,255,255,.6);font-weight:${SETDEPT==='HSK'?'700':'400'}" onclick="setSetDept('HSK')">Housekeeping</button></div>
+  <div class="cfgrow"><b>Rules &amp; thresholds (${SETDEPT})</b> <span class="small muted">Edit the demand/coverage constants</span></div>
+  ${SETDEPT==="HSK"?`<div class="mrow"><label class="small">Credits per RA <input class="sfield" style="width:60px" value="${D.rules.creditsPerRA||14}" onchange="setRule('creditsPerRA',this.value,14)"></label><label class="small">Credit \u00d7 factor <input class="sfield" style="width:60px" value="${D.rules.creditMult||1.14}" onchange="setRule('creditMult',this.value,1.14)"></label><label class="small">Arrivals per Sup <input class="sfield" style="width:60px" value="${D.rules.arrivalsPerSup||25}" onchange="setRule('arrivalsPerSup',this.value,25)"></label></div>`:`<div class="mrow"><label class="small">Greeters needed <input class="sfield" style="width:50px" value="${(D.coverage&&D.coverage.Greeter&&D.coverage.Greeter.min)||2}" onchange="setGreeter(this.value)"></label></div>`}
+  <div class="mrow"><label class="small">Overtime after (hrs) <input class="sfield" style="width:56px" value="${D.rules.otAfterHrs||40}" onchange="setRule('otAfterHrs',this.value,40)"></label> <span class="small muted">Workweek Thu\u2013Wed</span></div>
+  <hr>
+  <div class="cfgrow"><b>Default shifts (${SETDEPT})</b> <input class="sfield" style="min-width:420px" id="shiftBox" value="${esc((D.shifts||[]).join(', '))}" placeholder="e.g. 07:00-15:30, 14:00-22:30"><button onclick="saveShifts()">Save</button> <span class="muted">These show as suggestions when entering a shift.</span></div>
+  <hr>
+  <div class="cfgrow"><b>${D.label} \u2014 staff &amp; constraints</b> <span class="muted">Edits apply immediately &amp; sync; no re-upload required.</span> <button class="brand" onclick="addStaffRow()">+ Add staff</button></div>
+  <div class="cfgrow"><span class="muted">Filter:</span> <select class="sfield" id="fRole" onchange="SFILT.role=this.value;renderSettings()"><option value="">All roles</option>${D.roles.map(r=>`<option ${SFILT.role===r?"selected":""}>${esc(r)}</option>`).join("")}</select> <select class="sfield" id="fType" onchange="SFILT.type=this.value;renderSettings()"><option value="">All types</option>${["FT","PT","OC","INT","OUT"].map(t=>`<option ${SFILT.type===t?"selected":""}>${t}</option>`).join("")}</select> <input class="sfield" id="fName" placeholder="Name contains\u2026" value="${esc(SFILT.name||"")}" oninput="SFILT.name=this.value;clearTimeout(window._ft);window._ft=setTimeout(renderSettings,250)"> <button onclick="SFILT={role:'',type:'',name:''};renderSettings()">Clear</button></div>
+  <div style="overflow:auto"><table><tr><th>Name</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Note</th><th>Availability</th><th></th></tr>`;
+  D.staff.forEach((st,i)=>{
+    if(SFILT.role&&st.role!==SFILT.role)return;
+    if(SFILT.type&&st.type!==SFILT.type)return;
+    if(SFILT.name&&!st.n.toLowerCase().includes(SFILT.name.toLowerCase()))return;
+    if(st.employed===false)return;
+    h+=`<tr>
+    <td><input class="sfield" style="width:170px" data-si="${i}" data-k="n" value="${esc(st.n)}"></td>
+    <td><select class="sfield" data-si="${i}" data-k="role">${D.roles.map(r=>`<option ${st.role===r?"selected":""}>${esc(r)}</option>`).join("")}</select></td>
+    <td><select class="sfield" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option ${st.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
+    <td><input class="sfield" style="width:64px" data-si="${i}" data-k="rate" value="${st.rate!=null?st.rate:""}" placeholder="${DEFAULT_RATE[st.type]||''}"></td>
+    <td><input class="sfield" style="width:200px" data-si="${i}" data-k="note" value="${esc(st.note||'')}"></td>
+    <td><div style="display:flex;align-items:center;gap:4px"><span class="small" style="flex:1;color:#4a4a4a">${avSummary(st)||"<span class='muted'>&mdash;</span>"}</span><button onclick="editAvail(${i})" title="Edit availability">📅</button></div></td>
+    <td><button onclick="removeStaffRow(${i})" title="Mark no longer employed">\u2715</button></td>
+  </tr>`;});
+  h+=`</table></div>`;
+  const former=D.staff.filter(x=>x.employed===false);
+  if(former.length)h+=`<details style="margin-top:10px"><summary class="small" style="cursor:pointer"><b>Former staff (${former.length})</b> \u2014 kept for history</summary><table style="margin-top:6px"><tr><th>Name</th><th>Role</th><th>Type</th><th></th></tr>${former.map(x=>`<tr><td class="name" style="color:#8a94a0">${esc(x.n)}</td><td class="small">${esc(x.role)}</td><td class="small">${x.type}</td><td><button onclick="reEmploy('${esc(x.n).replace(/'/g,"")}')">Re-employ</button></td></tr>`).join("")}</table></details>`;
+  b.innerHTML=h;
+  const _stbl=b.querySelector("table");if(_stbl&&!_stbl.parentElement.classList.contains("tblwrap")){const w=document.createElement("div");w.className="tblwrap";w.style.cssText="border-radius:8px;overflow:hidden";_stbl.parentNode.insertBefore(w,_stbl);w.appendChild(_stbl);}
+  drawUsers();
+  drawLeaveList();
+
+  b.querySelectorAll("[data-si]").forEach(inp=>inp.addEventListener("change",e=>{
+    const i=+e.target.dataset.si,k=e.target.dataset.k,v=e.target.value;const st=CFG[SETDEPT].staff[i];
+    if(k==="off")st.off=v.split(",").map(x=>x.trim()).filter(Boolean);
+    else if(k==="rate")st.rate=(v===""?undefined:parseFloat(v));
+    else st[k]=v;
+    save("hotel_cfg",CFG);
+  }));
+}
+function setSetDept(d){SETDEPT=d;renderSettings();}
+function addStaffRow(){CFG[SETDEPT].staff.push({n:"New person",role:CFG[SETDEPT].roles[0],type:"FT"});save("hotel_cfg",CFG);renderSettings();setTimeout(()=>{const rows=el("settingsBody").querySelectorAll("table tr");const last=rows[rows.length-1];if(last)last.scrollIntoView({behavior:"smooth",block:"center"});const nm=last&&last.querySelector("input");if(nm){nm.focus();nm.select();}},60);}
+async function removeStaffRow(i){const st=CFG[SETDEPT].staff[i];if(!(await uiConfirm("Mark "+st.n+" as no longer employed?\n\nThey stay in past weeks (history is preserved) and move to \u2018Former staff\u2019. They will not appear on new schedules.")))return;st.employed=false;save("hotel_cfg",CFG);renderSettings();}
+function reEmploy(name){const st=CFG[SETDEPT].staff.find(x=>x.n===name);if(st){st.employed=true;save("hotel_cfg",CFG);renderSettings();}}
+function saveShifts(){const arr=el("shiftBox").value.split(",").map(x=>x.trim()).filter(Boolean);CFG[SETDEPT].shifts=arr;save("hotel_cfg",CFG);uiAlert("Default shifts saved for "+CFG[SETDEPT].label+".");}
+function connectFromSettings(){if(el("supaUrl"))el("supaUrl").value=el("supaUrl2").value;if(el("supaKey"))el("supaKey").value=el("supaKey2").value;connect();}
+async function supaLogin(){
+  if(!DB){uiAlert("Connect the Supabase project first (URL + anon key).");return;}
+  const email=await uiPrompt("Supabase login \u2014 email:","");if(!email||email==="Cancel")return;
+  const pw=await uiPrompt("Password:","");if(pw===null||pw==="Cancel")return;
+  try{const {data,error}=await DB.auth.signInWithPassword({email:email.trim(),password:pw});
+    if(error){uiAlert("Login failed: "+error.message);return;}
+    const uid=data.user.id;
+    let {data:rows,error:qerr}=await DB.from("user_roles").select("*").eq("id",uid);
+    if((!rows||!rows.length)){const r2=await DB.from("user_roles").select("*").eq("email",email.trim());rows=r2.data;if(r2.error)qerr=r2.error;}
+    if(qerr){uiAlert("Signed in, but couldn't read your role: "+qerr.message+"\n\nCheck the user_roles RLS policy.");}
+    const r=(rows&&rows[0])||{role:"viewer"};
+    SUPA_USER={email:email.trim(),role:r.role||"viewer",fo:!!r.can_edit_fo,hsk:!!r.can_edit_hsk,fos:!!r.can_edit_fo_settings,hsks:!!r.can_edit_hsk_settings,manager:(r.role==="manager")};
+    updateAuth();uiAlert("Signed in as "+email.trim()+"\nRole: "+(r.role||"viewer")+(r.can_edit_fo?" \u00b7 FO":"")+(r.can_edit_hsk?" \u00b7 HSK":"")+((r.role==="manager")?" \u00b7 (manager: all)":""));render();
+  }catch(e){uiAlert("Login error: "+e.message);}
+}
+async function supaLogout(){if(DB&&DB.auth)await DB.auth.signOut();SUPA_USER=null;EDIT=false;CURRENT_USER=null;updateAuth();uiAlert("Signed out.");}
+function supaCanEdit(dept){if(!SUPA_USER)return null;if(SUPA_USER.manager)return true;return dept==="HSK"?SUPA_USER.hsk:SUPA_USER.fo;}
+function setPin(){const v=el("pinBox").value.trim()||"1234";CFG.editPin=v;save("hotel_cfg",CFG);uiAlert("PIN saved.");}
+function setBreak(){const v=parseFloat(el("brkBox").value)||0;CFG[DEPT].rules.breakHrs=v;save("hotel_cfg",CFG);uiAlert("Break hours saved for "+CFG[DEPT].label+" ("+v+"h/shift).");render();}
+/* ---------- OVERRIDES + PER-DAY AVAILABILITY ---------- */
+let OVERRIDES=load("hotel_overrides",[]);
+let USERS=load("hotel_users",[{name:"Manager",role:"manager",pin:(CFG.editPin||"1234")}]); // roles: viewer/scheduler/manager
+let CURRENT_USER=null; let SUPA_USER=null;
+let AUDIT=load("hotel_audit",[]);
+function logChange(action,detail){try{AUDIT.push({ts:new Date().toISOString(),user:(CURRENT_USER?CURRENT_USER.name:"?"),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
+function userByPin(pin){return USERS.find(u=>String(u.pin)===String(pin));}
+let ACTUAL=load("hotel_actual",{});
+let ACTUALD=load("hotel_actuald",{}); // ACTUALD[dept][wk][name][day]=hours
+function actualDay(nm,day){const wk=weekKey(WEEK_START);const v=(((((ACTUALD[DEPT]||{})[wk]||{})[nm]||{}))[day]);return v;}
+function setActualDay(nm,day,v){const wk=weekKey(WEEK_START);ACTUALD[DEPT]=ACTUALD[DEPT]||{};ACTUALD[DEPT][wk]=ACTUALD[DEPT][wk]||{};ACTUALD[DEPT][wk][nm]=ACTUALD[DEPT][wk][nm]||{};if(v===""||v==null||isNaN(+v))delete ACTUALD[DEPT][wk][nm][day];else ACTUALD[DEPT][wk][nm][day]=+v;save("hotel_actuald",ACTUALD);render();}
+function actualHrs(nm){const wk=weekKey(WEEK_START);return (((ACTUAL[DEPT]||{})[wk]||{})[nm]);}
+function setActual(nm,v){const wk=weekKey(WEEK_START);ACTUAL[DEPT]=ACTUAL[DEPT]||{};ACTUAL[DEPT][wk]=ACTUAL[DEPT][wk]||{};if(v===""||v==null||isNaN(+v))delete ACTUAL[DEPT][wk][nm];else ACTUAL[DEPT][wk][nm]=+v;save("hotel_actual",ACTUAL);TOUCH();render();}
+let AV={name:null};
+const DAYMAP={SU:"Sun",SUN:"Sun",M:"Mon",MON:"Mon",T:"Tue",TU:"Tue",TUE:"Tue",W:"Wed",WED:"Wed",TH:"Thu",THU:"Thu",F:"Fri",FRI:"Fri",S:"Sat",SAT:"Sat"};
+function daysFromToken(tok){tok=tok.toUpperCase();const map={"MW":["Mon","Wed"],"MWF":["Mon","Wed","Fri"],"TTH":["Tue","Thu"],"MTH":["Mon","Tue","Wed","Thu"],"WEEKDAYS":["Mon","Tue","Wed","Thu","Fri"],"WEEKDAY":["Mon","Tue","Wed","Thu","Fri"],"WEEKENDS":["Sat","Sun"],"WEEKEND":["Sat","Sun"]};if(map[tok])return map[tok];
+  // split runs like "M-Th" or single letters
+  const rng=tok.match(/^([A-Z]{1,3})-([A-Z]{1,3})$/);const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];
+  if(rng&&DAYMAP[rng[1]]&&DAYMAP[rng[2]]){const a=order.indexOf(DAYMAP[rng[1]]),b=order.indexOf(DAYMAP[rng[2]]);if(a>=0&&b>=a)return order.slice(a,b+1);}
+  const out=[];let t=tok;while(t.length){let hit=null;["SUN","THU","TUE","WED","SAT","MON","FRI","SU","TH","M","T","W","F","S"].some(k=>{if(t.startsWith(k)&&DAYMAP[k]){hit=k;return true;}return false;});if(!hit)break;out.push(DAYMAP[hit]);t=t.slice(hit.length);}return out;}
+function to24loose(t){t=t.trim().toLowerCase();const m=t.match(/^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/);if(!m)return"";let h=+m[1],mi=m[2]?+m[2]:0;const ap=m[3];if(ap==="pm"&&h<12)h+=12;if(ap==="am"&&h===12)h=0;if(!ap&&h<7)h+=12;/*bare small hour likely PM in hotel context*/return String(h).padStart(2,"0")+":"+String(mi).padStart(2,"0");}
+async function prefillAvail(i){const st=CFG[SETDEPT].staff[i];if(!st.note)return;
+  const parsed={};let any=false;
+  st.note.split(/[;,]/).forEach(chunk=>{chunk=chunk.trim();if(!chunk)return;
+    const dayTok=chunk.match(/^([A-Za-z]{1,3}(?:-[A-Za-z]{1,3})?)/);const days=dayTok?daysFromToken(dayTok[1]):[];
+    if(!days.length)return;
+    const off=/\boff\b/i.test(chunk);
+    const tm=chunk.match(/(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)\s*[-\u2013]\s*(\d{1,2}(?::\d{2})?\s*(?:am|pm)?)/i);
+    const reason=chunk.replace(/^[A-Za-z]{1,3}(?:-[A-Za-z]{1,3})?/,"").replace(/\boff\b/i,"").replace(tm?tm[0]:"","").trim();
+    days.forEach(d=>{if(off){parsed[d]={off:true,from:"00:00",to:"23:59",reason:reason||"Off"};any=true;}
+      else if(tm){parsed[d]={off:false,from:to24loose(tm[1]),to:to24loose(tm[2]),reason:reason||""};any=true;}});
+  });
+  if(!any){uiAlert("Couldn\u2019t read day/time patterns from the note. You can set availability manually.");return;}
+  const summary=Object.entries(parsed).map(([d,a])=>`${d}: ${a.off?"off":a.from+"-"+a.to}${a.reason?" ("+a.reason+")":""}`).join("\n");
+  if(!(await uiConfirm("Set availability from the note?\n\n"+summary+"\n\n(Existing availability for these days is replaced.)")))return;
+  st.avail=st.avail||{};Object.assign(st.avail,parsed);syncOff(st);save("hotel_cfg",CFG);renderSettings();
+}
+function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];const parts=[];(order).forEach(d=>{const a=(st.avail||{})[d];if(!a)return;if(a.off)parts.push(d+" OFF"+(a.reason&&a.reason.toLowerCase()!=="off"?" ("+a.reason+")":""));else if(a.from||a.to)parts.push(d+" "+(a.from||"00:00")+"\u2013"+(a.to||"23:59")+(a.reason?" "+a.reason:""));});
+  const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+"\u2192"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"\u2192"+a.to:""));parts.push(_lbl+" "+(a.code||"OFF")+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":""));});
+  const lv=(typeof LEAVES!=="undefined"&&LEAVES[SETDEPT]||[]).filter(r=>r.name===st.n);lv.forEach(r=>parts.push(r.code+" "+r.from+"\u2192"+r.to));
+  return parts.join("; ");}
+function editAvail(i){const st=CFG[SETDEPT].staff[i];AV={name:st.n};st.avail=st.avail||{};st.availDates=st.availDates||{};
+  const bg=document.createElement("div");bg.className="modalbg";bg.id="avModal";bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:600px;width:94%"><h2>${esc(st.n)} &mdash; Availability</h2>
+    <div class="small" style="margin-bottom:8px">Tick a day <b>Unavailable</b> (repeats weekly). Times default to all day &mdash; edit From/To for part-day. Below, add <b>specific dates</b> for one-off unavailability (e.g. a particular Wed).</div>
+    ${st.note?`<div class="mrow"><button class="mini" onclick="prefillAvail(${i});">\u21a9 Set weekly from note</button> <span class="small muted">Note: "${esc(st.note)}"</span></div>`:""}
+    <div class="mrow"><span class="small" style="align-self:center">Quick:</span>
+      <button class="mini avq" data-q="wkend">Weekends</button>
+      <button class="mini avq" data-q="wkday">Weekdays</button>
+      <button class="mini avq" data-q="all">All Available</button></div>
+    <div id="avBody"></div>
+    <hr><div class="cfgrow"><b>Specific dates off</b> <span class="small muted">Single day, range, or part-day &mdash; also stamps the schedule</span></div>
+    <div class="mrow"><select class="sfield" id="sdType"><option>OFF</option><option>R-OFF</option><option>PTO</option><option>LOA</option><option>LWOP</option><option>FMLA</option><option>E-LEAVE</option><option>BDH</option><option>AB</option><option>Other&hellip;</option></select><input class="sfield" id="sdTypeOther" placeholder="Code" style="width:70px;display:none">
+      <label class="small">From <input type="date" class="sfield" id="sdDate"></label>
+      <label class="small">To <input type="date" class="sfield" id="sdTo"></label>
+      <input class="sfield" id="sdReason" placeholder="Reason" style="width:120px"><button class="mini" onclick="addSpecDate()">Add</button></div>
+    <div class="mrow"><label class="small"><input type="checkbox" id="sdPart" onchange="el('sdFrom').style.display=el('sdTo2').style.display=this.checked?'inline-block':'none';el('sdPartHint').style.display=this.checked?'inline':'none';"> Part-day</label>
+      <span id="sdPartHint" class="small muted" style="display:none">Unavailable from <input type="time" class="sfield" id="sdFrom"> on the start date<span id="sdEndWrap"> to <input type="time" class="sfield" id="sdTo2"> on the end date (full days in between)</span></span></label></div>
+    <div id="sdList" class="small"></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button class="brand" onclick="if(el('sdDate').value)addSpecDate();closeAvail()">Done</button></div>
+  </div>`;
+  document.body.appendChild(bg);bg.addEventListener("mousedown",e=>{if(e.target===bg)closeAvail();});
+  bg.querySelectorAll(".avq").forEach(b=>b.addEventListener("click",()=>avQuick(b.dataset.q)));
+  const _st=document.getElementById("sdType");if(_st)_st.addEventListener("change",function(){document.getElementById("sdTypeOther").style.display=(this.value.indexOf("Other")===0)?"inline-block":"none";});
+  drawAvail();drawSpec();
+  ["sdDate","sdTo","sdReason","sdFrom","sdTo2"].forEach(id=>{const e=el(id);if(e)e.addEventListener("keydown",ev=>{if(ev.key==="Enter"){ev.preventDefault();addSpecDate();}});});
+}
+function drawAvail(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.avail=st.avail||{};
+  // reflect quick-add active states
+  const allUn=DOW.every(d=>st.avail[d]&&st.avail[d].off);
+  const wkend=["Sat","Sun"].every(d=>st.avail[d]&&st.avail[d].off);
+  const wkday=["Mon","Tue","Wed","Thu","Fri"].every(d=>st.avail[d]&&st.avail[d].off);
+  const m=el("avModal");if(m){m.querySelectorAll(".avq").forEach(b=>{const on=(b.dataset.q==="wkend"&&wkend)||(b.dataset.q==="wkday"&&wkday);b.style.background=on?"#1b2a4a":"";b.style.color=on?"#fff":"";});}
+  let h=`<table style="width:100%"><tr><th style="text-align:left">Day</th><th>Unavailable</th><th>From</th><th>To</th><th>Reason</th></tr>`;
+  DOW.forEach(d=>{const a=st.avail[d]||{};const un=!!(a.off||a.from||a.to);
+    h+=`<tr style="${un?'background:#fff6d6':''}"><td style="text-align:left"><b>${d}</b></td>
+      <td style="text-align:center"><input type="checkbox" class="cbx" ${un?"checked":""} onchange="avToggle('${d}',this.checked)"></td>
+      <td>${un?`<input type="time" class="sfield" value="${a.from||'00:00'}" onchange="avSet('${d}','from',this.value)">`:"&mdash;"}</td>
+      <td>${un?`<input type="time" class="sfield" value="${a.to||'23:59'}" onchange="avSet('${d}','to',this.value)">`:"&mdash;"}</td>
+      <td>${un?`<input class="sfield" style="width:130px" value="${esc(a.reason||"")}" placeholder="Reason" onchange="avSet('${d}','reason',this.value)">`:"&mdash;"}</td></tr>`;});
+  h+=`</table>`;el("avBody").innerHTML=h;
+}
+function avToggle(d,on){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.avail=st.avail||{};
+  if(!on){delete st.avail[d];}else{st.avail[d]={off:true,from:"00:00",to:"23:59",reason:(st.avail[d]||{}).reason||""};}
+  syncOff(st);save("hotel_cfg",CFG);drawAvail();}
+function avSet(d,k,v){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.avail=st.avail||{};st.avail[d]=st.avail[d]||{};st.avail[d][k]=v;
+  if(k==="from"||k==="to"){const a=st.avail[d];a.off=((a.from||"00:00")==="00:00"&&(a.to||"23:59")==="23:59");}
+  syncOff(st);save("hotel_cfg",CFG);}
+function avQuick(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.avail=st.avail||{};
+  if(k==="all"){st.avail={};}
+  else{const days=(k==="wkend")?["Sat","Sun"]:["Mon","Tue","Wed","Thu","Fri"];const allSet=days.every(d=>st.avail[d]&&st.avail[d].off);
+    if(allSet){days.forEach(d=>{delete st.avail[d];});}else{days.forEach(d=>{st.avail[d]={off:true,from:"00:00",to:"23:59",reason:(st.avail[d]||{}).reason||(k==="wkend"?"Weekend":"")};});}}
+  syncOff(st);save("hotel_cfg",CFG);drawAvail();}
+async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.availDates=st.availDates||{};
+  let code=el("sdType").value;if(code.indexOf("Other")===0)code=(el("sdTypeOther").value||"OFF");code=code.toUpperCase();
+  const dt=el("sdDate").value;let to=el("sdTo").value;const reason=el("sdReason").value||"";const part=el("sdPart")&&el("sdPart").checked;const pf=part?(el("sdFrom").value||"00:00"):null,pt=part?(el("sdTo2").value||"00:00"):null;
+  if(!dt){uiAlert("Pick a date.");return;}if(!to)to=dt;if(new Date(to)<new Date(dt)){uiAlert("End before start.");return;}
+  for(const _k in (st.availDates||{})){const _e=st.availDates[_k];if(_e.from&&!(to<_e.from||dt>_e.to)){if(!(await uiConfirm(st.n+" already has "+(_e.code||"leave")+" "+_e.from+"\u2192"+_e.to+" overlapping this range. Add anyway?")))return;break;}}
+  const id="D"+dt+"_"+to;st.availDates[id]={from:dt,to:to,part:part,startTime:pf,endTime:pt,code:code,reason:reason};
+  // stamp full-day cells (all days for all-day; middle days for a multiday part-day; single part-day stamps nothing)
+  for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()+3)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;}}
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);if(typeof logChange==="function")logChange("timeoff",code+" "+st.n+" "+dt+(to!==dt?"\u2192"+to:"")+(part?" "+pf+"-"+pt:""));el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";if(el("sdFrom"))el("sdFrom").value="";if(el("sdTo2"))el("sdTo2").value="";if(el("sdPart")){el("sdPart").checked=false;el("sdFrom").style.display=el("sdTo2").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";drawSpec();render();}
+function drawSpec(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;const d=st.availDates||{};const keys=Object.keys(d);
+  el("sdList").innerHTML=keys.length?("<b>Dates off:</b><br>"+keys.map(k=>{const a=d[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+" \u2192 "+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?" \u2192 "+a.to:""));return `\u2022 ${_lbl} \u2014 ${a.code||"OFF"}${a.reason&&a.reason!==(a.code||"OFF")?" ("+esc(a.reason)+")":""} <a href="javascript:void(0)" onclick="editSpecDate('${k}')">Edit</a> <a href="javascript:void(0)" onclick="delSpecDate('${k}')">Remove</a>`;}).join("<br>")):"<span class='muted'>None.</span>";}
+function editSpecDate(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st||!st.availDates[k])return;const a=st.availDates[k];
+  el("sdDate").value=a.from||"";el("sdTo").value=(a.to&&a.to!==a.from)?a.to:"";el("sdReason").value=a.reason||"";
+  const part=!!a.part;if(el("sdPart")){el("sdPart").checked=part;if(el("sdPartHint"))el("sdPartHint").style.display=part?"inline":"none";if(el("sdFrom"))el("sdFrom").style.display=part?"inline-block":"none";if(el("sdTo2"))el("sdTo2").style.display=part?"inline-block":"none";if(part){if(el("sdFrom"))el("sdFrom").value=a.startTime||"";if(el("sdTo2"))el("sdTo2").value=a.endTime||"";}}
+  const sel=el("sdType");if(sel){const opt=[...sel.options].find(o=>o.value===a.code);if(opt)sel.value=a.code;else{sel.value="Other\u2026";el("sdTypeOther").style.display="inline-block";el("sdTypeOther").value=a.code;}}
+  delSpecDate(k,true);} // remove old, user re-adds edited
+function delSpecDate(k,silent){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;delete (st.availDates||{})[k];save("hotel_cfg",CFG);drawSpec();}
+function syncOff(st){st.off=DOW.filter(d=>st.avail&&st.avail[d]&&st.avail[d].off);} // keep the legacy day-off list in sync
+
+function closeAvail(){const m=el("avModal");if(m)m.remove();renderSettings();}
+/* ---------- DATA MENU (export/import/versions in one popup) ---------- */
+async function dataMenu(){
+  const pick=await uiDialog("Export as:",["Cancel","JSON","Excel","Change log (CSV)"]);
+  if(pick==="JSON")exportJSON();else if(pick==="Excel")exportXLSX();else if(pick==="Change log (CSV)")exportAudit();
+}
+async function backupMenu(){
+  const pick=await uiDialog("Backup & versions:",["Cancel","Import file","Save version now","View version history","View change log"]);
+  if(pick==="Import file")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshot();else if(pick==="View version history")showHistory();else if(pick==="View change log")showAudit();
+}
+/* ---------- USERS & AUDIT ---------- */
+function drawUsers(){const box=el("usersBox");if(!box)return;box.innerHTML=(USERS||[]).map((u,i)=>`\u2022 ${esc(u.name)} \u2014 <b>${u.role}</b> (PIN ${esc(String(u.pin))}) <a href="javascript:void(0)" onclick="removeUser(${i})">Remove</a>`).join("<br>")||"<span class='muted'>No users \u2014 add one.</span>";}
+function addUser(){const n=el("uName").value.trim(),r=el("uRole").value,p=el("uPin").value.trim();if(!n||!p){uiAlert("Name and PIN required.");return;}USERS.push({name:n,role:r,pin:p});save("hotel_users",USERS);el("uName").value="";el("uPin").value="";drawUsers();}
+async function removeUser(i){if(!(await uiConfirm("Remove "+USERS[i].name+"?")))return;USERS.splice(i,1);save("hotel_users",USERS);drawUsers();}
+function showAudit(){const box=el("auditBox");if(!box)return;const rows=(AUDIT||[]).slice(-200).reverse();box.innerHTML=rows.length?("<table><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr>"+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table>"):"<span class='muted'>No changes logged yet.</span>";}
+function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hotel_audit_log.csv";a.click();}
+/* ---------- LEAVE RANGES (Settings-managed; stamped to schedule; auto-drop when past) ---------- */
+let LEAVES=load("hotel_leaves",{});
+let FLOORS=load("hotel_floors",{});
+function zonesForRole(role){if(role==="Room Attendants")return ["6th","7th","8th","9th","10th","11th","12th","13th","14th","15th","16th","17th","18th","19th","20th","21st","22nd","23rd","24th","25th","26th","27th","28th","29th","Reliever"];if(role==="Supervisors")return ["Flr.Sup.","PM Sup.","GY Sup.","Proj/Training"];if(role==="Public Area")return ["AM","PM","GY Sup."];if(role==="Specialist")return ["GY","AM","PM"];if(role==="Room Controller")return ["AM","PM","AM/PM"];return [];}
+function floorSelect(nm,editable){const cur=floorOf(nm);const st=CFG[DEPT].staff.find(x=>x.n===nm);const opts=[""].concat(zonesForRole(st?st.role:""));const isOther=cur&&!opts.includes(cur);const nmE=encodeURIComponent(nm);
+  return `<select ${editable?"":"disabled"} onclick="event.stopPropagation()" onchange="floorPick(decodeURIComponent('${nmE}'),this.value)" style="font-size:10px;border:1px solid #dfe4ea;border-radius:3px">`+opts.map(o=>`<option value="${o}" ${cur===o?"selected":""}>${o||"\u2014"}</option>`).join("")+`<option value="__other" ${isOther?"selected":""}>Other\u2026</option></select>`+(isOther?`<input value="${esc(cur)}" ${editable?"":"disabled"} onclick="event.stopPropagation()" onchange="setFloor(decodeURIComponent('${nmE}'),this.value)" style="width:50px;font-size:10px;margin-left:2px">`:"");}
+function floorPick(nm,v){if(v==="__other"){setFloor(nm,"Other");}else setFloor(nm,v);render();}
+function floorOf(nm){const wk=weekKey(WEEK_START);if(FLOORS[wk]&&FLOORS[wk][nm]!=null)return FLOORS[wk][nm];let d=new Date(WEEK_START);for(let k=0;k<8;k++){d.setDate(d.getDate()-7);const pk=weekKey(d);if(FLOORS[pk]&&FLOORS[pk][nm]!=null)return FLOORS[pk][nm];}return "";}
+function setFloor(nm,v){const wk=weekKey(WEEK_START);FLOORS[wk]=FLOORS[wk]||{};if(v==="")delete FLOORS[wk][nm];else FLOORS[wk][nm]=v;save("hotel_floors",FLOORS);}
+function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),to=new Date(rec.to+"T00:00:00");
+  for(let d=new Date(from);d<=to;d.setDate(d.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()+3)%7;
+    ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};ASSIGN[dept][wk][rec.name]=ASSIGN[dept][wk][rec.name]||{};
+    if(remove){if((ASSIGN[dept][wk][rec.name]||{})[dow]===rec.code)delete ASSIGN[dept][wk][rec.name][dow];}
+    else ASSIGN[dept][wk][rec.name][dow]=rec.code;}
+}
+function addLeaveRange(){const nm=el("lvName").value,code=el("lvType").value,f=el("lvFrom").value;let t=el("lvTo").value;
+  if(!f){uiAlert("Pick a date.");return;}if(!t)t=f;if(new Date(t)<new Date(f)){uiAlert("From is after To.");return;}
+  const rec={name:nm,code:code,from:f,to:t,reason:(el("lvReason")?el("lvReason").value:"")};logChange("leave",code+" "+nm+" "+f+"\u2192"+t);LEAVES[SETDEPT]=LEAVES[SETDEPT]||[];LEAVES[SETDEPT].push(rec);save("hotel_leaves",LEAVES);
+  stampLeave(SETDEPT,rec,false);save("hotel_assign",ASSIGN);el("lvFrom").value="";el("lvTo").value="";drawLeaveList();uiAlert(code+" added for "+nm+".");render();
+}
+function drawLeaveList(){const box=el("lvList");if(!box)return;const today=new Date();today.setHours(0,0,0,0);
+  // auto-drop entries whose TO date has passed (schedule stamps remain)
+  LEAVES[SETDEPT]=(LEAVES[SETDEPT]||[]).filter(r=>new Date(r.to)>=today);save("hotel_leaves",LEAVES);
+  const list=LEAVES[SETDEPT]||[];
+  box.innerHTML=list.length?("<b>Active/upcoming:</b><br>"+list.map((r,i)=>`\u2022 ${esc(r.name)} \u2014 ${r.code}${r.reason?" ("+esc(r.reason)+")":""} ${r.from}\u2192${r.to} <a href="javascript:void(0)" onclick="removeLeave(${i});return false">remove</a>`).join("<br>")):"<span class='muted'>No upcoming leave. (Past leave stays stamped on the schedule.)</span>";
+}
+function removeLeave(i){const r=(LEAVES[SETDEPT]||[])[i];if(!r)return;stampLeave(SETDEPT,r,true);save("hotel_assign",ASSIGN);LEAVES[SETDEPT].splice(i,1);save("hotel_leaves",LEAVES);drawLeaveList();render();}
+/* ---------- CLEAR (day / week) ---------- */
+async function clearScope(kind){
+  if(!EDIT||weekLocked())return; const dept=CFG[DEPT];
+  if(kind==="week"){ if(!(await uiConfirm("Clear ALL assignments for "+dept.label+" this week? (A version is saved first.)")))return;
+    saveSnapshot(); dept.staff.forEach(s=>{for(let d=0;d<7;d++)setCellQuiet(s.n,d,"");}); save("hotel_assign",ASSIGN);TOUCH();render();return; }
+  if(kind==="day"){ const d=await uiPrompt("Clear which day? Type: "+DOW.join(", "),"");
+    if(!d||d==="Cancel")return; const di=DOW.findIndex(x=>x.toLowerCase()===d.trim().toLowerCase());
+    if(di<0){uiAlert("Not a day name.");return;}
+    if(!(await uiConfirm("Clear all "+DOW[di]+" assignments for "+dept.label+"?")))return;
+    saveSnapshot(); dept.staff.forEach(s=>setCellQuiet(s.n,di,"")); save("hotel_assign",ASSIGN);TOUCH();render();return; }
+}
+let TOUCHED=load("hotel_touched",{});
+let SETHIST=load("hotel_sethist",{}); // SETHIST[dept][weekKey] = frozen staff-constraints snapshot
+function snapshotSettings(dept,wk){ // freeze current per-person avail/off/availDates/floor/rules for this week
+  const D=CFG[dept];const snap={rules:JSON.parse(JSON.stringify(D.rules||{})),staff:{}};
+  (D.staff||[]).forEach(s=>{snap.staff[s.n]={off:(s.off||[]).slice(),avail:JSON.parse(JSON.stringify(s.avail||{})),availDates:JSON.parse(JSON.stringify(s.availDates||{})),noGY:!!s.noGY};});
+  SETHIST[dept]=SETHIST[dept]||{};SETHIST[dept][wk]=snap;save("hotel_sethist",SETHIST);
+}
+function effStaff(s){ // return the person's constraints as they were for the VIEWED week (past=frozen, else live)
+  if(weekIsPast()){const snap=((SETHIST[DEPT]||{})[weekKey(WEEK_START)]);if(snap&&snap.staff&&snap.staff[s.n])return snap.staff[s.n];}
+  return {off:s.off,avail:s.avail,availDates:s.availDates,noGY:s.noGY};
+}
+function TOUCH(scope){try{if(typeof TOUCHED==="undefined")return;const key=scope||DEPT;TOUCHED[key]=new Date().toISOString();save("hotel_touched",TOUCHED);}catch(e){}}
+function lastEditedLine(){const f=TOUCHED.FO,h=TOUCHED.HSK,se=TOUCHED.SET;const parts=[];if(f)parts.push("FO "+new Date(f).toLocaleString());if(h)parts.push("HSK "+new Date(h).toLocaleString());if(se)parts.push("Settings "+new Date(se).toLocaleString());return parts.length?("Last edited \u2014 "+parts.join(" \u00b7 ")):"";}
+function seedPTORequests(){try{const reqs=[
+    {name:"Nicole Noriega",code:"PTO",from:"2026-10-11",to:"2026-10-16"},
+    {name:"Nicole Noriega",code:"PTO",from:"2026-06-12",to:"2026-06-22"},
+    {name:"Shanesse Aldan",code:"PTO",from:"2026-08-19",to:"2026-08-27"},
+    {name:"Ervin Carlos",code:"LWOP",from:"2026-09-14",to:"2026-09-16"},
+    {name:"Ervin Carlos",code:"LWOP",from:"2026-09-21",to:"2026-09-22"},
+    {name:"John Nhel canlas",code:"LWOP",from:"2026-09-22",to:"2026-10-06"}
+  ];let any=false;reqs.forEach(r=>{const st=(CFG.FO.staff||[]).find(x=>x.n===r.name);if(!st)return;st.availDates=st.availDates||{};const id="D"+r.from+"_"+r.to;if(!st.availDates[id]){st.availDates[id]={from:r.from,to:r.to,part:false,code:r.code,reason:"PTO request (from FO sheet)"};any=true;}});if(any){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}}catch(e){console.warn("PTO seed skipped",e);}}
+/* ROSTER SEED */
+function seedRoster(){try{
+  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));
+   const OUT=[
+     ["Kelly Jacinto","Outsourced \u2014 JJ Global"],
+     ["Akitha Saouken","Outsourced \u2014 J4 Janitorial"],["Simona Koky","Outsourced \u2014 J4 Janitorial"],
+     ["Tarlyn Anap","Outsourced \u2014 J4 Janitorial"],["Sina Masawa","Outsourced \u2014 J4 Janitorial"],
+     ["O-much Erich","Outsourced \u2014 Chutter"],["Three-J Kaio","Outsourced \u2014 Chutter"]];
+   if(!D.roles.includes("Outsourced \u2014 Chutter"))D.roles.push("Outsourced \u2014 Chutter");
+   OUT.forEach(([n,role])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:"OUT",oncall:true,rate:12,employed:true});have.add(n);}});}
+  const MGRS=[["Jenny De Guzman","FT"],["Cynthia Requino","FT"],["Edna Cortez","FT"],["Roberta Fernandez","FT"],["Editha Fallejo","FT"]];
+  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));MGRS.forEach(([n,t])=>{if(!have.has(n)){D.staff.push({n:n,role:"Managers",type:t,rate:12,employed:true});have.add(n);}});}
+ const FO={
+  "Front Desk Supervisor":[["Katherine Johnson","FT",1]],
+  "Front Desk Agents":[["Prince Tarape","FT",0],["Irish Gonzales","FT",0],["Ahmylyn Cabrera","FT",0],["Jema Rokop","FT",0],["Jackrine Jimmy","PT",0],["Sungbin Kang","FT",0],["Jessica Basaliza","PT",0],["Shane Ricoy","PT",0],["Ashley Mandani","OC",0],["Aira Calilung","OC",0],["Kimberly German","OC",0],["Clarence Dimalanta","PT",0]],
+  "Interns / F&B":[["Haeun Song (Emily)","INT",0],["Eunju Sin (Sarah)","INT",0],["Youjung Kim (Stella)","INT",0],["Jiwon Choi (Joy)","INT",1],["Thanh Nhan Pham","INT",0],["Jiwon Eom (Julie)","INT",0]],
+  "Concierge Agent":[["Marin Cruz","PT",0]],
+  "Greeter":[["Bella Millonzi","PT",0],["Jada Deem-Hinson","PT",1]],
+  "Bell Captain":[["Mc Lester Camara","FT",0]],
+  "Bell Attendants":[["Mark Angelo Mendoza","OC",0],["Christopher Yoshinobu","FT",0],["Alvin Saure","FT",0],["Noel Saplan","FT",0],["Ervin Carlos","OC",0],["Louie Yuson","PT",0],["John Nhel canlas","FT",0],["Harold Perez","FT",0],["Jomarie Ebo","FT",0],["Paulo Odon","PT",0],["Justin Biven","FT",0],["Rayson Haimin","FT",0],["Angelo Del Rosario","PT",0]],
+  "Guest Service Supervisors":[["Nicole Noriega","FT",0],["Chezka Cura","FT",0]],
+  "Guest Service Agent":[["Keialana Hattori","FT",0],["Jianna Navarro","FT",0],["Shanesse Aldan","FT",0],["Temberlynn Cruz","FT",0],["Herrenze Uy","FT",0]]
+ };
+ const HSK={
+  "Supervisors":[["Elsa Aguilo","FT",0],["Ma.Seline Senior","FT",0],["Jade Soram","FT",0],["Julie Serrano","FT",0],["Maria Teresa Ibanez","FT",0],["Daisy Anne Nalicat","FT",0],["Nemia Zapanta","FT",0],["Florencia (Au) Orino","FT",0],["Ros Calma","FT",0]],
+  "Public Area":[["Flory Unas","FT",0],["Ulisses De Guzman","FT",0],["Dante Vergara","FT",0],["Marcelo Quitugua","FT",0]],
+  "Specialist":[["Jacob Verhoeff","FT",0]],
+  "Room Controller":[["Maricel Carbon","FT",0],["Ma. Lourdes Gueco","FT",0],["Kathy Javier","FT",0]],
+  "Room Attendants":[["Wilma Mendoza","FT",0],["Jocelyn Lumanlan","FT",0],["Meslynn Valentine","FT",0],["Kercy Mikey","FT",0],["Myline Sahagun","FT",0],["Arleen Lazarus","FT",0],["Marietta Escoto","FT",0],["Suhlinda Wapol","FT",0],["Myrna Villacorta","PT",0],["Lillyjean Deleon","FT",0],["Magnonia Jacinto","FT",0],["Monica Santos","FT",0],["Jenny Sos","FT",0],["Blesilda Carlos","FT",0],["Sosariy Gideon","FT",0],["Amalia Macapagal","FT",0],["Jocelyn Tolentino","FT",0],["Akinha Bartolome","FT",0],["Janeth Saitanan","FT",0],["Fe Valencia","FT",0],["Lucricia Kaainoa","FT",0],["Jennifer Gonzalez","FT",0],["Bessie Hicban","FT",0],["Marizel Rebamonte","FT",0],["Teria Naputi","FT",0],["Carolina Calilung","PT",0],["Kayleen Ruda","FT",0],["Marian Lacsina","FT",0],["Lorien Stephen","FT",0],["Ernoleen Welter","FT",0]],
+  "PM Turndown RA":[["Jojo Roces","FT",0],["Generose dela Cruz","FT",0],["Donna Mojica","FT",0],["Heidi Valencia","OC",0],["Daralynn William","FT",0]],
+  "AM Houseman":[["Kevin Malanum","FT",0],["Jonas Jimmy","FT",0],["Jahred Etse","FT",0],["Oscar Ejan","FT",0],["TN Francis","FT",0]],
+  "PM Houseman":[["Johnny Mondina","FT",0],["Rillen Labadnoy","FT",0],["Kyson Dohrres","FT",0]],
+  "A-shift PA":[["Eduardo Gamboa","FT",0],["Alma Garcia","FT",0],["Nicole Uy","FT",0],["Aida Panlilo","FT",0],["Carolina De Dios","FT",0],["Arnel Lacsina","FT",0],["Nancy Java","FT",0],["Maria Leonora Bondoc","FT",0]],
+  "B-shift PA":[["Demetrio Bilon","FT",0],["Lydia Antonio","FT",0],["Renato David","FT",0],["Liana Martinez","FT",0],["Lydia Falan","FT",0],["Chester Lordios","FT",0],["Elsie Geronimo","FT",0]],
+  "Graveyard PA":[["Francisco Roman","FT",0],["Evelyn B. Topacio","FT",0],["Franco Pili","FT",0],["Darrell Serrano","FT",0]],
+  "Laundry/Uniform":[["Lavinia Solis","FT",0],["Olivia Roman","FT",0],["Remedios Sapitanan","FT",0],["Ma. Buenaflor Guinto","FT",0],["Eleanora Rumbaua","FT",0],["Sarina Geronimo","FT",0]]
+ };
+ function apply(dept,map){const D=CFG[dept];D.staff=D.staff||[];const have=new Set(D.staff.map(s=>s.n));
+   Object.entries(map).forEach(([role,list])=>{if(!D.roles.includes(role))D.roles.push(role);
+     list.forEach(([n,type,former])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:type,rate:12,employed:former?false:true});have.add(n);}});});}
+ if(!CFG._mgrSeeded){CFG._mgrSeeded=true;} if(!CFG._rosterSeeded){apply("FO",FO);apply("HSK",HSK);CFG._rosterSeeded=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}
+ }catch(e){console.warn("roster seed skipped",e);}}
+
+/* ---------- BOOT ---------- */
+(function boot(){
+  migrateAvail();
+  seedRoster();
+  seedPTORequests();
+  try{const _t=new Date();_t.setHours(0,0,0,0);["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.availDates){Object.keys(st.availDates).forEach(k=>{const a=st.availDates[k];if(a.to&&new Date(a.to)<_t){delete st.availDates[k];}});}});});try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}catch(e){}
+  // Lazily freeze settings for weeks that are now PAST but never snapshotted (captures the settings in effect through that week)
+  try{["FO","HSK"].forEach(dp=>{const savedDept=DEPT;DEPT=dp;const ws=mondayOfWeekStartThu(new Date());for(let k=1;k<=8;k++){const d=new Date(ws);d.setDate(d.getDate()-7*k);const wk=weekKey(d);if(!((SETHIST[dp]||{})[wk])){const _cur=WEEK_START;WEEK_START=d;snapshotSettings(dp,wk);WEEK_START=_cur;}}DEPT=savedDept;});}catch(e){}
+  const saved=load("hotel_supa",null);
+  if(saved){el("supaUrl").value=saved.url;el("supaKey").value=saved.key;connect();}
+  syncNav();render();
+})();
+</script>
+</body>
+</html>
