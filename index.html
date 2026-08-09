@@ -11,8 +11,9 @@
   :root{--brand:#1b2a4a;--line:#dfe4ea;--ok:#0e7c46;--warn:#b8860b;--err:#b30000;--bg:#f4f6f8;}
   *{box-sizing:border-box;}
   body{margin:0;font-family:Calibri,Segoe UI,Arial,sans-serif;background:var(--bg);color:#1f2d3d;}
-  header{background:var(--brand);color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:fixed;top:0;left:0;right:0;width:100%;z-index:2000;box-shadow:0 2px 6px rgba(0,0,0,.2);}
-  body{padding-top:64px;}
+  header{background:var(--brand);color:#fff;padding:10px 16px;display:flex;align-items:center;gap:12px;flex-wrap:wrap;position:sticky;top:0;z-index:2000;box-shadow:0 2px 6px rgba(0,0,0,.2);}
+  .titlewrap{display:flex;align-items:baseline;gap:8px;}
+  @media(max-width:820px){ header{gap:6px;padding:8px 10px;} header h1{font-size:15px;} .tag{margin-left:0;width:100%;justify-content:flex-start;} }
   header h1{font-size:18px;margin:0;}
   .ver{opacity:.7;font-size:12px;}
   .tag{margin-left:auto;display:flex;gap:8px;align-items:center;}
@@ -111,6 +112,14 @@
   .tblwrap>table th:first-child,.tblwrap>table td:first-child{border-left:none;}
   .tblwrap>table tr td:last-child,.tblwrap>table tr th:last-child{border-right:none;}
   .tblwrap>table tr:last-child td{border-bottom:none;}
+  #settingsBody table{table-layout:fixed;min-width:900px;}
+  #settingsBody table th:last-child,#settingsBody table td:last-child{width:34px;text-align:center;}
+  #settingsBody table td{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+  #settingsBody table th{background:#eef2f6;}
+  #settingsBody table td:nth-child(6){overflow:visible;}
+  #settingsBody table td:first-child{position:sticky;left:0;background:#fff;z-index:2;}
+  #settingsBody table th:first-child{position:sticky;left:0;background:#eef2f6;z-index:2;}
+  #settingsBody table th:first-child{background:#eef2f6;}
   #settingsBody table input,#settingsBody table select{border:1px solid var(--line)!important;border-radius:6px!important;padding:4px 6px;}
   .muted{color:#6b7a8d;}
   .status{font-size:12px;display:flex;align-items:center;gap:6px;}
@@ -118,7 +127,7 @@
 </head>
 <body>
 <header>
-  <h1>🏨 Hotel Staff Scheduler</h1><span class="ver" id="ver"></span>
+  <div class="titlewrap"><h1>🏨 Hotel Staff Scheduler</h1><span class="ver" id="ver"></span></div>
   <button class="deptbtn active" id="btnFO" onclick="setDept('FO')">Front Office</button>
   <button class="deptbtn" id="btnHSK" onclick="setDept('HSK')">Housekeeping</button>
   <button class="deptbtn" id="btnSET" onclick="setView('settings')">Settings</button>
@@ -346,6 +355,7 @@ let WEEK_START=mondayOfWeekStartThu(new Date());
 function load(k,d){try{const v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){try{return MEM[k]?JSON.parse(MEM[k]):d;}catch(_){return d;}}}
 let MEM={};function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}}
 function el(id){return document.getElementById(id);}
+function fitHeader(){/* header is position:sticky; no manual offset needed */}
 
 /* weeks run Thursday -> Wednesday (matches the hotel sheets) */
 function mondayOfWeekStartThu(d){const x=new Date(d);const dow=x.getDay();/*0 Sun..6 Sat*/const diff=(dow-4+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
@@ -355,8 +365,9 @@ function dayDate(i){const d=new Date(WEEK_START);d.setDate(d.getDate()+i);return
 const DOW=["Thu","Fri","Sat","Sun","Mon","Tue","Wed"];
 
 /* ---------- RENDER ---------- */
-function setDept(d){setTimeout(()=>window.scrollTo(0,0),0);if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;updateAuth&&updateAuth();syncNav();render();}
-function setView(v){setTimeout(()=>window.scrollTo(0,0),0);VIEW=(VIEW===v?"schedule":v);syncNav();render();}
+let SCROLLMEM={};function curViewKey(){return VIEW==="schedule"?("s_"+DEPT):VIEW;}
+function setDept(d){SCROLLMEM[curViewKey()]=window.scrollY;if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;updateAuth&&updateAuth();syncNav();render();const _k="s_"+d;setTimeout(()=>window.scrollTo(0,SCROLLMEM[_k]||0),0);}
+function setView(v){SCROLLMEM[curViewKey()]=window.scrollY;VIEW=(VIEW===v?"schedule":v);if(VIEW==="settings")SETDEPT=DEPT;syncNav();render();const _k=curViewKey();setTimeout(()=>window.scrollTo(0,SCROLLMEM[_k]||0),0);}
 function syncNav(){const hv=CFG.hideForViewers&&!EDIT;if(el("btnSET"))el("btnSET").style.display=hv?"none":"";if(el("btnREAD"))el("btnREAD").style.display=hv?"none":"";el("btnFO").classList.toggle("active",VIEW==="schedule"&&DEPT==="FO");el("btnHSK").classList.toggle("active",VIEW==="schedule"&&DEPT==="HSK");if(el("btnSET"))el("btnSET").classList.toggle("active",VIEW==="settings");if(el("btnREAD"))el("btnREAD").classList.toggle("active",VIEW==="readme");}
 function prevWeek(){WEEK_START.setDate(WEEK_START.getDate()-7);render();}
 function nextWeek(){WEEK_START.setDate(WEEK_START.getDate()+7);render();}
@@ -450,6 +461,7 @@ function render(){
   el("grid").querySelectorAll(".cellbtn").forEach(b=>b.addEventListener("click",()=>{openShiftEditor(decodeURIComponent(b.dataset.nm),+b.dataset.day);}));
   el("grid").querySelectorAll(".hrsedit,.hrsview").forEach(b=>b.addEventListener("click",e=>{e.stopPropagation();const nm=decodeURIComponent(b.dataset.nm),day=+b.dataset.day;const line=b.closest(".hrsline");const cur=actualDay(nm,day);const _pf=(cur!=null)?cur:(shiftHours(cellVal(nm,day))||"");line.innerHTML=`<input class="dayhrsin" type="number" step="0.5" min="0" max="24" value="${_pf}" placeholder="${shiftHours(cellVal(nm,day))||""}" style="width:44px;text-align:center;font-size:10px" onclick="event.stopPropagation()">`;const inp=line.querySelector("input");inp.focus();try{inp.setSelectionRange(inp.value.length,inp.value.length);}catch(e){}const commit=()=>{let x=inp.value.trim();if(x!==""){let n=parseFloat(x);if(isNaN(n))x="";else{n=Math.max(0,Math.min(24,Math.round(n*10)/10));x=n;}}setActualDay(nm,day,x);};inp.addEventListener("blur",commit);inp.addEventListener("keydown",ev=>{if(ev.key==="Enter")commit();if(ev.key==="Escape"){inp.value="";commit();}});}));
   renderFlags();
+  fitHeader();
   el("cfgNote").textContent = DB? "Live sync ON — edits broadcast to everyone on this project." : "Local mode — edits stay on this device until you Connect a Supabase project.";
 }
 
@@ -472,7 +484,7 @@ function renderDemand(){
     // needed row
     h+=`<tr><td class="demand" style="text-align:left"><b>RAs needed</b> <span class="small">(÷${CFG.HSK.rules.creditsPerRA||14})</span></td>`;
     let needTotal=0;
-    for(let i=0;i<7;i++){const need=raNeeded(wk,i);needTotal+=need;const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};const hasD=(dd.ooo!=null)||(dd.house!=null)||(dd.tol!=null)||(dd.outsourced!=null)||(dd.occ!=null)||(dd.credits!=null);h+=`<td class="demand"><b>${hasD?need:(EDIT?"":"\u2013")}</b></td>`;}
+    for(let i=0;i<7;i++){const need=raNeeded(wk,i);needTotal+=need;const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};const hasD=(dd.ooo!=null)||(dd.house!=null)||(dd.tol!=null)||(dd.outsourced!=null)||(dd.occ!=null)||(dd.credits!=null);h+=`<td class="demand" data-need="ra" data-day="${i}"><b>${hasD?need:(EDIT?"":"\u2013")}</b></td>`;}
     h+=`</tr>`;
     // scheduled row (working RAs)
     h+=`<tr><td class="demand" style="text-align:left">RAs scheduled</td>`;
@@ -480,7 +492,7 @@ function renderDemand(){
     h+=`</tr>`;
     // Supervisors needed (arrivals \u00f7 25) + scheduled
     h+=`<tr><td class="demand" style="text-align:left"><b>Sups needed</b> <span class="small">(\u00f7${CFG.HSK.rules.arrivalsPerSup||25})</span></td>`;
-    for(let i=0;i<7;i++){const sn=supsNeeded(wk,i);const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};h+=`<td class="demand"><b>${dd.arr!=null?sn:(EDIT?"":"\u2013")}</b></td>`;}
+    for(let i=0;i<7;i++){const sn=supsNeeded(wk,i);const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};const hasD=(dd.ooo!=null)||(dd.house!=null)||(dd.tol!=null)||(dd.outsourced!=null)||(dd.occ!=null)||(dd.credits!=null)||(dd.arr!=null);h+=`<td class="demand" data-need="sup" data-day="${i}"><b>${hasD?sn:(EDIT?"":"\u2013")}</b></td>`;}
     h+=`</tr>`;
     h+=`<tr><td class="demand" style="text-align:left">Sups scheduled</td>`;
     for(let i=0;i<7;i++){const sch=countWorking("Supervisors",i);const need=supsNeeded(wk,i);const cls=(need&&sch<need)?"short":"";h+=`<td class="${cls}">${sch}</td>`;}
@@ -488,7 +500,7 @@ function renderDemand(){
     el("demandBody").innerHTML='<div class="tblwrap" style="border-radius:8px">'+h+'</div>';
     el("demandBody").querySelectorAll("input[data-dk]").forEach(inp=>{const _dfn=e=>{
       const k=e.target.dataset.dk,i=+e.target.dataset.day;DEMAND[wk][i]=DEMAND[wk][i]||{};const val=e.target.value.trim();
-      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);if(ci.tagName==="INPUT")ci.placeholder=_c?Math.round(_c):"";else ci.textContent=_c?Math.round(_c):"\u2013";}}
+      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);{try{const _raC=el("demandBody").querySelector('[data-need="ra"][data-day="'+i+'"]');if(_raC)_raC.innerHTML="<b>"+raNeeded(wk,i)+"</b>";const _spC=el("demandBody").querySelector('[data-need="sup"][data-day="'+i+'"]');if(_spC)_spC.innerHTML="<b>"+supsNeeded(wk,i)+"</b>";}catch(e){}}if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);const _dd=DEMAND[wk][i]||{};const _has=(_dd.ooo!=null)||(_dd.house!=null)||(_dd.tol!=null)||(_dd.outsourced!=null)||(_dd.occ!=null);if(ci.tagName==="INPUT")ci.placeholder=_has?String(Math.round(_c)):"";else ci.textContent=_has?String(Math.round(_c)):"\u2013";}}
     };inp.addEventListener("input",_dfn);inp.addEventListener("keydown",function(e){const all=[...el("demandBody").querySelectorAll("input[data-dk]")];const ix=all.indexOf(e.target);if(e.key==="Enter"){e.preventDefault();if(ix>=0&&ix+1<all.length){all[ix+1].focus();try{all[ix+1].select();}catch(_){}}else{e.target.blur();}}});inp.addEventListener("blur",function(){setTimeout(function(){const a=document.activeElement;const box=el("demandBody");if(!box||!a||!box.contains(a)){render();}},0);});});if(PENDING_DFOCUS){const _q=el("demandBody").querySelector('input[data-dk="'+PENDING_DFOCUS.k+'"][data-day="'+PENDING_DFOCUS.i+'"]');if(_q){_q.focus();try{_q.select();}catch(_e){}}PENDING_DFOCUS=null;}
   } else {
     el("demandTitle").textContent="Occupancy & arrivals (reference)";
@@ -501,7 +513,7 @@ function renderDemand(){
     h+=`</table>`;el("demandBody").innerHTML='<div class="tblwrap" style="border-radius:8px">'+h+'</div>';
     el("demandBody").querySelectorAll("input[data-dk]").forEach(inp=>{const _dfn=e=>{
       const k=e.target.dataset.dk,i=+e.target.dataset.day;DEMAND[wk][i]=DEMAND[wk][i]||{};const val=e.target.value.trim();
-      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);if(ci.tagName==="INPUT")ci.placeholder=_c?Math.round(_c):"";else ci.textContent=_c?Math.round(_c):"\u2013";}}
+      if(!EDIT||weekLocked()){renderDemand();return;} let raw=(val||"").replace(/[^0-9.\-]/g,"");if(raw===""){delete DEMAND[wk][i][k];}else{let num=parseFloat(raw);if(isNaN(num)){delete DEMAND[wk][i][k];}else if(k==="occ"){num=Math.max(0,Math.min(100,num))/100;DEMAND[wk][i][k]=num;}else{if(k==="ooo"||k==="house"||k==="tol"||k==="outsourced"){const cap=CFG.HSK.rules.roomsTotal||421;let val=Math.max(0,Math.round(num));const dd=DEMAND[wk][i]||{};let others=0;["ooo","house","tol","outsourced"].forEach(function(kk){if(kk!==k)others+=(dd[kk]!=null?dd[kk]:(kk==="outsourced"?OUTSOURCED_DEFAULT:0));});if(val+others>cap)val=Math.max(0,cap-others);if(String(val)!==raw)e.target.value=val;DEMAND[wk][i][k]=val;}else{DEMAND[wk][i][k]=Math.max(0,Math.round(num));}}}save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(wk);{try{const _raC=el("demandBody").querySelector('[data-need="ra"][data-day="'+i+'"]');if(_raC)_raC.innerHTML="<b>"+raNeeded(wk,i)+"</b>";const _spC=el("demandBody").querySelector('[data-need="sup"][data-day="'+i+'"]');if(_spC)_spC.innerHTML="<b>"+supsNeeded(wk,i)+"</b>";}catch(e){}}if((k==="occ"||k==="ooo"||k==="house"||k==="tol"||k==="outsourced")){const ci=el("demandBody").querySelector('[data-dk="credits"][data-day="'+i+'"]');if(ci&&(ci.value===""||ci===document.activeElement===false)){const _c=creditsFor(wk,i);const _dd=DEMAND[wk][i]||{};const _has=(_dd.ooo!=null)||(_dd.house!=null)||(_dd.tol!=null)||(_dd.outsourced!=null)||(_dd.occ!=null);if(ci.tagName==="INPUT")ci.placeholder=_has?String(Math.round(_c)):"";else ci.textContent=_has?String(Math.round(_c)):"\u2013";}}
     };inp.addEventListener("input",_dfn);inp.addEventListener("keydown",function(e){const all=[...el("demandBody").querySelectorAll("input[data-dk]")];const ix=all.indexOf(e.target);if(e.key==="Enter"){e.preventDefault();if(ix>=0&&ix+1<all.length){all[ix+1].focus();try{all[ix+1].select();}catch(_){}}else{e.target.blur();}}});inp.addEventListener("blur",function(){setTimeout(function(){const a=document.activeElement;const box=el("demandBody");if(!box||!a||!box.contains(a)){render();}},0);});});if(PENDING_DFOCUS){const _q=el("demandBody").querySelector('input[data-dk="'+PENDING_DFOCUS.k+'"][data-day="'+PENDING_DFOCUS.i+'"]');if(_q){_q.focus();try{_q.select();}catch(_e){}}PENDING_DFOCUS=null;}
   }
 }
@@ -541,10 +553,8 @@ function renderFlags(){
   // busy-day marker (FO: arrivals/departures >= 100)
   if(DEPT==="FO"){for(let i=0;i<7;i++){const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if((d.arr>=100)||(d.dep>=100))out.push(`<li><span class="pill warn">BUSY</span> ${DOW[i]}: ${d.arr||0} arr / ${d.dep||0} dep (\u2265100) \u2014 heavy day.</li>`);}}
   // PT hour caps (FO)
-  if(DEPT==="FO"){/* OT not listed in checks — shown red on the hours cell instead */
+  if(DEPT==="FO"){
   const {ptMin,ptMax}=dept.rules;dept.staff.filter(s=>s.type==="PT").forEach(s=>{let days=0;for(let i=0;i<7;i++)if(classify(cellVal(s.n,i))==="work")days++;const est=days*7.5; if(est>ptMax)out.push(`<li><span class="pill warn">PT CAP</span> ${s.n}: ~${est}h > ${ptMax}h max.</li>`); if(days>0&&est<ptMin)out.push(`<li><span class="pill warn">PT MIN</span> ${s.n}: ~${est}h < ${ptMin}h min.</li>`);});}
-  // everyone has ≥ required off? (hotel norm: ≥2 R-OFF/OFF per week)
-  /* OFFs norm check removed — too noisy on partial schedules */
   if(!weekIsPast())dept.staff.forEach(s=>{for(let i=0;i<7;i++){if(classify(cellVal(s.n,i))!=="work")continue;const dn=DOW[i];const av=(s.avail&&s.avail[dn])||(s.off&&s.off.includes(dn)?{off:true}:null);if(av){const sched=cellVal(s.n,i);const clashes=av.off?true:shiftOverlaps(sched,av.from||"00:00",av.to||"23:59");if(clashes){const un=av.off?"all day":`${av.from||"00:00"}\u2013${av.to||"23:59"}`;out.push(`<li><span class="pill warn">CONFLICT</span> ${s.n} is unavailable ${dn} (${un})${av.reason?" \u2014 "+av.reason:""}, but is scheduled ${sched}.</li>`);}}}});
   dept.staff.forEach(s=>{const w=personWeek(s);if(w.unk)out.push(`<li><span class="pill warn">HOURS?</span> ${s.n}: ${w.unk} day(s) with unreadable hours \u2014 enter a time window (e.g. 14:00-22:30).</li>`);});
   if(!weekIsPast()){const una=[];for(let i=0;i<7;i++){const list=dept.staff.filter(s=>s.employed!==false&&!s.oncall&&s.role!=="Relievers (on-call)"&&!(s.role||"").startsWith("Outsourced")&&!cellVal(s.n,i)).map(s=>s.n);if(list.length){const _sid="una_"+DEPT+"_"+i;una.push(`<li><span class="pill" style="background:#eef2f6;color:#4a4a4a">UNASSIGNED</span> ${DOW[i]}: ${list.length} \u2014 <span class="muted">${list.slice(0,8).join(", ")}</span>${list.length>8?` <a href="javascript:void(0)" onclick="this.nextSibling.style.display='inline';this.style.display='none';return false" style="color:#1b4b8a">(+${list.length-8} more)</a><span style="display:none" class="muted">, ${list.slice(8).join(", ")}</span>`:""}</li>`);}}if(una.length)out.push(...una);}
@@ -779,7 +789,7 @@ function saveShift(){
   setCell(SM.name,SM.day,val);closeShift();
 }
 function closeShift(){el("shiftModal").style.display="none";}
-document.addEventListener("mousedown",e=>{const sm=el("shiftModal");if(sm&&sm.style.display==="flex"&&e.target===sm)closeShift();const av=el("avModal");if(av&&e.target===av)closeAvail();});
+document.addEventListener("mousedown",e=>{const sm=el("shiftModal");if(sm&&sm.style.display==="flex"&&e.target===sm)closeShift();const av=el("avModal");if(av&&e.target===av)closeAvail();document.querySelectorAll(".avsum").forEach(sp=>{if(sp!==e.target&&!sp.contains(e.target)){sp.style.whiteSpace="nowrap";sp.style.overflow="hidden";}});});
 
 /* ---------- AUTH (view-only vs scheduler) ---------- */
 function lockedClick(){if(EDIT&&weekLocked()){uiAlert("This week is locked. Use the lock button (top-right) to unlock.");}}
@@ -896,11 +906,11 @@ function renderSettings(){
   ${SETDEPT==="HSK"?`<div class="mrow"><label class="small">Credits per RA <input class="sfield" style="width:60px" value="${D.rules.creditsPerRA||14}" onchange="setRule('creditsPerRA',this.value,14)"></label><label class="small">Credit \u00d7 factor <input class="sfield" style="width:60px" value="${D.rules.creditMult||1.14}" onchange="setRule('creditMult',this.value,1.14)"></label><label class="small">Arrivals per Sup <input class="sfield" style="width:60px" value="${D.rules.arrivalsPerSup||25}" onchange="setRule('arrivalsPerSup',this.value,25)"></label></div>`:`<div class="mrow"><label class="small">Greeters needed <input class="sfield" style="width:50px" value="${(D.coverage&&D.coverage.Greeter&&D.coverage.Greeter.min)||2}" onchange="setGreeter(this.value)"></label></div>`}
   <div class="mrow"><label class="small">Overtime after (hrs) <input class="sfield" style="width:56px" value="${D.rules.otAfterHrs||40}" onchange="setRule('otAfterHrs',this.value,40)"></label> <span class="small muted">Workweek Thu\u2013Wed</span></div>
   <hr>
-  <div class="cfgrow"><b>Default shifts (${SETDEPT})</b> <input class="sfield" style="min-width:420px" id="shiftBox" value="${esc((D.shifts||[]).join(', '))}" placeholder="e.g. 07:00-15:30, 14:00-22:30"><button onclick="saveShifts()">Save</button> <span class="muted">These show as suggestions when entering a shift.</span></div>
+  <div class="cfgrow"><b>Default shifts (${SETDEPT})</b> <input class="sfield" style="flex:1 1 260px;max-width:100%;min-width:0" id="shiftBox" value="${esc((D.shifts||[]).join(', '))}" placeholder="e.g. 07:00-15:30, 14:00-22:30"><button onclick="saveShifts()">Save</button> <span class="muted">These show as suggestions when entering a shift.</span></div>
   <hr>
   <div class="cfgrow"><b>${D.label} \u2014 staff &amp; constraints</b> <span class="muted">Edits apply immediately &amp; sync; no re-upload required.</span> <button class="brand" onclick="addStaffRow()">+ Add staff</button></div>
   <div class="cfgrow"><span class="muted">Filter:</span> <select class="sfield" id="fRole" onchange="SFILT.role=this.value;renderSettings()"><option value="">All roles</option>${D.roles.map(r=>`<option ${SFILT.role===r?"selected":""}>${esc(r)}</option>`).join("")}</select> <select class="sfield" id="fType" onchange="SFILT.type=this.value;renderSettings()"><option value="">All types</option>${["FT","PT","OC","INT","OUT"].map(t=>`<option ${SFILT.type===t?"selected":""}>${t}</option>`).join("")}</select> <input class="sfield" id="fName" placeholder="Name contains\u2026" value="${esc(SFILT.name||"")}" oninput="SFILT.name=this.value;clearTimeout(window._ft);window._ft=setTimeout(renderSettings,250)"> <button onclick="SFILT={role:'',type:'',name:''};renderSettings()">Clear</button></div>
-  <div style="overflow:auto"><table><tr><th>Name</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Note</th><th>Availability</th><th></th></tr>`;
+  <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px"><table><colgroup><col style="width:170px"><col style="width:150px"><col style="width:70px"><col style="width:80px"><col style="width:190px"><col style="width:230px"><col style="width:34px"></colgroup><tr><th>Name</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Note</th><th>Availability</th><th></th></tr>`;
   D.staff.forEach((st,i)=>{
     if(SFILT.role&&st.role!==SFILT.role)return;
     if(SFILT.type&&st.type!==SFILT.type)return;
@@ -910,9 +920,9 @@ function renderSettings(){
     <td><input class="sfield" style="width:170px" data-si="${i}" data-k="n" value="${esc(st.n)}"></td>
     <td><select class="sfield" data-si="${i}" data-k="role">${D.roles.map(r=>`<option ${st.role===r?"selected":""}>${esc(r)}</option>`).join("")}</select></td>
     <td><select class="sfield" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option ${st.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
-    <td><input class="sfield" style="width:64px" data-si="${i}" data-k="rate" value="${st.rate!=null?st.rate:""}" placeholder="${DEFAULT_RATE[st.type]||''}"></td>
+    <td><input class="sfield" style="width:64px;color:${(st.rate!=null&&+st.rate!==(DEFAULT_RATE[st.type]||11))?'#1f2d3d':'#9aa5b1'}" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
     <td><input class="sfield" style="width:200px" data-si="${i}" data-k="note" value="${esc(st.note||'')}"></td>
-    <td><div style="display:flex;align-items:center;gap:4px"><span class="small" style="flex:1;color:#4a4a4a">${avSummary(st)||"<span class='muted'>&mdash;</span>"}</span><button onclick="editAvail(${i})" title="Edit availability">📅</button></div></td>
+    <td><div style="display:flex;align-items:center;gap:4px;max-width:100%"><span class="small avsum" title="Click to expand" onclick="this.style.whiteSpace=(this.style.whiteSpace==='normal'?'nowrap':'normal');this.style.overflow=(this.style.overflow==='visible'?'hidden':'visible')" style="flex:1 1 auto;min-width:0;color:#4a4a4a;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;cursor:pointer">${avSummary(st)||"<span class='muted'>&mdash;</span>"}</span><button style="flex:0 0 auto" onclick="editAvail(${i})" title="Edit availability">📅</button></div></td>
     <td><button onclick="removeStaffRow(${i})" title="Mark no longer employed">\u2715</button></td>
   </tr>`;});
   h+=`</table></div>`;
@@ -926,7 +936,7 @@ function renderSettings(){
   b.querySelectorAll("[data-si]").forEach(inp=>inp.addEventListener("change",e=>{
     const i=+e.target.dataset.si,k=e.target.dataset.k,v=e.target.value;const st=CFG[SETDEPT].staff[i];
     if(k==="off")st.off=v.split(",").map(x=>x.trim()).filter(Boolean);
-    else if(k==="rate")st.rate=(v===""?undefined:parseFloat(v));
+    else if(k==="rate"){const def=(DEFAULT_RATE[st.type]||11);if(v===""){st.rate=undefined;e.target.value=def.toFixed(2);e.target.style.color="#9aa5b1";}else{let n=Math.round(parseFloat(v)*100)/100;if(isNaN(n)){st.rate=undefined;e.target.value=def.toFixed(2);e.target.style.color="#9aa5b1";}else{st.rate=n;e.target.value=n.toFixed(2);e.target.style.color=(n!==def)?"#1f2d3d":"#9aa5b1";}}}
     else st[k]=v;
     save("hotel_cfg",CFG);
   }));
@@ -993,10 +1003,13 @@ async function prefillAvail(i){const st=CFG[SETDEPT].staff[i];if(!st.note)return
   if(!(await uiConfirm("Set availability from the note?\n\n"+summary+"\n\n(Existing availability for these days is replaced.)")))return;
   st.avail=st.avail||{};Object.assign(st.avail,parsed);syncOff(st);save("hotel_cfg",CFG);renderSettings();
 }
-function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];const parts=[];(order).forEach(d=>{const a=(st.avail||{})[d];if(!a)return;if(a.off)parts.push(d+" OFF"+(a.reason&&a.reason.toLowerCase()!=="off"?" ("+a.reason+")":""));else if(a.from||a.to)parts.push(d+" "+(a.from||"00:00")+"\u2013"+(a.to||"23:59")+(a.reason?" "+a.reason:""));});
-  const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+"\u2192"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"\u2192"+a.to:""));parts.push(_lbl+" "+(a.code||"OFF")+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":""));});
-  const lv=(typeof LEAVES!=="undefined"&&LEAVES[SETDEPT]||[]).filter(r=>r.name===st.n);lv.forEach(r=>parts.push(r.code+" "+r.from+"\u2192"+r.to));
-  return parts.join("; ");}
+function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];const weekly=[];
+  order.forEach(d=>{const a=(st.avail||{})[d];if(!a)return;if(a.off)weekly.push(d+" OFF"+(a.reason&&a.reason.toLowerCase()!=="off"?" ("+a.reason+")":""));else if(a.from||a.to)weekly.push(d+" "+(a.from||"00:00")+"\u2013"+(a.to||"23:59")+(a.reason?" "+a.reason:""));});
+  const dated=[];
+  const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+"\u2192"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"\u2192"+a.to:""));dated.push({from:a.from||k,txt:_lbl+" "+(a.code||"OFF")+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":"")});});
+  const lv=(typeof LEAVES!=="undefined"&&LEAVES[SETDEPT]||[]).filter(r=>r.name===st.n);lv.forEach(r=>dated.push({from:r.from,txt:r.code+" "+r.from+"\u2192"+r.to}));
+  dated.sort((a,b)=>(a.from<b.from?-1:a.from>b.from?1:0));
+  return weekly.concat(dated.map(x=>x.txt)).join("; ");}
 function editAvail(i){const st=CFG[SETDEPT].staff[i];AV={name:st.n};st.avail=st.avail||{};st.availDates=st.availDates||{};
   const bg=document.createElement("div");bg.className="modalbg";bg.id="avModal";bg.style.display="flex";
   bg.innerHTML=`<div class="modal" style="max-width:600px;width:94%"><h2>${esc(st.n)} &mdash; Availability</h2>
@@ -1015,7 +1028,7 @@ function editAvail(i){const st=CFG[SETDEPT].staff[i];AV={name:st.n};st.avail=st.
     <div class="mrow"><label class="small"><input type="checkbox" id="sdPart" onchange="el('sdFrom').style.display=el('sdTo2').style.display=this.checked?'inline-block':'none';el('sdPartHint').style.display=this.checked?'inline':'none';"> Part-day</label>
       <span id="sdPartHint" class="small muted" style="display:none">Unavailable from <input type="time" class="sfield" id="sdFrom"> on the start date<span id="sdEndWrap"> to <input type="time" class="sfield" id="sdTo2"> on the end date (full days in between)</span></span></label></div>
     <div id="sdList" class="small"></div>
-    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button class="brand" onclick="if(el('sdDate').value)addSpecDate();closeAvail()">Done</button></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button class="brand" onclick="doneAvail()">Done</button></div>
   </div>`;
   document.body.appendChild(bg);bg.addEventListener("mousedown",e=>{if(e.target===bg)closeAvail();});
   bg.querySelectorAll(".avq").forEach(b=>b.addEventListener("click",()=>avQuick(b.dataset.q)));
@@ -1052,13 +1065,13 @@ function avQuick(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)re
 async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;st.availDates=st.availDates||{};
   let code=el("sdType").value;if(code.indexOf("Other")===0)code=(el("sdTypeOther").value||"OFF");code=code.toUpperCase();
   const dt=el("sdDate").value;let to=el("sdTo").value;const reason=el("sdReason").value||"";const part=el("sdPart")&&el("sdPart").checked;const pf=part?(el("sdFrom").value||"00:00"):null,pt=part?(el("sdTo2").value||"00:00"):null;
-  if(!dt){uiAlert("Pick a date.");return;}if(!to)to=dt;if(new Date(to)<new Date(dt)){uiAlert("End before start.");return;}
+  if(!dt){uiAlert("Pick a date.");return false;}if(!to)to=dt;if(new Date(to)<new Date(dt)){uiAlert("End before start.");return false;}
   for(const _k in (st.availDates||{})){const _e=st.availDates[_k];if(_e.from&&!(to<_e.from||dt>_e.to)){if(!(await uiConfirm(st.n+" already has "+(_e.code||"leave")+" "+_e.from+"\u2192"+_e.to+" overlapping this range. Add anyway?")))return;break;}}
   const id="D"+dt+"_"+to;st.availDates[id]={from:dt,to:to,part:part,startTime:pf,endTime:pt,code:code,reason:reason};
   // stamp full-day cells (all days for all-day; middle days for a multiday part-day; single part-day stamps nothing)
   for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()+3)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;}}
-  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);if(typeof logChange==="function")logChange("timeoff",code+" "+st.n+" "+dt+(to!==dt?"\u2192"+to:"")+(part?" "+pf+"-"+pt:""));el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";if(el("sdFrom"))el("sdFrom").value="";if(el("sdTo2"))el("sdTo2").value="";if(el("sdPart")){el("sdPart").checked=false;el("sdFrom").style.display=el("sdTo2").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";drawSpec();render();}
-function drawSpec(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;const d=st.availDates||{};const keys=Object.keys(d);
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);if(typeof logChange==="function")logChange("timeoff",code+" "+st.n+" "+dt+(to!==dt?"\u2192"+to:"")+(part?" "+pf+"-"+pt:""));el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";if(el("sdFrom"))el("sdFrom").value="";if(el("sdTo2"))el("sdTo2").value="";if(el("sdPart")){el("sdPart").checked=false;el("sdFrom").style.display=el("sdTo2").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";drawSpec();render();return true;}
+function drawSpec(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;const d=st.availDates||{};const keys=Object.keys(d).sort((a,b)=>{const fa=(d[a].from||a),fb=(d[b].from||b);return fa<fb?-1:fa>fb?1:0;});
   el("sdList").innerHTML=keys.length?("<b>Dates off:</b><br>"+keys.map(k=>{const a=d[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+" \u2192 "+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?" \u2192 "+a.to:""));return `\u2022 ${_lbl} \u2014 ${a.code||"OFF"}${a.reason&&a.reason!==(a.code||"OFF")?" ("+esc(a.reason)+")":""} <a href="javascript:void(0)" onclick="editSpecDate('${k}')">Edit</a> <a href="javascript:void(0)" onclick="delSpecDate('${k}')">Remove</a>`;}).join("<br>")):"<span class='muted'>None.</span>";}
 function editSpecDate(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st||!st.availDates[k])return;const a=st.availDates[k];
   el("sdDate").value=a.from||"";el("sdTo").value=(a.to&&a.to!==a.from)?a.to:"";el("sdReason").value=a.reason||"";
@@ -1068,7 +1081,8 @@ function editSpecDate(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!
 function delSpecDate(k,silent){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;delete (st.availDates||{})[k];save("hotel_cfg",CFG);drawSpec();}
 function syncOff(st){st.off=DOW.filter(d=>st.avail&&st.avail[d]&&st.avail[d].off);} // keep the legacy day-off list in sync
 
-function closeAvail(){const m=el("avModal");if(m)m.remove();renderSettings();}
+async function doneAvail(){if(el("sdDate")&&el("sdDate").value){const ok=await addSpecDate();if(ok===false)return;}closeAvail();}
+let _AVSCROLL=0;function closeAvail(){const w0=document.querySelector("#settingsBody .tblwrap");_AVSCROLL=w0?w0.scrollLeft:0;const m=el("avModal");if(m)m.remove();renderSettings();requestAnimationFrame(()=>{const w=document.querySelector("#settingsBody .tblwrap");if(w)w.scrollLeft=_AVSCROLL;});}
 /* ---------- DATA MENU (export/import/versions in one popup) ---------- */
 async function dataMenu(){
   const pick=await uiDialog("Export as:",["Cancel","JSON","Excel","Change log (CSV)"]);
@@ -1152,9 +1166,9 @@ function seedRoster(){try{
      ["Tarlyn Anap","Outsourced \u2014 J4 Janitorial"],["Sina Masawa","Outsourced \u2014 J4 Janitorial"],
      ["O-much Erich","Outsourced \u2014 Chutter"],["Three-J Kaio","Outsourced \u2014 Chutter"]];
    if(!D.roles.includes("Outsourced \u2014 Chutter"))D.roles.push("Outsourced \u2014 Chutter");
-   OUT.forEach(([n,role])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:"OUT",oncall:true,rate:12,employed:true});have.add(n);}});}
+   OUT.forEach(([n,role])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:"OUT",oncall:true,employed:true});have.add(n);}});}
   const MGRS=[["Jenny De Guzman","FT"],["Cynthia Requino","FT"],["Edna Cortez","FT"],["Roberta Fernandez","FT"],["Editha Fallejo","FT"]];
-  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));MGRS.forEach(([n,t])=>{if(!have.has(n)){D.staff.push({n:n,role:"Managers",type:t,rate:12,employed:true});have.add(n);}});}
+  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));MGRS.forEach(([n,t])=>{if(!have.has(n)){D.staff.push({n:n,role:"Managers",type:t,employed:true});have.add(n);}});}
  const FO={
   "Front Desk Supervisor":[["Katherine Johnson","FT",1]],
   "Front Desk Agents":[["Prince Tarape","FT",0],["Irish Gonzales","FT",0],["Ahmylyn Cabrera","FT",0],["Jema Rokop","FT",0],["Jackrine Jimmy","PT",0],["Sungbin Kang","FT",0],["Jessica Basaliza","PT",0],["Shane Ricoy","PT",0],["Ashley Mandani","OC",0],["Aira Calilung","OC",0],["Kimberly German","OC",0],["Clarence Dimalanta","PT",0]],
@@ -1182,12 +1196,13 @@ function seedRoster(){try{
  };
  function apply(dept,map){const D=CFG[dept];D.staff=D.staff||[];const have=new Set(D.staff.map(s=>s.n));
    Object.entries(map).forEach(([role,list])=>{if(!D.roles.includes(role))D.roles.push(role);
-     list.forEach(([n,type,former])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:type,rate:12,employed:former?false:true});have.add(n);}});});}
+     list.forEach(([n,type,former])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:type,employed:former?false:true});have.add(n);}});});}
  if(!CFG._mgrSeeded){CFG._mgrSeeded=true;} if(!CFG._rosterSeeded){apply("FO",FO);apply("HSK",HSK);CFG._rosterSeeded=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}
  }catch(e){console.warn("roster seed skipped",e);}}
 
 /* ---------- BOOT ---------- */
 (function boot(){
+  try{if(!CFG._rateMig){["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.rate!=null&&+st.rate===(DEFAULT_RATE[st.type]||11))delete st.rate;});});CFG._rateMig=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}}catch(e){}
   migrateAvail();
   seedRoster();
   seedPTORequests();
@@ -1196,7 +1211,7 @@ function seedRoster(){try{
   try{["FO","HSK"].forEach(dp=>{const savedDept=DEPT;DEPT=dp;const ws=mondayOfWeekStartThu(new Date());for(let k=1;k<=8;k++){const d=new Date(ws);d.setDate(d.getDate()-7*k);const wk=weekKey(d);if(!((SETHIST[dp]||{})[wk])){const _cur=WEEK_START;WEEK_START=d;snapshotSettings(dp,wk);WEEK_START=_cur;}}DEPT=savedDept;});}catch(e){}
   const saved=load("hotel_supa",null);
   if(saved){el("supaUrl").value=saved.url;el("supaKey").value=saved.key;connect();}
-  syncNav();render();
+  syncNav();render();fitHeader();
 })();
 </script>
 </body>
