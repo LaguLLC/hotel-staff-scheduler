@@ -472,11 +472,18 @@ function renderDemand(){
     // needed row
     h+=`<tr><td class="demand" style="text-align:left"><b>RAs needed</b> <span class="small">(÷${CFG.HSK.rules.creditsPerRA||14})</span></td>`;
     let needTotal=0;
-    for(let i=0;i<7;i++){const need=raNeeded(wk,i);needTotal+=need;h+=`<td class="demand"><b>${need?need:(EDIT?"":"\u2013")}</b></td>`;}
+    for(let i=0;i<7;i++){const need=raNeeded(wk,i);needTotal+=need;const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};const hasD=(dd.ooo!=null)||(dd.house!=null)||(dd.tol!=null)||(dd.outsourced!=null)||(dd.occ!=null)||(dd.credits!=null);h+=`<td class="demand"><b>${hasD?need:(EDIT?"":"\u2013")}</b></td>`;}
     h+=`</tr>`;
     // scheduled row (working RAs)
     h+=`<tr><td class="demand" style="text-align:left">RAs scheduled</td>`;
     for(let i=0;i<7;i++){const sch=countWorking("Room Attendants",i);const need=raNeeded(wk,i);const cls=(need&&sch<need)?"short":"";h+=`<td class="${cls}">${sch}</td>`;}
+    h+=`</tr>`;
+    // Supervisors needed (arrivals \u00f7 25) + scheduled
+    h+=`<tr><td class="demand" style="text-align:left"><b>Sups needed</b> <span class="small">(\u00f7${CFG.HSK.rules.arrivalsPerSup||25})</span></td>`;
+    for(let i=0;i<7;i++){const sn=supsNeeded(wk,i);const dd=(DEMAND[wk]&&DEMAND[wk][i])||{};h+=`<td class="demand"><b>${dd.arr!=null?sn:(EDIT?"":"\u2013")}</b></td>`;}
+    h+=`</tr>`;
+    h+=`<tr><td class="demand" style="text-align:left">Sups scheduled</td>`;
+    for(let i=0;i<7;i++){const sch=countWorking("Supervisors",i);const need=supsNeeded(wk,i);const cls=(need&&sch<need)?"short":"";h+=`<td class="${cls}">${sch}</td>`;}
     h+=`</tr></table>`;
     el("demandBody").innerHTML='<div class="tblwrap" style="border-radius:8px">'+h+'</div>';
     el("demandBody").querySelectorAll("input[data-dk]").forEach(inp=>{const _dfn=e=>{
@@ -500,16 +507,8 @@ function renderDemand(){
 }
 
 const OUTSOURCED_DEFAULT=50; /* JJ+J4 crews clean a constant ~50 rooms/day (Thu-Sun) across every sheet */
-function creditsFor(wk,i){const R=CFG.HSK.rules;const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if(d.credits!=null)return d.credits;const hasAny=(d.ooo!=null)||(d.house!=null)||(d.tol!=null)||(d.outsourced!=null);if(!hasAny)return 0;const ooo=d.ooo||0,house=d.house||0,tol=d.tol||0,out=(d.outsourced!=null?d.outsourced:OUTSOURCED_DEFAULT);const net=R.roomsTotal-ooo-house-tol-out;return Math.max(0,net)*R.creditMult;}
-function raNeeded(wk,i){const R=CFG.HSK.rules;const d=(DEMAND[wk]&&DEMAND[wk][i])||{};let credits=d.credits;
-  if(credits==null){ // need occupancy OR credits; if neither entered -> 0 (don't assume full house)
-    if(d.occ==null)return 0;
-    const occ=d.occ>1?d.occ/100:d.occ; const deducted=R.roomsTotal*occ;
-    credits=Math.max(0,deducted)*R.creditMult;
-  }
-  if(credits==null||isNaN(credits))return 0;
-  return Math.ceil(credits/R.creditsPerRA);
-}
+function creditsFor(wk,i){const R=CFG.HSK.rules;const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if(d.credits!=null)return d.credits;const hasAny=(d.ooo!=null)||(d.house!=null)||(d.tol!=null)||(d.outsourced!=null);if(hasAny){const ooo=d.ooo||0,house=d.house||0,tol=d.tol||0,out=(d.outsourced!=null?d.outsourced:OUTSOURCED_DEFAULT);const net=R.roomsTotal-ooo-house-tol-out;return Math.max(0,net)*R.creditMult;}if(d.occ!=null){const occ=d.occ>1?d.occ/100:d.occ;return Math.max(0,R.roomsTotal*occ)*R.creditMult;}return 0;}
+function raNeeded(wk,i){const R=CFG.HSK.rules;const c=creditsFor(wk,i);if(!c||isNaN(c))return 0;return Math.ceil(c/R.creditsPerRA);}
 function supsNeeded(wk,i){const d=(DEMAND[wk]&&DEMAND[wk][i])||{};if(d.arr==null)return 0;return Math.ceil(d.arr/CFG.HSK.rules.arrivalsPerSup);}
 function countWorking(role,day){const dept=CFG[DEPT];return dept.staff.filter(s=>s.role===role&&classify(cellVal(s.n,day))==="work").length;}
 function personWeek(s){let hrs=0,unk=0,wd=0;const brk=(CFG[DEPT].rules&&CFG[DEPT].rules.breakHrs)||0;for(let i=0;i<7;i++){const v=cellVal(s.n,i);const ad=actualDay(s.n,i);if(ad!=null){hrs+=(+ad);if(classify(v)==="work")wd++;}else if(classify(v)==="work"){wd++;const hh=shiftHours(v);if(hh==null)unk++;else hrs+=Math.max(0,hh-brk);}}hrs=Math.round(hrs*2)/2;const r=rateOf(s);const reg=Math.min(hrs,OT_AFTER),ot=Math.max(0,hrs-OT_AFTER);const cost=(reg*r+ot*r*OT_MULT);return {hrs,unk,reg:Math.round(reg*2)/2,ot:Math.round(ot*2)/2,cost:cost.toFixed(2)};}
@@ -830,7 +829,7 @@ function renderReadme(){
     <li><b>Front Office staffing driver:</b> FO headcount does not track occupancy (nearly flat) and only loosely tracks arrivals; it appears driven by day-of-week + fixed role coverage. The real staffing rule is undetermined, so FO understaffing is not auto-flagged yet.</li>
     <li><b>Departures vs Check-outs (HSK):</b> the sheet has both as separate rows; Departures = guests leaving, Check-outs = rooms actually checked out (weighted heavier in the credit math). The app weights check-outs more heavily in credits; the distinction needs verification.</li>
     <li><b>Note types:</b> staff notes mix unavailability (\u201cMW off\u201d), shift preferences (\u201cTTH 12-8pm\u201d), and date-range leave (\u201cAira 02/01-03/02 lwop\u201d); the app auto-converts only the unavailability parts.</li>
-    <li><b>Outsourced crew shifts:</b> the sheet lists JJ Global, J4 Janitorial, and Chutter with start-only labels (e.g. \u201c9:AM\u201d, \u201c11AM\u201d) or am/pm ranges. The app assumes an 8-hour shift (supervisors 7h) from each start time so hours and cost compute; confirm actual durations. These crews are paid indirectly, so they are included in the hours/cost totals.</li>
+    <li><b>Outsourced crew shifts</b> \u2014 <mark style="background:#ffe08a">PENDING VERIFICATION:</mark> the sheet lists JJ Global, J4 Janitorial, and Chutter with start-only labels (e.g. \u201c9:AM\u201d, \u201c11AM\u201d) or am/pm ranges. The app assumes an 8-hour shift (supervisors 7h) from each start time so hours and cost compute; confirm actual durations. These crews are paid indirectly, so they are included in the hours/cost totals.</li>
     <li><b>Standard shift times:</b> FO: 07:00, 11:00, 14:00, 19:30, 22:30. HSK: 7\u20133:30pm, 8\u20134:30pm, 9am\u20135:30pm, 3pm\u201311:30pm, 10:30\u20137am (GY).</li>
     <li><b>Pay rates:</b> the per-person $/h values are placeholders (FT $12, PT $11, etc.); actual wages are unverified.</li>
     <li><b>Breaks:</b> the Excel does not subtract break time from shift hours; whether paid hours should be net of a break is unverified (set it in Settings).</li>
@@ -1135,7 +1134,7 @@ function effStaff(s){ // return the person's constraints as they were for the VI
   return {off:s.off,avail:s.avail,availDates:s.availDates,noGY:s.noGY};
 }
 function TOUCH(scope){try{if(typeof TOUCHED==="undefined")return;const key=scope||DEPT;TOUCHED[key]=new Date().toISOString();save("hotel_touched",TOUCHED);}catch(e){}}
-function lastEditedLine(){const f=TOUCHED.FO,h=TOUCHED.HSK,se=TOUCHED.SET;const parts=[];if(f)parts.push("FO "+new Date(f).toLocaleString());if(h)parts.push("HSK "+new Date(h).toLocaleString());if(se)parts.push("Settings "+new Date(se).toLocaleString());return parts.length?("Last edited \u2014 "+parts.join(" \u00b7 ")):"";}
+function lastEditedLine(){const f=TOUCHED.FO,h=TOUCHED.HSK,se=TOUCHED.SET;const parts=[];if(f)parts.push("FO "+new Date(f).toLocaleString());if(h)parts.push("HSK "+new Date(h).toLocaleString());if(se)parts.push("Settings "+new Date(se).toLocaleString());return parts.length?("Last edited \u2014 "+parts.join(" \u00b7 ")):"No changes recorded yet on this device.";}
 function seedPTORequests(){try{const reqs=[
     {name:"Nicole Noriega",code:"PTO",from:"2026-10-11",to:"2026-10-16"},
     {name:"Nicole Noriega",code:"PTO",from:"2026-06-12",to:"2026-06-22"},
