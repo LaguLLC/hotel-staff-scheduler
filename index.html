@@ -946,7 +946,7 @@
   <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeShift()">Cancel</button><button class="brand" onclick="saveShift()">Save</button></div>
 </div></div>
 <script>
-const APP_VERSION="1.4";
+const APP_VERSION="1.6";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 /* ---------- IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
 function uiAlert(msg){return uiDialog(msg,["OK"]).then(()=>{});}
@@ -1676,6 +1676,17 @@ function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[d
   // WEEK TOTAL implicitly already assumed for them, with no way to tell the two apart. Clearing it here keeps both
   // numbers consistent going forward.
   try{if(ACTUAL[DEPT]&&ACTUAL[DEPT][wk]&&ACTUAL[DEPT][wk][name]!=null){delete ACTUAL[DEPT][wk][name];save("hotel_actual",ACTUAL);}}catch(e){}
+  // FOUND AND FIXED A REAL BUG: this already cleared a stale WHOLE-WEEK actual-hours override the moment any
+  // cell changed (see the comment on the block just above) — but never the PER-DAY ACTUALD override for the
+  // SPECIFIC day being edited. So typing real hours for a day (via the ✎ icon) while it was a working shift,
+  // then LATER changing that same day to OFF/R-OFF/leave/blank through the ordinary shift editor, left the old
+  // per-day hours entry sitting in ACTUALD — invisible in personWeek() (already fixed to skip leave/off days
+  // outright) but NOT skipped by the schedule grid's own separate per-cell OT/PT-cap running-total loop, which
+  // read that stale entry before ever checking the day's classification — so a PT staffer marked off/on-leave
+  // could still show a leftover PT-CAP border on that very cell from an old, now-irrelevant hours entry. Clearing
+  // it here, at the point the day is actually re-classified away from "work", closes this at the root rather than
+  // only patching the grid's own display logic downstream.
+  try{if(classify(val)!=="work"&&ACTUALD[DEPT]&&ACTUALD[DEPT][wk]&&ACTUALD[DEPT][wk][name]&&ACTUALD[DEPT][wk][name][day]!=null){delete ACTUALD[DEPT][wk][name][day];save("hotel_actuald",ACTUALD);}}catch(e){}
   // reverse-sync: if a leave code was placed, record it as a one-off availDate for that person+date
   try{const st=CFG[DEPT].staff.find(x=>x.n===name);if(st){const iso=weekKey(dayDate(day));st.availDates=st.availDates||{};const isLeave=["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB"].includes((val||"").toUpperCase());/* "HU" removed from this list \u2014 VERIFIED it is not a leave/absence code; in the source Excel it always appears attached to a working-day marker (e.g. "1 HU"), used to note a room-count adjustment for that Room Attendant, not an absence. See Readme. */const id="D"+iso+"_"+iso;if(isLeave){st.availDates[id]={from:iso,to:iso,part:false,code:val.toUpperCase(),reason:"from schedule"};save("hotel_cfg",CFG);}else if(st.availDates[id]&&st.availDates[id].reason==="from schedule"){delete st.availDates[id];save("hotel_cfg",CFG);}}}catch(e){}
   render();}
@@ -2181,7 +2192,7 @@ function render(){
       h+=`<tr><td class="name"><div title="${esc(s.n)}">${s.n} <span class="small">(${TYPE_LABEL[s.type]||s.type}${s.trn?" · TRN":""})</span></div>${(s.note&&!_noteIsRedundantAssignment&&!_noteIsDatedLeaveAnnotation)?`<div class="small">${s.note}</div>`:""}${s.noGY?`<div class="small" style="color:#e0a800">\u26a0 No graveyard</div>`:""}${(DEPT==="HSK"&&s.role==="Room Attendants")?`<div class="small"><span class="muted">Floor/zone:</span> ${floorSelect(s.n,EDIT)}</div>`:""}${(DEPT==="HSK"&&s.role==="Supervisors")?`<div class="small"><span class="muted">Assignment:</span> ${floorSelect(s.n,EDIT)}</div>`:""}</td>`;
       }
       let _cum=0;const _brk=getBreakHrs();
-      for(let i=0;i<7;i++){const _ad=actualDay(s.n,i);const _dh=(_ad!=null)?(+_ad):((classify(cellVal(s.n,i))==="work")?(Math.max(0,(countedShiftHours(cellVal(s.n,i))||0)-_brk)):0);const _pre=_cum;_cum+=_dh;const _cellOT=(_cum>40)&&(_dh>0);
+      for(let i=0;i<7;i++){const _clsI=classify(cellVal(s.n,i));const _ad=actualDay(s.n,i);const _dh=(_clsI==="leave"||_clsI==="off")?0:((_ad!=null)?(+_ad):((_clsI==="work")?(Math.max(0,(countedShiftHours(cellVal(s.n,i))||0)-_brk)):0));const _pre=_cum;_cum+=_dh;const _cellOT=(_cum>40)&&(_dh>0);
         // RE-ADDED per feedback ("I think it did in a previous version"): PT CAP crossing now also flags directly
         // on the schedule grid, not just in the Checks panel — reuses the SAME cumulative `_cum`/`_dh` already
         // being tracked for the OT check above (just a different threshold, PT_MAX_HRS=32 instead of 40), so no
@@ -3535,6 +3546,17 @@ async function enableNotifications(forName,wantsManagerAlerts){
   const perm=await Notification.requestPermission();
   if(perm!=="granted"){uiAlert("Notification permission was not granted \u2014 reminders can't be shown without it.");return false;}
   CFG._notifName=forName||null;CFG._notifManagerAlerts=!!wantsManagerAlerts;CFG._notifEnabled=true;save("hotel_cfg",CFG);
+  // FOUND AND FIXED A REAL BUG (per feedback: "clicked allow on notif popup, ran test at shift start time, no
+  // notif"): startReminderEngine() — the function that actually runs the 60s polling loop calling
+  // maybeLocalNotify() — was ONLY ever invoked once, at page-load bootstrap, gated on CFG._notifEnabled already
+  // being true at that point (see the bottom of this file). Enabling notifications for the first time THIS
+  // session (via this exact function, from the Settings button) correctly requested permission and saved the
+  // flag, but nothing ever started the polling loop in the CURRENTLY OPEN tab — it would only have started
+  // automatically on the NEXT page reload, once CFG._notifEnabled was already true at boot. Starting it here,
+  // immediately after the flag is saved, means the very session where notifications are first turned on actually
+  // begins checking right away. startReminderEngine() is already idempotent (`if(_reminderInterval)return;`), so
+  // this is always safe to call even if the engine happens to already be running.
+  startReminderEngine();
   const reg=await registerServiceWorker();
   if(!reg||!("pushManager" in reg)){
     flashNote("Notifications enabled on this device (in-app reminders only \u2014 this browser/device doesn't support background push; see Readme).");
@@ -5825,7 +5847,6 @@ truncate table public.snapshots;
 <details><summary style="cursor:pointer"><b>Raised but not addressed by this app</b> <span class="muted">(click to expand)</span></summary>
 <ul class="small">
 <li><b>Spa's productivity-ratio tracking</b> (hours worked vs. treatment time) — Spa is not a department this app covers today, but a direct review of the spa's own scheduling workbook found it structurally almost identical to Front Office/Housekeeping's own (a monthly shift-code grid with defined shift lengths and per-person/per-day hour totals) — the worked-hours side is exactly what this app already computes for every other department. The treatment-time side genuinely is not present in that workbook; it comes from a separate booking/POS system, confirmed to be tracked manually since Paycom itself does not capture it. A realistic middle path: a Spa tab using the same shift-code/hours mechanism, plus a manually-typed "Treatment hours" input per person/day, computing the ratio automatically from those two numbers.</li>
-<li><b>Attendance gaps between physical presence and system clock-in</b> — addressed by Clock in / Clock out above, an independent cross-check against Paycom's own separate biometric clock, not a replacement for it.</li>
 <li><b>Employees siloed to a single assigned manager</b> — this app takes the opposite approach by design (the full roster is visible to any authorized viewer); worth explicit confirmation on which model is actually preferred, since this is a deliberate design difference, not an oversight.</li>
 </ul>
 </details>
@@ -5845,7 +5866,7 @@ truncate table public.snapshots;
 
 <details><summary style="cursor:pointer"><b>Comparison with current Excel/Paycom workflow</b> <span class="muted">(click to expand)</span></summary>
 <ul class="small">
-<li><b>What this app does not do:</b> it does not replace Paycom for payroll processing or legal timekeeping, and it cannot push schedules into Paycom (no self-serve API path exists without a paid Paycom agreement). Clock in/out is an anonymous, non-verified presence signal, not a certified time clock. Spa and Recreation are not covered. Multi-device sync for Clock in/out, and withdrawing a submitted leave request, are not yet built (see Roadmap). Re-typing planned shifts into Paycom stays a separate, manual step either way.</li>
+<li><b>What this app does not do:</b> it does not replace Paycom for payroll processing or legal timekeeping, and it cannot push schedules into Paycom (no self-serve API path exists without a paid Paycom agreement). Clock in/out is an anonymous, non-verified presence signal, not a certified time clock. Spa and Recreation are not covered. Withdrawing a submitted leave request is not yet built (see Roadmap). Re-typing planned shifts into Paycom stays a separate, manual step either way.</li>
 <li><b>Weekly view:</b> Paycom shows a scrolling list; Excel needs manual colour-copying for a week-at-a-glance layout. This app's grid is colour-coded and reflects an edit for every viewer without a separate copy step.</li>
 <li><b>Roster visibility:</b> Paycom limits roster/attendance visibility to two roles per department. This app's schedule can be seen by any viewer with access to it, independent of that restriction; pay rates and personnel records stay under Paycom's own access controls either way.</li>
 <li><b>Same-day changes:</b> viewing or editing a schedule here does not depend on Paycom access, and a change made by someone with edit access is visible to other viewers without a separate step.</li>
@@ -5893,7 +5914,6 @@ truncate table public.snapshots;
 <li>Leave-request date auto-correction: currently, an invalid From/To range is flagged at submission rather than auto-corrected, to avoid silently overwriting a date entered deliberately.</li>
 <li>Leave-request withdrawal by the submitting staff member: needs a verified identity (an individual Supabase account per worker) to safely scope withdrawal to the original submitter only.</li>
 <li>Auto-computing hours from Clock in/out timestamps, rather than the two systems staying fully independent as they are today.</li>
-<li><s>Multi-device sync for Clock in/out</s> — done: a "checkins" table + push/subscribe pair now mirrors the existing assignments/demand/leave_requests pattern (see the new Supabase schema entry and Clock in / Clock out above).</li>
 <li>Server-side deployment of the attendance-reminders Edge Function (client-side notification support is built; the scheduled server-side push itself needs this hotel's own one-time Supabase deployment — see Notifications &amp; reminders above).</li>
 <li>Per-worker Supabase accounts, enabling a genuinely verified Clock in/out and a real per-person identity for other actions.</li>
 <li>Hotlink integration, and a live Paycom/Dayforce API connection — see Integration status above.</li>
@@ -8039,6 +8059,36 @@ function fixupPMHousemanRosterGap(){try{
   ADD.forEach(([n,type])=>{if(!have.has(n)){D.staff.push({n,role:"PM Houseman",type,employed:true});have.add(n);}});
   CFG._pmHousemanGapFix=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
 }catch(e){console.warn("PM Houseman roster gap fixup skipped",e);}}
+// FOUND AND FIXED A REAL, CONFIRMED BUG this round (per direct request: "verify coverage-minimum table order is
+// consistent with Excel/schedule tables"). seedRoster()'s FO staff map used the role KEY "Interns / F&B" for its
+// intern list — a string that does NOT match "Interns" (the actual role name seed() already uses in D.roles for
+// these exact same people). apply()'s own logic (`if(!D.roles.includes(role))D.roles.push(role);`) runs BEFORE
+// checking whether any staff actually need to be added — so even though every person in this list already existed
+// under the real "Interns" role (meaning zero new staff were ever actually added under this key), the KEY ITSELF
+// still got permanently pushed onto the END of D.roles as a brand-new, phantom role with zero staff. Two
+// consequences, both confirmed: (1) ensureCoverageForAllRoles() (a few lines below) then creates a spurious
+// min:0/day coverage entry for this phantom role, since it exists in D.roles — visible in Settings' Coverage
+// minimums table with a real row, even though NO staff member's actual `role` field is ever set to this string, so
+// it can never appear in the schedule grid at all (that render skips any role with zero matching staff) — a direct,
+// confirmed inconsistency between the Coverage table and the schedule grid the user asked me to verify. (2) Since
+// this phantom role is APPENDED at the very end of D.roles (not inserted into its Excel-correct position), it also
+// broke the very ordering fix (sorting the Coverage table by D.roles.indexOf) that a previous round already put in
+// place — the phantom entry would show up LAST, unrelated to Excel's actual section order. Fixed at the root by
+// renaming the map key to "Interns" (matching D.roles exactly, so apply()'s own `!D.roles.includes(role)` check is
+// false and nothing gets pushed) for any NEW config; this one-time fixup corrects any ALREADY-SAVED config that
+// picked up the phantom role before this fix existed — removing it from D.roles, deleting its spurious coverage
+// entry, and (defensively, though it should never actually occur per apply()'s own name-based guard) reassigning
+// any staff record that somehow ended up with this exact role string back to the real "Interns" role.
+function fixupInternsFBPhantomRole(){try{
+  if(CFG._internsFBFix)return;
+  const D=CFG.FO;if(D&&D.roles){
+    const idx=D.roles.indexOf("Interns / F&B");
+    if(idx>=0)D.roles.splice(idx,1);
+    if(D.coverage&&D.coverage["Interns / F&B"])delete D.coverage["Interns / F&B"];
+    (D.staff||[]).forEach(s=>{if(s.role==="Interns / F&B")s.role="Interns";});
+  }
+  CFG._internsFBFix=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+}catch(e){console.warn("Interns/F&B phantom role fixup skipped",e);}}
 function ensureCoverageForAllRoles(){try{
   let _any=false;
   ["FO","HSK"].forEach(dp=>{
@@ -8075,7 +8125,7 @@ function seedRoster(){try{
  const FO={
   "Front Desk Supervisor":[["Katherine Johnson","FT",1]],
   "Front Desk Agents":[["Prince Tarape","FT",0],["Irish Gonzales","FT",0],["Ahmylyn Cabrera","FT",0],["Jema Rokop","FT",0],["Jackrine Jimmy","PT",0],["Sungbin Kang","FT",0],["Jessica Basaliza","PT",0],["Shane Ricoy","PT",0],["Ashley Mandani","OC",0],["Aira Calilung","OC",0],["Kimberly German","OC",0],["Clarence Dimalanta","PT",0]],
-  "Interns / F&B":[["Haeun Song (Emily)","INT",0],["Eunju Sin (Sarah)","INT",0],["Youjung Kim (Stella)","INT",0],["Jiwon Choi (Joy)","INT",1],["Thanh Nhan Pham","INT",0],["Jiwon Eom (Julie)","INT",0]],
+  "Interns":[["Haeun Song (Emily)","INT",0],["Eunju Sin (Sarah)","INT",0],["Youjung Kim (Stella)","INT",0],["Jiwon Choi (Joy)","INT",1],["Thanh Nhan Pham","INT",0],["Jiwon Eom (Julie)","INT",0]],
   "Concierge Agent":[["Marin Cruz","PT",0]],
   "Greeter":[["Bella Millonzi","PT",0]], /* "Jada Deem-Hinson" removed from this list — VERIFIED against all 3 available FO Excel sheets (07/23\u201308/12) that consistently show her as "Jada (Abi) Deem-Hinson": this was a duplicate of the already-active seed() entry under that name, caused by a name-spelling mismatch, not a second person or a genuine former employee. */
   "Bell Captain":[["Mc Lester Camara","FT",0]],
@@ -8224,6 +8274,7 @@ function seedRoster(){try{
   fixupChutterCodeRename();
   fixupJohnCanlasCapitalization();
   fixupPublicAreaSupervisors();
+  fixupInternsFBPhantomRole();
   fixupRoleOrder();
   ensureCoverageForAllRoles();
   fixupPMHousemanRosterGap();
