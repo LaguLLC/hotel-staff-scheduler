@@ -111,6 +111,18 @@
   button.mini{height:24px;padding:0 8px;font-size:11px;box-sizing:border-box;vertical-align:middle;line-height:1;}
   button.brand{background:#2c9e5f;color:#fff;border-color:#2c9e5f;}
   button.ghostw{background:transparent;color:#fff;border-color:rgba(255,255,255,.5);}
+  /* FOUND AND FIXED A REAL BUG this round (per feedback: "Connect button height inconsistent with view only
+     button"): both buttons already share the exact same base padding/font-size (no .mini class on either), so
+     in principle their box heights should already match — but a header button whose label contains an emoji
+     glyph (the View-only button's own leading "\ud83d\udd12") can render with a taller natural line-height than a
+     plain-text label in the SAME font-size, since emoji fallback fonts often carry different ascent/descent
+     metrics than the surrounding text font — the exact same class of cross-glyph height inconsistency already
+     found and fixed once before for button.mini elsewhere in this file. Rather than guessing at a padding
+     tweak for just these two buttons, every header button now gets one explicit, fixed height (27px, matching
+     this app's own already-established base button height) via box-sizing + flex centering — this guarantees
+     EVERY header button (Prev/Next, Connect, View-only, and any future one) is pixel-identical regardless of
+     which glyphs its own label happens to contain. */
+  header button{height:27px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1;}
   button.weeknav:disabled{opacity:.35;cursor:not-allowed;}
   .deptbtn{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;}
   .deptbtn.active{background:#fff;color:var(--brand);font-weight:700;}
@@ -934,7 +946,7 @@
   <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeShift()">Cancel</button><button class="brand" onclick="saveShift()">Save</button></div>
 </div></div>
 <script>
-const APP_VERSION="1.3";
+const APP_VERSION="1.4";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 /* ---------- IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
 function uiAlert(msg){return uiDialog(msg,["OK"]).then(()=>{});}
@@ -2953,7 +2965,7 @@ function countWorking(role,day){const dept=CFG[DEPT];return dept.staff.filter(s=
 // still uses the RAW shiftHours(v) result for its null-check, since "was this text parseable at all" is a
 // completely separate question from "do these hours count toward the total" — a task cell with a perfectly
 // readable time but counting turned off is NOT unreadable, it's just deliberately excluded from the sum.
-function personWeek(s){let hrs=0,unk=0,wd=0;const brk=getBreakHrs();for(let i=0;i<7;i++){const v=cellVal(s.n,i);const ad=actualDay(s.n,i);if(ad!=null){hrs+=(+ad);if(classify(v)==="work")wd++;}else if(classify(v)==="work"){wd++;const hh=shiftHours(v);if(hh==null)unk++;else{const ch=countedShiftHours(v);hrs+=Math.max(0,(ch||0)-brk);}}}hrs=Math.round(hrs*2)/2;const r=rateOf(s);const reg=Math.min(hrs,OT_AFTER),ot=Math.max(0,hrs-OT_AFTER);const cost=(reg*r+ot*r*OT_MULT);return {hrs,unk,reg:Math.round(reg*2)/2,ot:Math.round(ot*2)/2,cost:cost.toFixed(2)};}
+function personWeek(s){let hrs=0,unk=0,wd=0;const brk=getBreakHrs();for(let i=0;i<7;i++){const v=cellVal(s.n,i);const cls=classify(v);if(cls==="leave"||cls==="off")continue;const ad=actualDay(s.n,i);if(ad!=null){hrs+=(+ad);if(cls==="work")wd++;}else if(cls==="work"){wd++;const hh=shiftHours(v);if(hh==null)unk++;else{const ch=countedShiftHours(v);hrs+=Math.max(0,(ch||0)-brk);}}}hrs=Math.round(hrs*2)/2;const r=rateOf(s);const reg=Math.min(hrs,OT_AFTER),ot=Math.max(0,hrs-OT_AFTER);const cost=(reg*r+ot*r*OT_MULT);return {hrs,unk,reg:Math.round(reg*2)/2,ot:Math.round(ot*2)/2,cost:cost.toFixed(2)};}
 // NEW this round (starting on the Paycom/Dayforce/Hotlink integration, per explicit request): a per-DAY
 // breakdown companion to personWeek() above, for the new Payroll & Time (CSV) export — reuses the EXACT SAME
 // hour-calculation logic personWeek() already uses (an actualDay() override, when present, else
@@ -2971,9 +2983,9 @@ function personDayBreakdown(s){
   for(let i=0;i<7;i++){
     const v=cellVal(s.n,i);const cls=classify(v);const ad=actualDay(s.n,i);
     let dayHrs=0,isLeave=false,leaveCode=null,unk=false;
-    if(ad!=null){dayHrs=+ad;}
+    if(cls==="leave"){isLeave=true;leaveCode=v.toUpperCase().trim();}
+    else if(ad!=null){dayHrs=+ad;}
     else if(cls==="work"||cls==="special"){const hh=shiftHours(v);if(hh==null){unk=true;}else{const ch=countedShiftHours(v);dayHrs=Math.max(0,(ch||0)-brk);}}
-    else if(cls==="leave"){isLeave=true;leaveCode=v.toUpperCase().trim();}
     const before=cum;cum=Math.round((cum+dayHrs)*2)/2;
     const reg=Math.max(0,Math.min(cum,OT_AFTER)-Math.min(before,OT_AFTER));
     const ot=Math.max(0,(cum-before)-reg);
@@ -5986,7 +5998,7 @@ function setTaskCodesCombineTime(v){CFG.taskCodesCombineTime=!!v;save("hotel_cfg
 function setShiftBandCreditMode(v){CFG.shiftBandCreditMode=(v==="overlap")?"overlap":"start";save("hotel_cfg",CFG);render();}
 function setBreakMinutes(v){const n=parseFloat(v);CFG.unpaidBreakMinutes=isNaN(n)?BREAK_MINUTES_DEFAULT:Math.max(0,n);save("hotel_cfg",CFG);render();}
 function setBreakPer(v){CFG.unpaidBreakPer=(v==="day")?"day":"shift";save("hotel_cfg",CFG);render();}
-function setCoverageMin(role,v,def){const D=CFG[SETDEPT];D.coverage=D.coverage||{};D.coverage[role]=D.coverage[role]||{per:"day"};D.coverage[role].min=parseFloat(v)||def;save("hotel_cfg",CFG);render();}
+function setCoverageMin(role,v,def){const D=CFG[SETDEPT];D.coverage=D.coverage||{};D.coverage[role]=D.coverage[role]||{per:"day"};const n=parseFloat(v);D.coverage[role].min=isNaN(n)?def:Math.max(0,n);save("hotel_cfg",CFG);render();}
 function setCoveragePer(role,v){const D=CFG[SETDEPT];D.coverage=D.coverage||{};D.coverage[role]=D.coverage[role]||{min:1};D.coverage[role].per=(v==="shift")?"shift":"day";save("hotel_cfg",CFG);render();}
 function renderSettings(){
   const b=el("settingsBody"); if(!SETDEPT)SETDEPT=DEPT;
@@ -6267,7 +6279,7 @@ function renderSettings(){
        already-plural ones) is a genuine countable job-title category, unlike the schedule grid's separate
        Outsourced-crew rows (company/vendor names like "JJ Global," deliberately left unpluralized there) — so
        pluralRoleLabel() is safe to apply universally here with no equivalent carve-out needed. -->
-  ${Object.keys(D.coverage||{}).sort((a,b)=>{const ia=D.roles.indexOf(a),ib=D.roles.indexOf(b);return (ia<0?999:ia)-(ib<0?999:ib);}).map(role=>{const c=D.coverage[role];return `<tr><td style="text-align:left">${esc(pluralRoleLabel(role))}${c.note?` <span class="small muted">(${esc(c.note)})</span>`:""}</td><td style="text-align:center"><input class="sfield" style="width:44px;text-align:center" value="${c.min||1}" onchange="setCoverageMin('${role.replace(/'/g,"\\\\'")}',this.value,1)"></td><td style="text-align:center"><select class="sfield" onchange="setCoveragePer('${role.replace(/'/g,"\\\\'")}',this.value)"><option value="day" ${(c.per||"day")==="day"?"selected":""}>Day</option><option value="shift" ${c.per==="shift"?"selected":""}>Shift</option></select></td></tr>`;}).join("")}
+  ${Object.keys(D.coverage||{}).sort((a,b)=>{const ia=D.roles.indexOf(a),ib=D.roles.indexOf(b);return (ia<0?999:ia)-(ib<0?999:ib);}).map(role=>{const c=D.coverage[role];return `<tr><td style="text-align:left">${esc(pluralRoleLabel(role))}${c.note?` <span class="small muted">(${esc(c.note)})</span>`:""}</td><td style="text-align:center"><input class="sfield" style="width:44px;text-align:center" value="${c.min!=null?c.min:1}" onchange="setCoverageMin('${role.replace(/'/g,"\\\\'")}',this.value,1)"></td><td style="text-align:center"><select class="sfield" onchange="setCoveragePer('${role.replace(/'/g,"\\\\'")}',this.value)"><option value="day" ${(c.per||"day")==="day"?"selected":""}>Day</option><option value="shift" ${c.per==="shift"?"selected":""}>Shift</option></select></td></tr>`;}).join("")}
   </table></div>
   </fieldset>
   </div></details>
@@ -6861,8 +6873,12 @@ async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);
   for(const _k in (st.availDates||{})){const _e=st.availDates[_k];if(_e.from&&!(to<_e.from||dt>_e.to)){if(!(await uiConfirm(st.n+" already has "+(_e.code||"leave")+" "+_e.from+"\u2192"+_e.to+" overlapping this range. Add anyway?")))return;break;}}
   const id="D"+dt+"_"+to;st.availDates[id]={from:dt,to:to,part:part,startTime:pf,endTime:pt,code:code,reason:reason};
   // stamp full-day cells (all days for all-day; middle days for a multiday part-day; single part-day stamps nothing)
-  for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;}}
-  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);if(typeof logChange==="function")logChange("timeoff",code+" "+st.n+" "+dt+(to!==dt?"\u2192"+to:"")+(part?" "+pf+"-"+pt:""));el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";if(el("sdFrom"))el("sdFrom").value="";if(el("sdTo2"))el("sdTo2").value="";if(el("sdPart")){el("sdPart").checked=false;el("sdFrom").style.display=el("sdTo2").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";drawSpec();render();return true;}
+  for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;
+    // same stale-actual-hours-override clearing as stampApprovedLeave() — a day stamped off/leave here should never keep a leftover worked-hours number from before.
+    if(ACTUAL[SETDEPT]&&ACTUAL[SETDEPT][wk])delete ACTUAL[SETDEPT][wk][st.n];
+    if(ACTUALD[SETDEPT]&&ACTUALD[SETDEPT][wk]&&ACTUALD[SETDEPT][wk][st.n])delete ACTUALD[SETDEPT][wk][st.n][dow];
+  }}
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);if(typeof logChange==="function")logChange("timeoff",code+" "+st.n+" "+dt+(to!==dt?"\u2192"+to:"")+(part?" "+pf+"-"+pt:""));el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";if(el("sdFrom"))el("sdFrom").value="";if(el("sdTo2"))el("sdTo2").value="";if(el("sdPart")){el("sdPart").checked=false;el("sdFrom").style.display=el("sdTo2").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";drawSpec();render();return true;}
 function drawSpec(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;const d=st.availDates||{};const keys=Object.keys(d).sort((a,b)=>{const fa=(d[a].from||a),fb=(d[b].from||b);return fa<fb?-1:fa>fb?1:0;});
   el("sdList").innerHTML=keys.length?("<b>Dates off:</b><br>"+keys.map(k=>{const a=d[k];const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+" \u2192 "+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?" \u2192 "+a.to:""));return `\u2022 ${_lbl} \u2014 ${a.code||"OFF"}${a.reason&&a.reason!==(a.code||"OFF")?" ("+esc(a.reason)+")":""} <a href="javascript:void(0)" onclick="editSpecDate('${k}')">Edit</a> <a href="javascript:void(0)" onclick="delSpecDate('${k}')">Remove</a>`;}).join("<br>")):"<span class='muted'>None.</span>";}
 function editSpecDate(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st||!st.availDates[k])return;const a=st.availDates[k];
@@ -7422,10 +7438,21 @@ function stampApprovedLeave(req){
     if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
       ASSIGN[req.dept]=ASSIGN[req.dept]||{};ASSIGN[req.dept][wk]=ASSIGN[req.dept][wk]||{};ASSIGN[req.dept][wk][st.n]=ASSIGN[req.dept][wk][st.n]||{};
       const _existing=ASSIGN[req.dept][wk][st.n][dow];
-      if(classify(_existing)!=="work"){ASSIGN[req.dept][wk][st.n][dow]=req.code;} // safe to stamp — nothing to preserve
+      if(classify(_existing)!=="work"){
+        ASSIGN[req.dept][wk][st.n][dow]=req.code; // safe to stamp — nothing to preserve
+        // FOUND AND FIXED A REAL BUG: a stale actual-hours override (whole-week "Hrs" cell, or a
+        // per-day \u270e entry) from BEFORE this leave was approved would otherwise keep counting toward
+        // the weekly total even though the day is now stamped as leave — e.g. a PT staffer approved for
+        // R-OFF/leave all week could still show a leftover 32.5h from an earlier, now-irrelevant entry.
+        // Clearing both here (mirroring setCell()'s own "a more recent edit supersedes a stale total"
+        // convention) keeps the displayed hours consistent with the schedule the moment leave is approved.
+        if(ACTUAL[req.dept]&&ACTUAL[req.dept][wk])delete ACTUAL[req.dept][wk][st.n];
+        if(ACTUALD[req.dept]&&ACTUALD[req.dept][wk]&&ACTUALD[req.dept][wk][st.n])delete ACTUALD[req.dept][wk][st.n][dow];
+      }
       // else: leave the existing working shift exactly as-is; the CONFLICT flag will catch it for manual review.
     }
   }
+  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);
 }
 // NEW this round (per feedback, item #37): "if a shift is assigned FIRST then a leave request approved, it flags
 // red in Checks — but should the conflict be mentioned in the pop-up when Approve is clicked?" Answer implemented
@@ -7609,7 +7636,12 @@ function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),t
   for(let d=new Date(from);d<=to;d.setDate(d.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
     ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};ASSIGN[dept][wk][rec.name]=ASSIGN[dept][wk][rec.name]||{};
     if(remove){if((ASSIGN[dept][wk][rec.name]||{})[dow]===rec.code)delete ASSIGN[dept][wk][rec.name][dow];}
-    else ASSIGN[dept][wk][rec.name][dow]=rec.code;}
+    else{ASSIGN[dept][wk][rec.name][dow]=rec.code;
+      // same stale-actual-hours-override clearing as stampApprovedLeave()/addSpecDate() — see those comments.
+      if(ACTUAL[dept]&&ACTUAL[dept][wk])delete ACTUAL[dept][wk][rec.name];
+      if(ACTUALD[dept]&&ACTUALD[dept][wk]&&ACTUALD[dept][wk][rec.name])delete ACTUALD[dept][wk][rec.name][dow];
+    }}
+  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);
 }
 function addLeaveRange(){const nm=el("lvName").value,code=el("lvType").value,f=el("lvFrom").value;let t=el("lvTo").value;
   if(!f){uiAlert("Pick a date.");return;}if(!t)t=f;if(new Date(t)<new Date(f)){uiAlert("From is after To.");return;}
