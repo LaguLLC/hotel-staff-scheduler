@@ -1028,23 +1028,24 @@
      "harder rule, not a one-off patch" principle already applied to this selector's own width/height. */
   input[type=checkbox]{width:16px;height:16px;flex-shrink:0;vertical-align:middle;cursor:pointer;}
   input.cbx{width:16px;height:16px;}
-  /* FOUND AND FIXED A REAL, CONFIRMED BUG this round (per direct feedback + screenshot: the "Also notify me of
-     my room/floor assignment" checkbox appearing to sit oddly detached below its own label text on a narrow
-     screen). ROOT CAUSE, confirmed by auditing every checkbox+label pairing in this app (12 total share this
-     exact structure): every one uses `display:flex;align-items:center` on the wrapping <label> — for a SINGLE-
-     LINE label this is completely fine (align-items:center and flex-start look identical when there's no extra
-     height to center within), but the MOMENT that label's own text wraps onto 2+ lines (guaranteed on a narrow
-     screen for several of these, which are full sentences, e.g. the notification checkbox's own genuinely long
-     "...for today (Housekeeping only)" text) — align-items:center vertically centers the small, fixed-size
-     checkbox against the FULL HEIGHT of the now-multi-line wrapped text block, visually landing it roughly
-     between the first and second lines rather than aligned with either — exactly the "detached/misplaced"
-     appearance reported. Fixed with ONE shared rule (rather than touching all 12 near-duplicate inline
-     `style="align-items:center"` occurrences individually, which would be more error-prone to keep in sync)
-     targeting any label that directly wraps a .cbx checkbox — align-items:flex-start pins the checkbox to the
-     TOP of the label's own content instead, aligned with the first line specifically, matching the much more
-     common/expected checkbox+label convention and fixing the multi-line case with zero visual change to the
-     already-correct single-line case. */
-  label:has(>input.cbx){align-items:flex-start!important;}
+  /* REVERTED this round — FOUND AND FIXED A REAL, CONFIRMED REGRESSION (per direct feedback + screenshot: "j4
+     and jj in stetitngs not vertically aligned with middle of checkboxes and rest of line, enable auto deny
+     text not vert aligned with checkbox"). ROOT CAUSE, confirmed directly: an earlier round's own fix for ONE
+     specific checkbox (the notification "...for today (Housekeeping only)" label, which genuinely DOES wrap
+     onto 2 lines on a narrow screen) used a BLANKET, global selector — `label:has(>input.cbx)` — matching EVERY
+     checkbox+label pairing in the entire app, not just that one. That earlier fix's own reasoning ("align-items:
+     center and flex-start look identical when there's no extra height to center within") was ITSELF mistaken —
+     directly verified: a small, fixed-size checkbox (16px) sitting next to a SINGLE line of ordinary text (whose
+     own line-height is typically taller than 16px, e.g. ~20-24px at this app's own font sizes) looks CORRECTLY,
+     visually centered against that text with align-items:CENTER — switching to flex-start instead pins the
+     checkbox to the very TOP of that same line-height box, visibly ABOVE the true center relative to the text
+     baseline, exactly matching "not vertically aligned with middle of checkboxes." So this blanket rule fixed
+     the ONE genuinely multi-line label it targeted, while simultaneously mis-aligning every OTHER, ordinary
+     single-line checkbox label in the app (J4 Janitorial/JJ Global, "Enable auto-deny for...", and every other
+     one sharing this same structure) — a real, confirmed regression traded for the original fix. REVERTED this
+     blanket rule entirely; the ONE label that genuinely needs it (see that markup's own comment, right where
+     it's used) now carries its own SCOPED, inline align-items:flex-start instead — fixing that one real
+     multi-line case without touching any other, already-correctly-centered single-line label anywhere else. */
   /* NEW this round (per explicit instruction: "when 0 2-credit rooms input, show checkbox for scale disabled by
      greying out and making hover show red stop sign like when trying to edit past week settings"): a disabled
      checkbox previously relied purely on the browser's own default rendering for the disabled attribute, which is
@@ -2916,6 +2917,28 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
       // somehow hasn't been seeded yet (e.g. a save() call reached here before boot() finished seeding it) —
       // strictly a defensive fallback, not the normal path.
       if(_undoBatchPre===null)_undoBatchPre=(_lastSettledSnapshot!==null?_lastSettledSnapshot:_undoSnapshot());
+      // FOUND AND FIXED THE ACTUAL, CONFIRMED ROOT CAUSE this round (per feedback, reported AGAIN despite the
+      // earlier "flush before checking" fix already being correct on its own: "ctrl+z and undo both need to
+      // click twice"). ROOT CAUSE, confirmed by tracing exactly WHEN the on-screen Undo button's own `disabled`
+      // HTML attribute gets cleared: _refreshUndoRedoButtons() (the only place that ever does `u.disabled=
+      // !UNDO_STACK.length`) was PREVIOUSLY only ever called from inside the DEFERRED setTimeout(0) callback
+      // below (once the batch actually commits) or after a real undo/redo already happened — meaning the
+      // button's `disabled` attribute stayed TRUE for at least one full JS event-loop tick after every edit,
+      // until that deferred timer fired. A **disabled HTML button element does not fire click events at all** —
+      // this is enforced by the BROWSER itself, before any JS onclick handler ever runs — so clicking the
+      // physical Undo button immediately after making an edit (entirely plausible, and exactly what a real user
+      // does) was SILENTLY DISCARDED by the browser, with no JS logic ever even invoked; every earlier round's
+      // own fix (flushPendingUndoBatch(), _lastSettledSnapshot) was completely correct but could never matter for
+      // this specific path, since the click never reached undoAction() in the first place. Only on a SECOND
+      // click — by which time the deferred timer had already fired and re-enabled the button — did anything
+      // happen. FIX: _refreshUndoRedoButtons() is now ALSO called synchronously, immediately, the INSTANT a
+      // batch begins (right here, the moment _undoBatchPre is first set) — enabling the button the same instant
+      // an edit happens, not waiting for the batch to actually commit. This is always safe: flushPendingUndoBatch()
+      // (called at the very start of undoAction()) guarantees that if the button IS clicked this early, the
+      // still-pending batch is synchronously, correctly flushed onto UNDO_STACK first, so undo behaves exactly
+      // as if the deferred timer had already fired — the button's enabled state and the underlying logic's own
+      // actual readiness are now genuinely in sync, instead of the button lagging behind by one tick.
+      _refreshUndoRedoButtons();
       clearTimeout(_undoBatchTimer);
       _undoBatchTimer=setTimeout(()=>{
         try{
@@ -3747,15 +3770,29 @@ function toggleOutsourcedCrew(role,checked){
   }
   save("hotel_cfg",CFG);render();
 }
+// FOUND AND FIXED A REAL, CONFIRMED BUG this round (found while investigating the "ctrl+z/undo needs two
+// clicks" report — see save()'s own undo-capture block for the actual confirmed root cause of that report, which
+// is unrelated to this one, but this was a genuine, separate issue discovered along the way). ROOT CAUSE,
+// confirmed by direct tracing: this function is called UNCONDITIONALLY at the top of every single render() pass
+// for HSK (see render()'s own `if(DEPT==="HSK")seedOutsourcedWeek();` line) — but it previously called
+// `save("hotel_assign",ASSIGN)` UNCONDITIONALLY at its own very end, every single time, regardless of whether
+// ANY outsourced-crew staff exist, or whether anything was actually changed for them. This meant literally every
+// render() while viewing HSK (i.e., after almost every click/edit/navigation) re-saved the ENTIRE assignment
+// object and re-triggered a Supabase push, even when this function had nothing at all to do — wasteful, and a
+// real (if usually harmless) source of redundant undo-batch/sync churn. FIX: tracks whether anything was
+// ACTUALLY mutated (either a legacy-format fixup or a brand-new stamp) via a real `_anyChange` flag, and only
+// calls save() when that flag is true — an already-fully-seeded, already-correctly-formatted week (the common
+// case on every render after the first) now correctly does nothing at all.
 function seedOutsourcedWeek(){ // stamp the constant Thu-Sun pattern (OFF Mon-Wed) for outsourced crews, once per week, only when blank AND that crew's toggle is on
   try{const wk=weekKey(WEEK_START);ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
+    let _anyChange=false;
     (CFG.HSK.staff||[]).forEach(s=>{ if(s.type!=="OUT"||String(s.role).indexOf("Outsourced")!==0)return;
       if(!outsourcedCrewEnabled(s.role))return; // crew toggled off — leave blank, do not auto-fill
       const row=ASSIGN.HSK[wk][s.n]; const hasAny=row&&Object.keys(row).length;
       const LEGACY={"9:AM":"09:00-17:00","11AM":"11:00-19:00","10am-5pm":"10:00-17:00","10am-6pm":"10:00-18:00"};
-      if(hasAny){let ch=false;Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];ch=true;}});if(ch)save("hotel_assign",ASSIGN);return;}
-      ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"}; });
-    save("hotel_assign",ASSIGN);
+      if(hasAny){Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];_anyChange=true;}});return;}
+      ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"};_anyChange=true; });
+    if(_anyChange)save("hotel_assign",ASSIGN);
   }catch(e){console.warn("outsourced seed skipped",e);} }
 function render(){
   // FOUND AND FIXED A REAL, CONFIRMED BUG this round (per feedback, reproduced exactly: "if Settings/Readme are
@@ -4424,30 +4461,7 @@ function render(){
     if(!EDIT)return;
     const nm=decodeURIComponent(b.dataset.nm),day=+b.dataset.day;
     if(MULTISEL.active||e.shiftKey||e.ctrlKey||e.metaKey){toggleCellSelection(nm,day,{shift:e.shiftKey,ctrl:e.ctrlKey||e.metaKey});return;}
-    // NEW this round (per explicit request: "right now multiselect requires shift to be pressed before clicking
-    // first cell, can it be made so that even if first cell is clicked before shift or ctrl clicked multiselect
-    // is possible") — a plain click (no modifier, select-mode off) still opens the single-cell editor exactly as
-    // before, which remains the correct behavior for that genuinely common case — but it now ALSO records this
-    // cell as MULTISEL.lastCell first, so a SUBSEQUENT Shift+click on a different cell has a real anchor to
-    // range FROM, instead of only being possible when the very first click of a selection session already held
-    // Shift/Ctrl. See toggleCellSelection()'s own comment for the full reasoning.
-    MULTISEL.lastCell={nm,day};
-    // FOUND AND FIXED A REAL, CONFIRMED BUG this round (per direct feedback: "fill-handle drag-to-extend doesn't
-    // really work like excel here, need to open pop up dialog for corner button to show"). ROOT CAUSE, confirmed
-    // by tracing exactly when positionFillHandle() (the function that actually shows/repositions the fill-handle
-    // square) gets called: only from applySelectionHighlight(), which itself only runs as part of a FULL
-    // render() — never directly from this plain-click handler, even though THIS is exactly where
-    // MULTISEL.lastCell (positionFillHandle()'s own required input) gets set. So clicking an ordinary cell
-    // correctly recorded it as the active cell, but the fill handle itself stayed wherever it was previously
-    // positioned (or never appeared at all, for the first cell clicked this session) until SOME LATER action
-    // happened to trigger a full re-render — e.g. saving/closing the shift editor popup this same click just
-    // opened — exactly matching "need to open pop up dialog for corner button to show." Real Excel shows its
-    // own fill handle the INSTANT any cell is selected, with no dialog involved at all. Fixed by calling
-    // positionFillHandle() directly, right here, immediately after the anchor is set — so the handle now
-    // appears/repositions the moment a cell is clicked, matching Excel's own immediate behavior, independently
-    // of whether the click also happens to open the editor popup.
-    positionFillHandle();
-    openShiftEditor(nm,day);
+    _handlePlainCellClick(nm,day);
   }));
   // NEW this round (per explicit request: "make entire schedule cell clickable instead of just the hyphen") —
   // see .cellbtn's own CSS comment for the full root-cause explanation (the inner span never actually filled
@@ -4470,12 +4484,19 @@ function render(){
     const btn=td.querySelector(".cellbtn");if(!btn)return;
     const nm=decodeURIComponent(btn.dataset.nm),day=+btn.dataset.day;
     if(MULTISEL.active||e.shiftKey||e.ctrlKey||e.metaKey){toggleCellSelection(nm,day,{shift:e.shiftKey,ctrl:e.ctrlKey||e.metaKey});return;}
-    // Same anchor-tracking fix as the .cellbtn listener above — see that listener's own comment for the full
-    // "shift required before the first click" gap this closes.
-    MULTISEL.lastCell={nm,day};
-    // Same immediate fill-handle fix as the .cellbtn listener above — see that listener's own comment for the
-    // full "doesn't show until a popup opens" root cause this closes.
-    positionFillHandle();
+    _handlePlainCellClick(nm,day);
+  }));
+  // NEW this round — a double-click on ANY cell, regardless of its current selection state, ALWAYS immediately
+  // opens the shift editor — a direct, one-gesture shortcut for anyone who wants to skip straight to editing
+  // without the intermediate "select first" step _handlePlainCellClick() now requires for a brand-new cell (see
+  // that function's own comment for the full reasoning). Wired on the SAME td-delegation target as the plain
+  // click above, for the identical "whole cell is clickable" reach.
+  el("grid").querySelectorAll("tbody td:has(>.cellbtn)").forEach(td=>td.addEventListener("dblclick",(e)=>{
+    if(!EDIT)return;
+    const btn=td.querySelector(".cellbtn");if(!btn)return;
+    const nm=decodeURIComponent(btn.dataset.nm),day=+btn.dataset.day;
+    MULTISEL.lastCell={nm,day};MULTISEL.cells.clear();MULTISEL.cells.add(nm+"|"+day);
+    applySelectionHighlight();renderMultiSelBar();
     openShiftEditor(nm,day);
   }));
   // NEW this round (per direct question: "Also is there a way to do copy/paste with right click?"). A real,
@@ -9126,6 +9147,40 @@ function applySelectionHighlight(){
 // FIX: the handle now positions itself at the bottom-right corner of the FULL selection's bounding rectangle
 // whenever 2+ cells are selected (falling back to the single lastCell's own corner when only one cell is
 // selected, unchanged from before).
+// REDESIGNED this round (per direct feedback, raised again, verbatim, despite an earlier round's own genuine
+// but INSUFFICIENT fix: "fill-handle drag-to-extend doesn't really work like excel on app, need to open pop up
+// dialog for corner button to show"). ROOT CAUSE, confirmed by tracing the actual VISUAL stacking, not just the
+// timing: openShiftEditor() shows a full-screen modal (`.modalbg`, z-index:9999) that COMPLETELY COVERS the
+// entire grid — including the fill handle itself (z-index:50, MUCH lower). The earlier round's fix (calling
+// positionFillHandle() immediately on click, BEFORE opening the editor) genuinely, correctly positions/shows
+// the handle at that exact instant — but the VERY NEXT line of code then opens that same full-screen modal,
+// which visually hides everything behind it, including the just-shown handle, for the ENTIRE duration the
+// editor is open. The handle only becomes VISIBLE again once the modal is closed (Save/Cancel) — which is
+// EXACTLY what "need to open [and close/interact with] a pop up dialog for the corner button to show" describes,
+// and is fundamentally NOT how Excel works: Excel shows the handle the INSTANT a cell is selected, with NO
+// dialog ever opening for basic selection at all. FIX: a genuine, if modest, interaction-model change — SELECT
+// and EDIT are now decoupled for a plain (unmodified) click, matching Excel's own actual behavior: clicking a
+// cell that is NOT already the current selection now ONLY selects it (shows the highlight box + the fill
+// handle, immediately, with NO modal opening at all); clicking that SAME, already-selected cell a SECOND time
+// opens the editor — matching the common "click to select, click/double-click again to edit" convention used by
+// many real spreadsheet and file-browser UIs. A genuine double-click (see the td-level dblclick listener right
+// after this function's own two callers) ALWAYS opens the editor immediately regardless of prior selection
+// state, for anyone who wants a single, direct gesture straight to editing without the intermediate select step.
+// Modifier-based clicks (Shift/Ctrl) and "Select multiple" mode are completely UNCHANGED — they already only
+// ever selected, never opened the editor, so neither is affected by this change at all.
+function _handlePlainCellClick(nm,day){
+  const key=nm+"|"+day;
+  const wasAlreadyTheSelection=MULTISEL.lastCell&&MULTISEL.lastCell.nm===nm&&MULTISEL.lastCell.day===day&&MULTISEL.cells.has(key);
+  MULTISEL.lastCell={nm,day};
+  if(!wasAlreadyTheSelection){
+    MULTISEL.cells.clear();MULTISEL.cells.add(key);
+    applySelectionHighlight();renderMultiSelBar();
+    positionFillHandle();
+    return;
+  }
+  positionFillHandle();
+  openShiftEditor(nm,day);
+}
 function positionFillHandle(){
   let fh=document.getElementById("fillHandle");
   if(!EDIT||!MULTISEL.lastCell){if(fh)fh.style.display="none";return;}
@@ -9631,61 +9686,47 @@ function to12Parts(val){
 // own generous 24px; (2) widths are set with real margin above the measured minimum needed once that smaller
 // padding is accounted for (confirmed via direct browser measurement afterward: 21px/23px of actual available
 // text space vs. 17.3px/19.8px needed \u2014 comfortably fits with margin to spare, not just barely).
+// REVERTED this round (per direct, explicit feedback: "time dropdowns in schedule, floating toolbar etc weren\'t
+// changed to look like the ones in availability picker, which I prefer so long as text size and typeface can be
+// matched to rest of app"). ROOT CAUSE of the whole back-and-forth history here: an EARLIER round\'s own
+// reasoning for building this custom 3-select widget in the first place (see the many surrounding comments
+// throughout this file citing "the uncontrollable flyout-picker-font-size problem" of a native <input
+// type="time">) was a genuine, real concern -- but it traded away something the user explicitly says they
+// actually PREFER: the native browser/OS time-picker POPUP itself (shown in the "Availability" picker\'s own
+// still-native fields the whole time -- those were NEVER converted to this custom widget) -- in exchange for
+// fixing a font-size issue that a native input\'s OWN VISIBLE TEXT can be fixed for directly via ordinary CSS
+// (font-size/font-family on the input itself, exactly like every other .sfield already does), WITHOUT needing
+// to give up the native popup at all. This was a real, avoidable trade-off never actually necessary. REVERTED:
+// timeSelectHTML() is now a THIN, single native <input type="time" class="sfield"> -- the .sfield class
+// itself already sets font:inherit, so this input\'s own displayed text automatically matches the rest of the
+// app\'s typeface/size, exactly satisfying the "so long as text size and typeface can be matched" condition --
+// while restoring the SAME native OS/browser time-picker popup the Availability fields already use and the user
+// has confirmed they prefer. The function\'s own EXTERNAL signature/contract (idPrefix, val, onChangeAttr,
+// compact) is deliberately UNCHANGED, so all 4 real call sites (shift editor segments, floating-toolbar bulk-
+// stamp segments, "Specific dates off", Leave Requests) needed ZERO changes to their own code -- only this one
+// function\'s internal implementation changed. A native time input already natively stores/returns a plain 24h
+// "HH:MM" string with no AM/PM ambiguity to resolve at all, which is ALSO a genuine simplification: readTime
+// SelectValue()/setTimeSelectValue() below shrink from parsing/building 3 separate fields down to one plain
+// property read/write, and the whole separate AM/PM-auto-prefill helper functions this file previously needed
+// (_sdFromApDefault/_sdTo2ApDefault/_lrStartApDefault/_lrEndApDefault) are no longer meaningful at all -- a
+// native picker has no separate AM/PM control to "prefill" in the first place -- so those 4 functions are
+// REMOVED entirely; their own onChangeAttr callers at each call site are updated to no longer pass that now-
+// meaningless callback at all (see each call site\'s own comment for the exact before/after).
 function timeSelectHTML(idPrefix,val,onChangeAttr,compact){
-  const p=to12Parts(val);
   const oc=onChangeAttr?` onchange="${onChangeAttr}"`:"";
-  const hourOpts=`<option value="">HH</option>`+Array.from({length:12},(_,i)=>i+1).map(h=>`<option value="${h}" ${String(h)===p.h?"selected":""}>${h}</option>`).join("");
-  const minOpts=`<option value="">MM</option>`+["00","05","10","15","20","25","30","35","40","45","50","55"].map(m=>`<option value="${m}" ${m===p.m?"selected":""}>${m}</option>`).join("");
-  const apPlaceholder=compact?"\u2014":"AM/PM";
-  const apOpts=`<option value="">${apPlaceholder}</option><option value="AM" ${p.ap==="AM"?"selected":""}>AM</option><option value="PM" ${p.ap==="PM"?"selected":""}>PM</option>`;
-  const apPlaceholderStyle=compact?"padding-right:14px;":"";
-  const wH=compact?44:56,wM=compact?46:60,wA=compact?42:68;
-  return `<select id="${idPrefix}_h" class="sfield" style="width:${wH}px;${apPlaceholderStyle}"${oc}>${hourOpts}</select>:<select id="${idPrefix}_m" class="sfield" style="width:${wM}px;${apPlaceholderStyle}"${oc}>${minOpts}</select><select id="${idPrefix}_ap" class="sfield" style="width:${wA}px;${apPlaceholderStyle}"${oc}>${apOpts}</select>`;
+  const w=compact?110:130;
+  return `<input type="time" id="${idPrefix}" class="sfield" style="width:${w}px;font:inherit" value="${val?esc(val):""}"${oc}>`;
 }
 function readTimeSelectValue(idPrefix){
-  const h=el(idPrefix+"_h").value,m=el(idPrefix+"_m").value,ap=el(idPrefix+"_ap").value;
-  if(!h||!m||!ap)return "";
-  return to24(h+":"+m+" "+ap);
+  const inp=el(idPrefix);
+  return inp?(inp.value||""):"";
 }
-// NEW this round (per direct feedback: "am/pm can be prefilled - like floating toolbar") — a genuinely useful
-// default for the "Specific dates off" part-day time widgets specifically: once BOTH hour and minute are picked
-// for a field whose AM/PM is still blank, auto-fill it rather than leaving a third, separate click always
-// required. Deliberately only fills a currently-BLANK ap select (never overwrites one the person already
-// explicitly chose), so this only ever saves a click, never silently changes an intentional choice.
-function _sdFromApDefault(){
-  const h=el("sdFrom_h"),m=el("sdFrom_m"),ap=el("sdFrom_ap");
-  if(h&&m&&ap&&h.value&&m.value&&!ap.value)ap.value="AM"; // Start defaults to AM \u2014 the more common case for a part-day-unavailable window
-}
-function _sdTo2ApDefault(){
-  const h=el("sdTo2_h"),m=el("sdTo2_m"),ap=el("sdTo2_ap");
-  if(h&&m&&ap&&h.value&&m.value&&!ap.value){
-    const fromAp=el("sdFrom_ap");
-    ap.value=(fromAp&&fromAp.value)?fromAp.value:"AM"; // End defaults to match Start's own AM/PM (same-day window is the common case), falling back to AM if Start has none set yet
-  }
-}
-// NEW this round — the SAME AM/PM auto-prefill convention as _sdFromApDefault()/_sdTo2ApDefault() above, applied
-// to the Leave Requests form's own Start/End part-day time fields (see that form's own markup comment for the
-// full "converted from native <input type=time> to this same compact widget" redesign these support).
-function _lrStartApDefault(){
-  const h=el("lrStart_h"),m=el("lrStart_m"),ap=el("lrStart_ap");
-  if(h&&m&&ap&&h.value&&m.value&&!ap.value)ap.value="AM"; // Start defaults to AM — the more common case for a part-day leave window
-}
-function _lrEndApDefault(){
-  const h=el("lrEnd_h"),m=el("lrEnd_m"),ap=el("lrEnd_ap");
-  if(h&&m&&ap&&h.value&&m.value&&!ap.value){
-    const fromAp=el("lrStart_ap");
-    ap.value=(fromAp&&fromAp.value)?fromAp.value:"AM"; // End defaults to match Start's own AM/PM (same-day window is the common case), falling back to AM if Start has none set yet
-  }
-}
-// Sets a timeSelectHTML() widget's 3 selects from a 24h "HH:MM" string (or clears all 3 for an empty/falsy
-// value) \u2014 the setter counterpart readTimeSelectValue() never needed until now, since every PREVIOUS caller of
-// this widget only ever read a value back out, never needed to programmatically load an EXISTING one back in
-// (this app's "Specific dates off" editSpecDate() is the first case that reopens a previously-saved part-day
-// time for further editing, now that its native <input type="time"> pair has been replaced with this widget).
+// Sets a timeSelectHTML() widget's real value from a 24h "HH:MM" string (or clears it for an empty/falsy value)
+// -- used when reopening an editor for an EXISTING previously-saved time (e.g. "Specific dates off"'s own
+// editSpecDate()), so the field shows the real, already-set value rather than starting blank.
 function setTimeSelectValue(idPrefix,val){
-  const p=to12Parts(val||"");
-  const h=el(idPrefix+"_h"),m=el(idPrefix+"_m"),ap=el(idPrefix+"_ap");
-  if(h)h.value=p.h||"";if(m)m.value=p.m||"";if(ap)ap.value=p.ap||"";
+  const inp=el(idPrefix);
+  if(inp)inp.value=val||"";
 }
 // NEW this round — given a 24h "HH:MM" start time, returns the 24h "HH:MM" time exactly `hoursToAdd` later,
 // wrapping past midnight if needed. UPDATED (per explicit follow-up: "if custom start time set, auto fill end
@@ -10271,12 +10312,12 @@ function drawSegs(){
   // the old "no hours" message with no time inputs (a day off genuinely has no hours to enter); a task-assignment
   // code now shows a short "Assigned: CODE" label ABOVE the same time-segment inputs everyone else gets, making it
   // clear the task is still a working assignment that should have real hours attached.
-  // CHANGED this round (per explicit request: "floating bar start/end time dropdown match with schedule pop up
-  // dropdown") — these previously used native <input type="time"> fields, which have the SAME uncontrollable
-  // flyout-picker-font-size problem the floating toolbar's own Custom time fields were already fixed to avoid
-  // (see timeSelectHTML()'s own comment for why "matching" the toolbar TO this native picker would have
-  // reintroduced that exact bug, rather than fixed anything). Both pickers now share the ONE SAME
-  // timeSelectHTML()/readTimeSelectValue() implementation \u2014 genuine consistency, not just visual similarity.
+  // UPDATED this round — these segment time fields (and the floating toolbar's own matching Custom time
+  // fields) now use timeSelectHTML(), which is itself a native <input type="time"> again — see that function's
+  // own extensive comment for the full "reverted the earlier custom 3-select widget back to native, per direct
+  // feedback the user prefers this app's own Availability-picker native look" story. Both pickers still share
+  // the ONE SAME timeSelectHTML()/readTimeSelectValue() implementation — genuine consistency, not just visual
+  // similarity — just with that shared implementation's own internals changed back to a native input.
   const _segsHtml=SM.segs.map((sg,i)=>`<div class="seg">${timeSelectHTML("seg"+i+"a",to24(sg.a),"updateSegTime("+i+",'a')")} to ${timeSelectHTML("seg"+i+"b",to24(sg.b),"updateSegTime("+i+",'b')")} <button onclick="SM.segs.splice(${i},1);drawSegs()">\u2715</button></div>`).join("");
   // SIMPLIFIED this round (per explicit instruction: "always allow assignment like task to have start/end times
   // even if count towards total not checked, just don't count those towards total if not checked"): the old
@@ -10294,15 +10335,22 @@ function drawSegs(){
     el("smSegs").innerHTML=_segsHtml;
   }
   recalc();
-  // NEW this round (per direct instruction: "verify that clicking tab/enter does the expected action throughout
-  // app" — confirmed a genuine gap here via direct testing): Enter inside any shift-editor time input previously
-  // did nothing at all (the modal stayed open, nothing saved) — every OTHER form in this app with an Enter-to-
-  // submit pattern (Leave Requests, "Specific dates off", the demand table's own per-cell Enter-advances-to-next-
-  // field behavior) already has one; this was the one remaining editable-content modal that didn't. Enter now
-  // triggers Save directly (matching the modal's own primary action), Tab is left completely untouched (native
-  // browser tab-order between the two time fields already works correctly with no JS needed, confirmed by
-  // direct testing \u2014 only Enter was actually missing).
-  el("smSegs").querySelectorAll("input[type=time]").forEach(inp=>inp.addEventListener("keydown",ev=>{if(ev.key==="Enter"){ev.preventDefault();saveShift();}}));
+  // FOUND AND FIXED A REAL, CONFIRMED REGRESSION this round (per direct feedback: "enter and tab movements
+  // buggy again"). ROOT CAUSE, confirmed by tracing the ACTUAL DOM this now produces: a LATER round converted
+  // this function's own segment time fields from native <input type="time"> (what this exact listener was
+  // originally written for) over to timeSelectHTML()'s own 3-<select> widget (hour/minute/AM-PM) - see this
+  // function's own "floating bar start/end time dropdown match with schedule pop up dropdown" comment just
+  // above for that conversion. But this listener's own querySelectorAll("input[type=time]") selector was NEVER
+  // updated to match - since no element of that type exists in this modal ANYMORE, this selector now always
+  // returns an EMPTY list, meaning Enter has been SILENTLY, COMPLETELY non-functional in this modal ever since
+  // that conversion (the exact "buggy again" regression reported) - confirmed by direct execution that the old
+  // selector matches zero elements post-conversion. FIX: now correctly targets the REAL elements Enter needs to
+  // work from - every one of this modal's own hour/minute/AM-PM <select> elements (identified by their own
+  // shared "seg" id-prefix convention, matching updateSegTime()'s own id-naming pattern) - restoring the exact
+  // same "Enter saves the shift" behavior this listener always intended, now correctly wired to the fields that
+  // actually exist. Tab order between selects is native browser behavior and was never broken by this
+  // conversion at all - confirmed directly, no JS ever handled Tab here.
+  el("smSegs").querySelectorAll("select[id^='seg']").forEach(inp=>inp.addEventListener("keydown",ev=>{if(ev.key==="Enter"){ev.preventDefault();saveShift();}}));
 }
 function recalc(){
   let hrs=0,bad=false;
@@ -10572,7 +10620,17 @@ function submitShiftEditorDatePicker(){
   const v=inp.value;closeShiftEditorDatePicker();
   jumpShiftEditorToDate(v);
 }
-function closeShift(){el("shiftModal").style.display="none";}
+// CHANGED this round — added a defensive `document.activeElement.blur()` before hiding the modal. FOUND while
+// investigating the "ctrl+z needs two presses" report (see save()'s own undo-capture block for the actual,
+// confirmed primary fix): this modal was hidden via a bare `style.display="none"` with no explicit blur of
+// whichever input/select inside it currently held focus (e.g. a segment time field, the override-reason box).
+// While modern browsers generally DO auto-blur an element once it becomes display:none, this isn't universally
+// instantaneous/guaranteed across every browser and timing scenario — and the app's own global Ctrl+Z listener
+// deliberately bails out whenever the CURRENT event target is still an input/select/textarea (so it never
+// hijacks a real text field's native undo). If focus briefly lingers on a now-hidden field the instant this
+// modal closes, an immediate Ctrl+Z right after Save could be silently ignored by that same guard. Explicitly
+// blurring first removes this possibility entirely, regardless of any browser's own auto-blur timing.
+function closeShift(){try{if(document.activeElement&&document.activeElement.blur)document.activeElement.blur();}catch(e){}el("shiftModal").style.display="none";}
 // FOUND AND FIXED A REAL, CONFIRMED BUG this round (per direct report, reproduced exactly: "if I click first sched
 // cell before pressing shift, pop up appears then if I press shift and click another cell pop up just closes
 // without multi select happening"). Root cause: the shift-editor modal (#shiftModal) is a position:fixed;inset:0
@@ -13076,24 +13134,40 @@ function renderSettings(){
   </tr>`;});
   h+=`</table></div>`;
   const former=D.staff.filter(x=>x.employed===false);
-  // REDESIGNED (per feedback): Former Staff now mirrors the active roster's exact structure (same scrollable
-  // wrapper, rounded borders, column widths, and editable Name/Role/Type/Rate/Note fields via the same shared
-  // data-si/data-k change handler below) instead of a plain unstyled table that overflowed the page. The
-  // Availability column is replaced with an editable "Inactive since" date (auto-stamped when someone is marked
-  // no-longer-employed, via removeStaffRow(), but editable here too — e.g. to backfill a real historical date for
-  // people who went inactive before this field existed). The delete (\u2715) column is replaced with a Re-employ
-  // icon (\u21a9) matching the same icon-only style as the active table's \u2715 delete button.
+  // REDESIGNED this round (per direct feedback: "former employee columns should match active employee columns").
+  // ROOT CAUSE, confirmed by a direct side-by-side column count/comparison: the active roster table has 13 real
+  // columns (Name, Role, Type, Rate, Hire date, Birthday, Guest rating, Perf. score, Priority override, PTO
+  // Bal., Note, Availability, Remove) — this table only ever had 7 (Name, Role, Type, Rate, Note, Inactive
+  // Since, Re-employ). An EARLIER round's own redesign correctly gave this table the SAME scrollable/bordered
+  // wrapper and shared data-si/data-k editing mechanism as the active roster (see this comment's own prior
+  // text, still accurate) — but only ported over the first 4 data columns plus Note at the time, never the 6
+  // NEWER columns (Hire date, Birthday, Guest rating, Perf. score, Priority override, PTO Bal.) added to the
+  // active roster in LATER rounds, so this table has been silently falling further behind ever since, one
+  // feature-round at a time. FIX: rebuilt to include EVERY ONE of the active roster's own columns, in the exact
+  // same order, using the identical cell markup/data-si/data-k wiring (so the SAME shared change-handler below
+  // that already processes the active roster's own edits transparently handles these too, with zero new
+  // handler code needed) — a former employee's full history (seniority, ratings, PTO balance, etc.) remains
+  // fully visible and editable for record-keeping, exactly like an active one's. The two INTENTIONAL differences
+  // already established and kept unchanged: Availability is replaced with the editable "Inactive since" date
+  // (a former employee has no live weekly availability to show), and the trailing icon is Re-employ (\u21a9) instead
+  // of Remove (\u2715), matching each table's own real, opposite action.
   if(former.length){
     const formerIdx=D.staff.map((s,i)=>({s,i})).filter(x=>x.s.employed===false).map(x=>x.i);
     h+=`<details style="margin-top:10px"><summary class="small" style="cursor:pointer"><b>Former staff (${former.length})</b> \u2014 kept for history</summary>
-    <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;margin-top:6px"><table><colgroup><col style="width:170px"><col style="width:150px"><col style="width:70px"><col style="width:80px"><col style="width:190px"><col style="width:230px"><col style="width:34px"></colgroup><tr><th>Name</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Note</th><th>Inactive Since</th><th></th></tr>
+    <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;margin-top:6px"><table><colgroup><col style="width:170px"><col style="width:150px"><col style="width:70px"><col style="width:80px"><col style="width:130px"><col style="width:130px"><col style="width:66px"><col style="width:62px"><col style="width:66px"><col style="width:70px"><col style="width:200px"><col style="width:140px"><col style="width:34px"></colgroup><tr><th>Name</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Hire date</th><th>Birthday</th><th>Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span></th><th>Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span></th><th>Priority<br><span class="small muted" style="font-weight:400">override</span></th><th>PTO Bal.</th><th>Note</th><th>Inactive Since</th><th></th></tr>
     ${formerIdx.map(i=>{const st=D.staff[i];return `<tr>
     <td><input class="sfield" style="width:170px;color:#8a94a0" data-si="${i}" data-k="n" value="${esc(st.n)}"></td>
     <td><select class="sfield" style="color:#8a94a0" data-si="${i}" data-k="role">${D.roles.map(r=>`<option value="${esc(r)}" ${st.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></td>
     <td><select class="sfield" style="color:#8a94a0" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option ${st.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
     <td><input class="sfield" style="width:64px;color:#8a94a0" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
+    <td><input type="date" class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate?esc(st.hireDate):''}"></td>
+    <td><input type="date" class="sfield" style="width:130px" data-si="${i}" data-k="birthday" value="${st.birthday?esc(st.birthday):''}"></td>
+    <td><input class="sfield no-spin" type="number" min="0" max="5" step="0.1" style="width:56px;text-align:center" data-si="${i}" data-k="guestRating" value="${st.guestRating!=null?st.guestRating:''}"></td>
+    <td><input class="sfield no-spin" type="number" min="0" max="100" step="1" style="width:52px;text-align:center" data-si="${i}" data-k="performanceScore" value="${st.performanceScore!=null?st.performanceScore:''}"></td>
+    <td><input class="sfield no-spin" type="number" step="1" style="width:56px;text-align:center" data-si="${i}" data-k="priorityOverride" value="${st.priorityOverride!=null?st.priorityOverride:''}"></td>
+    <td style="text-align:center"><a href="javascript:void(0)" onclick="openAccrualLedger(${i})" title="View history / adjust balance" style="text-decoration:none;font-weight:700;color:${(ensureAccrualRecord(SETDEPT,st.n).balance>0)?'#0e7c46':'#6b7a8d'}">${ensureAccrualRecord(SETDEPT,st.n).balance.toFixed(1)}h</a></td>
     <td><input class="sfield" style="width:180px;color:#8a94a0" data-si="${i}" data-k="note" value="${esc(st.note||'')}"></td>
-    <td><input class="sfield" type="date" style="width:135px;color:#8a94a0" data-si="${i}" data-k="inactiveSince" value="${st.inactiveSince?esc(st.inactiveSince):''}" title="${st.inactiveSince?'':'Not recorded — before this field was added; backfill the actual date if known'}"></td>
+    <td><input class="sfield" type="date" style="width:135px;color:#8a94a0" data-si="${i}" data-k="inactiveSince" value="${st.inactiveSince?esc(st.inactiveSince):''}" title="${st.inactiveSince?'':'Not recorded \u2014 before this field was added; backfill the actual date if known'}"></td>
     <td><button style="height:22px;width:22px;padding:0;font-size:12px;line-height:1;box-sizing:border-box" onclick="reEmploy('${esc(st.n).replace(/'/g,"")}')" title="Re-employ">\u21a9</button></td>
     </tr>`;}).join("")}
     </table></div></details>`;
@@ -13952,19 +14026,15 @@ function editAvail(i){const st=CFG[SETDEPT].staff[i];AV={name:st.n};st.avail=st.
       <label class="small">From <input type="date" class="sfield" id="sdDate" onchange="if(isPlausibleFullDate(this.value)&&(!el('sdTo').value||!isPlausibleFullDate(el('sdTo').value)))el('sdTo').value=this.value;"></label>
       <label class="small">To <input type="date" class="sfield" id="sdTo" onchange="if(isPlausibleFullDate(this.value)&&(!el('sdDate').value||!isPlausibleFullDate(el('sdDate').value)))el('sdDate').value=this.value;"></label>
       <input class="sfield" id="sdReason" placeholder="Reason" style="width:120px"><button class="mini" onclick="addSpecDate()">Add</button></div>
-    <!-- CHANGED this round (per direct feedback: "in calendar pop up custom start/end date line taking up too
-         much width, am/pm can be prefilled - like floating toolbar"). Two real changes: (1) the native
-         <input type="time"> pair is replaced with this app's OWN compact 3-select time widget (timeSelectHTML(),
-         the exact same component the floating multi-select toolbar and single-cell shift editor already use) —
-         genuinely narrower (compact mode) and visually consistent with those, instead of a native browser time
-         picker that looks and sizes differently everywhere. (2) the surrounding label text is shortened (dropped
-         the repeated "on the start date"/"on the end date" phrasing — the parenthetical already covers this) so
-         the whole line takes up meaningfully less width. AM/PM "prefill": see _sdFromApDefault()/_sdTo2ApDefault()
-         below — once both hour+minute are picked for a field whose AM/PM is still blank, it's auto-filled (Start
-         defaults to AM; End defaults to match Start's own AM/PM, the common case for a same-day window) rather
-         than requiring a third, separate click every time. -->
+    <!-- CHANGED this round — see timeSelectHTML()'s own extensive comment for the full "reverted back to a
+         native <input type=\"time\">, per direct feedback that the user prefers this Availability picker's own
+         native look over the custom 3-select widget" story. This field itself is unaffected by that revert in
+         any OTHER way — it already used timeSelectHTML() before, and continues to now, just with that shared
+         function's own internal implementation changed; the surrounding label text remains the same shortened
+         wording from the round that first compacted this line's own width. No AM/PM auto-prefill exists anymore
+         (a native time picker has no separate AM/PM control of its own to prefill in the first place). -->
     <div class="mrow"><label class="small"><input type="checkbox" class="cbx" id="sdPart" onchange="el('sdFromWrap').style.display=el('sdTo2Wrap').style.display=this.checked?'inline-block':'none';el('sdPartHint').style.display=this.checked?'inline':'none';"> Part-day</label>
-      <span id="sdPartHint" class="small muted" style="display:none">Unavailable <span id="sdFromWrap">${timeSelectHTML("sdFrom","","_sdFromApDefault()",true)}</span> to <span id="sdTo2Wrap">${timeSelectHTML("sdTo2","","_sdTo2ApDefault()",true)}</span> <span class="small muted">(full days in between)</span></label></div>
+      <span id="sdPartHint" class="small muted" style="display:none">Unavailable <span id="sdFromWrap">${timeSelectHTML("sdFrom","","",true)}</span> to <span id="sdTo2Wrap">${timeSelectHTML("sdTo2","","",true)}</span> <span class="small muted">(full days in between)</span></label></div>
     <div id="sdList" class="small"></div>
     <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button class="brand" onclick="doneAvail()">Done</button></div>
   </div>`;
@@ -14557,7 +14627,12 @@ function renderNotificationsSettingsBlock(){
        category, not silently bundled into the existing "Enable notifications" toggle the moment someone already
        has it on for other reminders). -->
   <div class="mrow" style="align-items:center">
-    <label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifRoomAssign" ${CFG._notifRoomAssignment?"checked":""}> Also notify me of my room/floor assignment for today (Housekeeping only)</label>
+    <!-- SCOPED fix (see input.cbx's own CSS comment for the full "blanket rule caused a regression elsewhere,
+         reverted to this scoped fix instead" story) — this ONE label genuinely wraps onto 2 lines on a narrow
+         screen (a long, full-sentence checkbox label), so align-items:flex-start is applied HERE ONLY, pinning
+         the checkbox to the first line rather than floating between two wrapped lines — every OTHER checkbox
+         label in the app keeps its own correct, unmodified align-items:center. -->
+    <label class="small" style="display:flex;align-items:flex-start;gap:6px"><input type="checkbox" class="cbx" id="notifRoomAssign" style="margin-top:2px" ${CFG._notifRoomAssignment?"checked":""}> Also notify me of my room/floor assignment for today (Housekeeping only)</label>
   </div>
   <!-- CHANGED this round (per explicit request: "notifications should only be sent to relevant dept's
        manager/scheduler") — FOUND AND FIXED A REAL, CONFIRMED BUG: CFG._notifManagerAlerts was previously a
@@ -14844,23 +14919,13 @@ function renderLeaveTab(){
   </div>
   <div class="mrow" style="align-items:center">
     <span style="white-space:nowrap"><label class="small"><input type="checkbox" class="cbx" id="lrPart" onchange="el('lrStartWrap').style.display=el('lrEndWrap').style.display=this.checked?'inline-block':'none';el('lrTimeLbls').style.display=this.checked?'inline':'none'"> Part-day</label></span>
-    <!-- CHANGED this round (per direct feedback: "in calendar pop up custom start/end date line taking up too
-         much width, am/pm can be prefilled - like floating toolbar. or maybe use custom time fields but make
-         them look like the native ones in availability except font typeface and size consistent with other
-         field"). ROOT CAUSE, confirmed by direct comparison against the "Specific dates off" dialog (Settings →
-         Availability & preferences): that OTHER part-day time picker already received this exact upgrade in an
-         earlier round (see timeSelectHTML()'s own comment: "am/pm can be prefilled - like floating toolbar" —
-         the SAME wording used again here) — but this Leave Requests form's own Start/End fields were never
-         updated to match, left behind as plain native <input type="time"> pairs. A native time input's own
-         browser-rendered picker UI varies in width across browsers/OSes and has no concept of "prefill AM/PM
-         once both hour+minute are set" at all — exactly the two complaints repeated here. FIX: converted to the
-         SAME compact timeSelectHTML() widget (3 narrow <select> elements: hour/minute/AM-PM, using this app's
-         own .sfield styling — so font/size are automatically already consistent with every other field, matching
-         the "consistent with other field" ask directly) already proven correct for "Specific dates off" — plus
-         the same kind of AM/PM auto-prefill helpers (_lrStartApDefault/_lrEndApDefault below), so filling in
-         Start's hour+minute auto-defaults its own AM/PM, and End defaults to match Start's, exactly mirroring
-         sdFrom/sdTo2's own already-established behavior. -->
-    <span id="lrTimeLbls" style="display:none;white-space:nowrap"><label class="small">Start <span id="lrStartWrap" style="display:none">${timeSelectHTML("lrStart","","_lrStartApDefault()",true)}</span></label> <label class="small">End <span id="lrEndWrap" style="display:none">${timeSelectHTML("lrEnd","","_lrEndApDefault()",true)}</span></label></span>
+    <!-- CHANGED this round — see timeSelectHTML()'s own extensive comment for the full "reverted back to a
+         native <input type="time">, per direct feedback that the user prefers this Availability picker's own
+         native look over the custom 3-select widget" story. This field itself is unaffected by that revert in
+         any OTHER way — it already used timeSelectHTML() (added in an earlier round to match "Specific dates
+         off"), and continues to now, just with that shared function's own internal implementation changed. No
+         AM/PM auto-prefill exists anymore (a native time picker has no separate AM/PM control of its own). -->
+    <span id="lrTimeLbls" style="display:none;white-space:nowrap"><label class="small">Start <span id="lrStartWrap" style="display:none">${timeSelectHTML("lrStart","","",true)}</span></label> <label class="small">End <span id="lrEndWrap" style="display:none">${timeSelectHTML("lrEnd","","",true)}</span></label></span>
     <!-- CHANGED this round (per explicit request: "for reason of req leave make it drop down with things like
          Medical appointment, GHURA appointment (or welfare appointment? or government agency appointment? But
          would prefer they specify what kind of gov agency appointment), Family birthday, religious (church)").
@@ -15686,27 +15751,35 @@ function floorSelect(nm,editable){const st=CFG[DEPT].staff.find(x=>x.n===nm);con
       // exists (editing/replacing it), or blank if this is the first-time-typing sentinel case.
       const _val=(cur===OTHER_SENTINEL)?"":cur;
       const _changeLink=editable?` <a href="javascript:void(0)" onclick="event.stopPropagation();requestFloorSelectWithinEdit(decodeURIComponent('${nmE}'))" class="small muted" style="text-decoration:underline dotted;text-underline-offset:2px" title="Choose a different assignment from the list instead">Choose\u2026</a>`:"";
-      return `<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px"><input data-floor-other-for="${nmE}" value="${esc(_val)}" placeholder="Enter custom assignment" ${editable?"":"disabled"} onclick="event.stopPropagation()" onchange="setFloor(decodeURIComponent('${nmE}'),this.value)" onblur="cancelFloorEditIfEmpty(decodeURIComponent('${nmE}'),this.value)" style="width:110px;font-size:10px;border:1px solid #dfe4ea;border-radius:3px;padding:2px 4px">${_timeWarning}${_changeLink}</span>`;
+      // CHANGED this round (per direct, precise feedback: "If I delte 4:30 pm then click outside the cell I
+      // want it to revert to dropdown showing Other.... If clicked into cell again, show the custom input
+      // field"). ROOT CAUSE, confirmed by tracing the exact onchange/setFloor() interaction: deleting all the
+      // typed text and blurring correctly fires `onchange` with an empty value, which called the SHARED
+      // setFloor(nm,"") — but setFloor()'s own established meaning for an empty string is "CLEAR this
+      // assignment entirely" (deletes the FLOORS entry outright, matching what the real SELECT's own blank "—"
+      // option needs it to do) — so deleting custom text didn't revert to "Other, no text yet" at all, it wiped
+      // the assignment down to whatever role-based fallback exists (or fully blank), which is a genuinely
+      // DIFFERENT, unintended state from what was asked for. FIX: this input's own onchange now calls a NEW,
+      // dedicated setFloorOtherText() instead of the shared setFloor() directly — one that specifically reverts
+      // to the OTHER_SENTINEL (not a full clear) when the typed text is emptied out, so deleting custom text and
+      // blurring correctly leaves this person's assignment as "Other" (no custom text yet) — collapsing back to
+      // state (1) below showing plain "Other…", exactly as asked. setFloor() itself, and the real SELECT's own
+      // blank-option behavior, are completely unchanged.
+      return `<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px"><input data-floor-other-for="${nmE}" value="${esc(_val)}" placeholder="Enter custom assignment" ${editable?"":"disabled"} onclick="event.stopPropagation()" onchange="setFloorOtherText(decodeURIComponent('${nmE}'),this.value)" onblur="exitFloorEditMode(decodeURIComponent('${nmE}'))" style="width:110px;font-size:10px;border:1px solid #dfe4ea;border-radius:3px;padding:2px 4px">${_timeWarning}${_changeLink}</span>`;
     }
     // STATE (1): COLLAPSED DISPLAY — a single clickable span, no select, no input, ever.
-    // CHANGED this round (per direct feedback + screenshot: "HSK assignment for other should look like any
-    // dropdown option like Flr.Sup. not be its own separate format"). ROOT CAUSE, confirmed by direct visual
-    // comparison against a canonical assignment (e.g. "Flr.Sup.", rendered via the real <select> in STATE (3)
-    // below, which carries its own border:1px solid #dfe4ea;border-radius:3px box styling): this collapsed
-    // display was instead styled as a bare, borderless underlined-dotted <a> link (or, when not editable, plain
-    // unstyled text) — visually a COMPLETELY different format from every other row's own bordered dropdown box,
-    // exactly as reported (Nemia Zapanta's "Proj/Training Sup" reading as a stray text label sitting where every
-    // other row shows a real, boxed dropdown). FIX: this now carries the EXACT SAME visual box styling as the
-    // real select (identical border/border-radius/font-size, plus matching padding so its own box height/inset
-    // lines up with the select's own native rendering) — so it reads as "just another dropdown-styled control"
-    // at a glance, consistent with every other row, while still being the same click-to-edit affordance
-    // underneath (a subtle dotted underline on the TEXT itself, not the box, is the only remaining hint that this
-    // one is editable-by-click rather than a native dropdown — removed entirely in the non-editable/view-only
-    // case below, where even that hint would be misleading since nothing is actually clickable there).
+    // CHANGED this round (per direct, precise feedback: "If other chosen then nothing typed, show Other same
+    // format as things like Flr. Sup. not grey italicized"). ROOT CAUSE: the PREVIOUS round's own fix already
+    // correctly gave this collapsed display the SAME bordered-box styling as a real dropdown value (see the box
+    // styling itself, unchanged below) — but still used a DIFFERENT text COLOR + italic specifically for the
+    // no-custom-text-yet sentinel case, as a visual "this is still just a placeholder" cue — which is EXACTLY
+    // what's now being asked to remove: the sentinel case should look IDENTICAL (same color/weight, no italic)
+    // to a genuinely-entered custom value or any other canonical dropdown value like "Flr. Sup." — the ONLY
+    // difference between the two remains the actual TEXT shown ("Other…" vs the real typed value), never the
+    // styling. Fixed by using ONE shared, non-italic color for both cases.
     const _isSentinel=(cur===OTHER_SENTINEL);
     const _display=_isSentinel?"Other\u2026":esc(cur);
-    const _displayColor=_isSentinel?"color:#9aa5b1;font-style:italic;":"color:#1f2d3d;";
-    const _boxStyle=`display:inline-block;${_displayColor}font-size:10px;border:1px solid #dfe4ea;border-radius:3px;padding:2px 4px;background:#fff;`;
+    const _boxStyle=`display:inline-block;color:#1f2d3d;font-size:10px;border:1px solid #dfe4ea;border-radius:3px;padding:2px 4px;background:#fff;`;
     return editable
       ? `<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px"><a href="javascript:void(0)" onclick="event.stopPropagation();startFloorEdit(decodeURIComponent('${nmE}'))" style="${_boxStyle}text-decoration:underline dotted;text-underline-offset:2px;cursor:pointer" title="Click to edit this assignment">${_display}</a>${_timeWarning}</span>`
       : `<span style="display:inline-flex;flex-wrap:wrap;align-items:center;gap:2px"><span style="${_boxStyle}">${_display}</span>${_timeWarning}</span>`;
@@ -15736,8 +15809,24 @@ function requestFloorSelectWithinEdit(nm){
   FLOOR_EDIT_WANT_SELECT.add(nm);
   render();
 }
-function cancelFloorEditIfEmpty(nm,val){
-  if(!val||!val.trim()){FLOOR_EDITING.delete(nm);FLOOR_EDIT_WANT_SELECT.delete(nm);render();}
+// NEW this round — see floorSelect()'s own input-markup comment for the full "deleting custom text should
+// revert to Other, not clear the assignment entirely" root-cause writeup. The ONE dedicated setter for this
+// specific custom-text input: an empty/blank value reverts to the OTHER_SENTINEL (still "Other", just no custom
+// text) instead of setFloor()'s own established "clear entirely" meaning for an empty string; any real, non-
+// blank text is stored exactly as typed, identical to setFloor()'s own existing behavior for that case.
+function setFloorOtherText(nm,v){
+  if(!v||!v.trim()){setFloor(nm,"\u0000OTHER\u0000");}
+  else{setFloor(nm,v);}
+}
+// NEW this round — replaces the old cancelFloorEditIfEmpty(). Since setFloorOtherText() above now ALWAYS
+// commits a valid, correct state on its own (sentinel or real text) via the input's own onchange — which the
+// HTML spec guarantees fires BEFORE blur whenever the value actually changed — this blur handler's only
+// remaining job is to exit "actively editing" mode unconditionally, collapsing back to the plain display view
+// (state 1) — no need to separately re-check the value here at all, and this ALSO correctly handles the case
+// where a person clicks into the field and blurs again without typing anything (onchange never fires at all in
+// that case, since nothing changed) — blur must still exit editing mode regardless.
+function exitFloorEditMode(nm){
+  FLOOR_EDITING.delete(nm);FLOOR_EDIT_WANT_SELECT.delete(nm);render();
 }
 function floorPick(nm,v){
   FLOOR_EDIT_WANT_SELECT.delete(nm); // a real pick was just made — the new cur/isOther state now determines display normally from here
@@ -16782,9 +16871,16 @@ function runRankPreview(){
   // initRankPreviewDrag()'s own row-order logic, which must only ever see genuinely ranked rows). The exclusion
   // reason now lives in its own dedicated LAST column (added to every row, ranked or not — see the header row
   // below) rather than a colspan cell, so it lines up cleanly under the same column for every row in the table.
+  // NEW this round (per direct feedback: "Capitalize reasons for ineligibility"). eligibleFor()'s own `why`
+  // strings are all lowercase by convention (e.g. "already working", "on leave/PTO", "unavailable (Fri)") —
+  // that's the correct, established convention for that function's OWN internal/programmatic use, but reads
+  // oddly as a genuinely DISPLAYED sentence-starting word in this table's own Status column. Capitalizes just
+  // the first letter for DISPLAY here only — eligibleFor()'s own return values, and every other place that might
+  // read `why` for a non-display purpose, are completely untouched.
+  const _cap=s=>s?s.charAt(0).toUpperCase()+s.slice(1):s;
   const ineligibleRows=ineligible.map(x=>{
     const scores=_scoreCells(x);
-    return `<tr style="opacity:.5;background:#f4f6f8"><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:left">${esc(x.s.n)}</td>${scores}<td class="small" style="text-align:left;font-style:italic">${esc(x.e.why||"not eligible")}</td></tr>`;
+    return `<tr style="opacity:.5;background:#f4f6f8"><td style="text-align:center">—</td><td style="text-align:center">—</td><td style="text-align:left">${esc(x.s.n)}</td>${scores}<td class="small" style="text-align:left;font-style:italic">${esc(_cap(x.e.why)||"Not eligible")}</td></tr>`;
   }).join("");
   // CHANGED this round (per direct feedback: "make headers more concise or widen columns so single words like
   // Auto and Performance aren't wrapped in tow lines" and "center header text"). Uses the new
@@ -16799,7 +16895,23 @@ function runRankPreview(){
   // one line at this table's own font size, matching the explicit "Auto"/"Performance" wrapping example given.
   // Rank/Auto/Name widths are otherwise unchanged from last round's own already-fixed "runs off the page" sizing.
   const _factorColCount=order.length;
-  const _colgroup=`<colgroup><col style="width:70px"><col style="width:56px"><col style="width:120px">${'<col style="min-width:84px">'.repeat(_factorColCount)}<col style="width:130px"></colgroup>`;
+  // CHANGED this round (per direct feedback, raised again despite an earlier round's own genuine but
+  // INSUFFICIENT attempt: "make headers more concise or widen columns so single words like Auto and
+  // Perfomrance aren't wrapped in tow lines even when in narrow screen"). ROOT CAUSE, confirmed by direct CSS-
+  // spec review: the previous colgroup used `min-width` on each factor `<col>` — but `table-layout:auto` (this
+  // table's own PREVIOUS setting) only ever treats a `<col>`'s own width/min-width as a HINT among several
+  // factors the browser's auto-sizing algorithm considers; it can still choose to render a column NARROWER than
+  // that hint if the table's own available container width is constrained (exactly what a narrow/phone screen
+  // forces) — allowing the header text to wrap despite `white-space:nowrap` fighting a losing battle against a
+  // column the browser decided to shrink anyway. FIX: switched to `table-layout:fixed` (see this table's own
+  // `style=` attribute, just above) — under `fixed` layout, column widths are taken EXCLUSIVELY, verbatim, from
+  // each `<col>`'s own explicit `width` (min-width has no special meaning here at all) — so a fixed-layout table
+  // NEVER shrinks a column below its own specified width, regardless of viewport size; if the sum of all
+  // columns exceeds the available space, the table simply becomes WIDER than its container, and the existing
+  // wrapping `.tblwrap` div's own `overflow:auto` correctly provides a horizontal scrollbar — guaranteeing every
+  // header stays on ONE line, unconditionally, even on the narrowest phone screen, with scrolling (not
+  // wrapping/shrinking) absorbing any overflow instead.
+  const _colgroup=`<colgroup><col style="width:70px"><col style="width:56px"><col style="width:120px">${'<col style="width:88px">'.repeat(_factorColCount)}<col style="width:150px"></colgroup>`;
   // CHANGED this round (per direct feedback: "make more compact, row heights consistent, center header text").
   // Three real, confirmed fixes bundled into one new #rpTable-scoped stylesheet, rather than scattered inline
   // styles that would need repeating on every single cell: (1) COMPACT — padding reduced from this app's own
@@ -16817,7 +16929,7 @@ function runRankPreview(){
   // each header's own already-added inline style, but a genuine defensive belt-and-suspenders — matching this
   // round's own explicit ask that this be checked/ensured, not merely assumed already correct).
   const _rpStyle=`<style>#rpTable th,#rpTable td{padding:2px 4px;font-size:11px;text-align:center;vertical-align:middle;}#rpTable th{text-align:center;}#rpTable .rpRankInput{height:22px!important;}</style>`;
-  el("rpResult").innerHTML=_summaryLine+_rpStyle+`<div class="tblwrap" style="overflow:auto;border-radius:8px;max-width:100%"><table id="rpTable" style="table-layout:auto">${_colgroup}<tr><th title="This person's actual rank/position — drag a row's own grip handle, or type a new position directly, to reorder; every other row's position automatically shifts to make room, exactly like the Auto-fill ranking FACTORS table above. Writes directly to that person's own roster 'Priority override' field.">Rank</th><th title="What the CONFIGURED FACTORS ALONE (every manual override set aside entirely) would rank this person, for direct comparison against their actual position at left">Auto</th><th style="text-align:left">Name</th>${headers}<th style="text-align:left">Status</th></tr>${rows}${ineligibleRows}</table></div><div class="small muted" style="margin-top:4px">Lower score = more preferred for each factor, checked left-to-right using ${_orderSource}. <b>Rank is the one live, editable column here</b> — type a number directly, or drag a row (via its own grip handle) to reorder; every other row's position automatically shifts to make room, and the result writes straight to that person's real roster 'Priority override' record — the exact same field the roster's own matching column edits. Auto shows what the configured factors ALONE would produce, with every override set aside, for direct comparison. Every factor-score column now shows a real computed value for EVERY person for this role, ranked or not — a dimmed row simply wasn't a candidate today (see its own Status column for why), never a mystery. A <sup style="color:#b8860b">?</sup> marks a score with no real data entered for that person (seniority/preference/performance/guest rating) — a neutral fallback value is shown, not a confirmed judgment.</div>`;
+  el("rpResult").innerHTML=_summaryLine+_rpStyle+`<div class="tblwrap" style="overflow:auto;border-radius:8px;max-width:100%"><table id="rpTable" style="table-layout:fixed;width:auto">${_colgroup}<tr><th title="This person's actual rank/position — drag a row's own grip handle, or type a new position directly, to reorder; every other row's position automatically shifts to make room, exactly like the Auto-fill ranking FACTORS table above. Writes directly to that person's own roster 'Priority override' field.">Rank</th><th title="What the CONFIGURED FACTORS ALONE (every manual override set aside entirely) would rank this person, for direct comparison against their actual position at left">Auto</th><th style="text-align:center">Name</th>${headers}<th style="text-align:center">Status</th></tr>${rows}${ineligibleRows}</table></div><div class="small muted" style="margin-top:4px">Lower score = more preferred for each factor, checked left-to-right using ${_orderSource}. <b>Rank is the one live, editable column here</b> — type a number directly, or drag a row (via its own grip handle) to reorder; every other row's position automatically shifts to make room, and the result writes straight to that person's real roster 'Priority override' record — the exact same field the roster's own matching column edits. Auto shows what the configured factors ALONE would produce, with every override set aside, for direct comparison. Every factor-score column now shows a real computed value for EVERY person for this role, ranked or not — a dimmed row simply wasn't a candidate today (see its own Status column for why), never a mystery. A <sup style="color:#b8860b">?</sup> marks a score with no real data entered for that person (seniority/preference/performance/guest rating) — a neutral fallback value is shown, not a confirmed judgment.</div>`;
   initRankPreviewDrag();
 }
 // NEW this round — the direct-TYPE-IN counterpart to dragging a preview row (see initRankPreviewDrag()'s own
