@@ -5,19 +5,37 @@
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
 <title>Hotel Staff Scheduler</title>
-<!-- NEW this round — PWA installability, needed for both (1) a genuine "add to Home Screen" install on any
-     platform, and (2) a real, disclosed platform REQUIREMENT: iOS Safari only supports Web Push once a page has
-     been installed to the Home Screen as a PWA (Safari 16.4+) — a plain browser tab on iOS cannot receive
-     background push at all, regardless of anything this app's own code does. manifest.json/sw.js/icon-*.png are
-     separate companion files that must be uploaded to the SAME folder as this HTML file on the static host (e.g.
-     GitHub Pages) — see the Readme's "Notifications & reminders" section for the full deployment checklist. -->
+<!-- PWA installability, needed for both (1) a genuine "add to Home Screen" install on any platform, and (2) a
+     real, disclosed platform REQUIREMENT: iOS Safari only supports Web Push once a page has been installed to
+     the Home Screen as a PWA (Safari 16.4+) — a plain browser tab on iOS cannot receive background push at all,
+     regardless of anything this app's own code does. manifest.json/sw.js/icon files are separate companion
+     files that must be uploaded to the SAME folder as this HTML file on the static host (e.g. GitHub Pages) —
+     see the Readme's "Notifications & reminders" section for the full deployment checklist.
+     FOUND AND FIXED A REAL, CONFIRMED DEPLOYMENT BUG (per direct report + a real GitHub repo screenshot: "github
+     deployed files to make into actual app but nothing is happening" — manifest.json/icon-192.png both showing
+     404 in the live console). ROOT CAUSE, confirmed by directly comparing the filenames this app's own <link>
+     tags/manifest/service-worker expected (icon-32.png, icon-180.png, icon-192.png, icon-512.png,
+     icon-512-maskable.png) against the ACTUAL filenames present in the real repo screenshot
+     (android-chrome-192x192.png, android-chrome-512x512.png, apple-touch-icon.png, favicon-16x16.png,
+     favicon-32x32.png, favicon-48x48.png, favicon.ico, icon-1024x1024.png, maskable-icon-512x512.png) — a
+     completely different icon set (this exact naming convention is the standard output of a third-party
+     favicon-generator tool, e.g. realfavicongenerator.net, not the 5 files originally provided alongside this
+     app). Since none of the expected filenames existed at all in that exact form, every icon reference 404'd,
+     and — critically — a 404 while fetching one of the manifest's own listed icons can cause some browsers to
+     treat the ENTIRE manifest fetch as failed too (matching the reported "Manifest fetch...failed, code 404"
+     alongside the icon 404s in the same console). FIXED by updating every reference below (and this app's own
+     manifest.json/sw.js companion files — see the Readme for the corrected versions) to match the REAL,
+     already-uploaded filenames directly, rather than requiring the icon files themselves to be renamed. -->
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#1b2a4a">
 <meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Staff Scheduler">
-<link rel="apple-touch-icon" href="icon-180.png">
-<link rel="icon" href="icon-32.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<link rel="icon" type="image/png" sizes="16x16" href="favicon-16x16.png">
+<link rel="icon" href="favicon.ico">
 <!-- Supabase JS (realtime). If it can't load, the app runs in LOCAL mode. -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -1894,6 +1912,19 @@
          whenever not — see syncNav()'s own comment for the full before/after reasoning. -->
     <button class="brand" id="headerConnect" onclick="headerConnectOrDisconnect()" style="display:none;margin-left:4px" title="Connect to the shared live copy — available even if Settings is hidden from view-only users">Connect…</button>
     <button class="ghostw" id="authBtn" onclick="toggleEdit()">🔒 View-only</button>
+    <!-- ADDED (per direct request: "Make a mobile view version of app so it's easy to use on phone, make it
+         possible on phone to still use computer version"). This app already has extensive, purpose-built
+         responsive behavior for a narrow phone screen (every table/dropdown/button audited this session to
+         never overflow — see this file's own many narrow-screen fix comments throughout). This button adds the
+         other half of the request directly: a way to switch BACK to the real, full desktop layout on a phone
+         when that's genuinely preferred (e.g. for a complex multi-column edit), using the same well-established
+         "Request Desktop Site" technique many mobile sites use — swapping the <meta name="viewport"> tag from
+         width=device-width (the default, letting the responsive/mobile-optimized CSS rules take effect) to a
+         fixed width=1200 (forcing the SAME layout a real desktop browser would render, with pinch-zoom/pan
+         available to reach any part of it). Persisted in localStorage so the choice survives a reload; a
+         desktop browser is entirely unaffected either way (window.innerWidth already exceeds 1200 there, so
+         forcing width=1200 changes nothing visually on a screen already wider than that). -->
+    <button class="ghostw" id="viewModeBtn" onclick="toggleDesktopMobileView()" title="Switch between this app's mobile-optimized layout and the full desktop layout (useful on a phone for a complex, multi-column edit)">📱 Mobile view</button>
   </div>
 </header>
 <!-- FOUND AND FIXED A REAL, CONFIRMED BUG this round (caught while building an unrelated fix, per the "fail
@@ -6349,26 +6380,69 @@ async function exportPayroll(){
 // representation of existing data — but means Paycom's own break/lunch deduction rules (configured on Paycom's
 // side) are what actually nets out the break, not a separate OL/IL punch pair from this export. Stated plainly
 // in the confirmation dialog below, not hidden.
+// ADDED — closes a real gap (per direct request: "for paycom export to import to paycom make it so date field
+// can be chosen (date picker from and to)"). Previously exportPaycomScheduleImport() always exported exactly
+// the CURRENTLY DISPLAYED week, with no way to export a custom range (e.g. a full pay period spanning two
+// weeks, or a single day) without first navigating the schedule grid itself to each specific week. This modal
+// is the same From/To date-range picker convention already used elsewhere in this app (e.g. the availability
+// popup's own date-range fields) — defaults to the currently displayed week (Thu\u2192Wed) so confirming with no
+// changes reproduces the exact previous one-click behavior.
+function paycomDateRangeModal(){
+  return new Promise(res=>{
+    const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";
+    const defFrom=weekKey(WEEK_START),defTo=weekKey(dayDate(6));
+    bg.innerHTML=`<div class="modal"><h2>Paycom Schedule Import \u2014 date range</h2>
+      <div class="small" style="margin-bottom:8px">Defaults to the currently displayed week \u2014 change either date to export a custom range instead (e.g. a full pay period, or a single day). Can span multiple weeks.</div>
+      <div class="mrow" style="align-items:center"><label class="small">From <input type="date" required id="pcFrom" class="sfield" value="${defFrom}"></label> <label class="small">To <input type="date" required id="pcTo" class="sfield" value="${defTo}"></label></div>
+      <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Continue</button></div>
+    </div>`;
+    document.body.appendChild(bg);
+    const done=v=>{
+      if(v==="ok"){
+        const from=bg.querySelector("#pcFrom").value,to=bg.querySelector("#pcTo").value;
+        if(!from||!to){uiAlert("Enter both a From and To date.");return;}
+        if(to<from){uiAlert("The To date must be on or after the From date.");return;}
+        bg.remove();res({from,to});
+      }else{bg.remove();res(null);}
+    };
+    bg.querySelectorAll("button").forEach(b=>b.onclick=()=>done(b.dataset.c));
+    bg.addEventListener("mousedown",e=>{if(e.target===bg)done("cancel");});
+    bg.tabIndex=-1;
+    bg.addEventListener("keydown",e=>{if(e.key==="Enter"){e.preventDefault();done("ok");}else if(e.key==="Escape"){e.preventDefault();done("cancel");}});
+    bg.focus({preventScroll:true});
+  });
+}
 async function exportPaycomScheduleImport(){
   const dept=CFG[DEPT];
-  const wk=weekKey(WEEK_START);
+  const _range=await paycomDateRangeModal();
+  if(!_range)return;
+  const {from,to}=_range;
   const deptCode=(CFG.paycomDeptCode||{})[DEPT]||"";
   const earnMap=CFG.paycomEarnCodeMap||{};
   const missingId=[],unmappedCodes=new Set(),unreadable=[],badChars=[];
   const rows=[];
   let punchPairs=0,hoursRows=0;
+  // Walks every real CALENDAR date in the chosen range (inclusive), resolving EACH date to its own correct
+  // week+day-index pair — this is what makes a range spanning multiple weeks work correctly, matching the same
+  // cross-week date-iteration convention already used elsewhere in this app (e.g. the leave-request date-range
+  // stamping logic) rather than assuming everything falls within a single displayed week.
+  const _dates=[];
+  for(let d=new Date(from+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){
+    const wk=weekKey(mondayOfWeekStartThu(new Date(d)));
+    const dow=(d.getDay()-dowOffset()+7)%7;
+    _dates.push({wk,dow,dateStr:fmtMMDDYYYY(new Date(d))});
+  }
   dept.staff.filter(s=>s.employed!==false).forEach(s=>{
     const eid=(s.paycomEmployeeId||"").trim();
     if(!eid){missingId.push(s.n);return;}
     if(hasPaycomForbiddenChars(eid)){badChars.push(s.n+" (Employee ID contains a character Paycom's own importer rejects: , ' \" \\\\ ; or $)");return;}
-    for(let day=0;day<7;day++){
-      const v=cellValFor(DEPT,wk,s.n,day);
+    _dates.forEach(({wk,dow,dateStr})=>{
+      const v=cellValFor(DEPT,wk,s.n,dow);
       const cls=classify(v);
-      if(!v||cls==="")continue; // genuinely blank/unassigned — nothing to import for this day
-      const dateStr=fmtMMDDYYYY(dayDate(day));
+      if(!v||cls==="")return; // genuinely blank/unassigned — nothing to import for this day
       if(cls==="work"||cls==="special"){
         const segs=parseShiftSegments(v);
-        if(!segs.length){unreadable.push(s.n+" — "+DOW[day]+" (\""+v+"\")");continue;}
+        if(!segs.length){unreadable.push(s.n+" — "+dateStr+" (\""+v+"\")");return;}
         segs.forEach(seg=>{
           rows.push([eid,deptCode,dateStr,seg.startHM,"ID","","","","","","","",""]);
           rows.push([eid,deptCode,dateStr,seg.endHM,"OD","","","","","","","",""]);
@@ -6377,42 +6451,52 @@ async function exportPaycomScheduleImport(){
       }else if(cls==="off"||cls==="leave"){
         const code=stripCellAnnotations(v).toUpperCase().trim();
         const earnCode=(earnMap[code]||"").trim();
-        if(!earnCode){unmappedCodes.add(code);continue;}
+        if(!earnCode){unmappedCodes.add(code);return;}
         rows.push([eid,deptCode,dateStr,"","",earnCode,"","","",HRS_PER_SHIFT.toFixed(1),"","",""]);
         hoursRows++;
       }
-    }
+    });
   });
+  const _rangeLabel=(from===to)?from:(from+" \u2192 "+to);
   const _lines=[
-    "Paycom Schedule Import export — "+dept.label+", week of "+wk,
+    "Paycom Schedule Import export — "+dept.label+", "+_rangeLabel,
     "",
     "This generates a real Paycom-format Scheduling Import CSV (13 columns, no header row — verified against the actual Scheduling_Import_Instructions.pdf). Ready rows so far: "+punchPairs+" working-shift punch pair(s), "+hoursRows+" leave/off Hours row(s).",
     "",
     "⚠ SCOPE: this app tracks a shift's unpaid-break DURATION, not WHEN it falls within the shift — exported punches represent the shift's full scheduled span; Paycom's own break/lunch rules (configured on Paycom's side) handle the deduction, not a separate punch pair from this export.",
     "⚠ Leave/off Hours rows use this app's HRS_PER_SHIFT ("+HRS_PER_SHIFT.toFixed(1)+"h) as a standard-day ESTIMATE — confirm this matches your actual policy before running real payroll (same disclosed estimate already used by the Payroll & Time (CSV) export)."
   ];
-  if(missingId.length)_lines.push("","❌ EXCLUDED — no Employee ID entered ("+missingId.length+"): "+missingId.slice(0,15).join(", ")+(missingId.length>15?", …":"")+"\n(Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run this export.)");
+  if(missingId.length){
+    // CHANGED — for Front Office specifically, adds direct, honest context for WHY this list is often the
+    // hotel's entire active roster: unlike Housekeeping (see the Readme's own "confidently matched 78 of 101
+    // HSK roster staff" disclosure), neither real Paycom export examined while building this feature contained
+    // ANY Front Office rows at all, so this field could never be pre-filled for FO from real data — it has
+    // always been, and remains, a manual, hand-entered field for FO staff specifically. This is expected,
+    // current behavior for FO, not a bug, and is unrelated to whether a schedule exists for the dates chosen.
+    const _foContext=(DEPT==="FO")?" (Front Office's own Employee IDs were never available to pre-fill from any real Paycom export examined while building this feature — see the Readme's own Paycom integration section — so this is expected until each person's ID is entered by hand, not a sign of a missing or incorrect schedule.)":"";
+    _lines.push("","❌ EXCLUDED — no Employee ID entered ("+missingId.length+"):"+_foContext+" "+missingId.slice(0,15).join(", ")+(missingId.length>15?", …":"")+"\n(Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run this export.)");
+  }
   if(badChars.length)_lines.push("","❌ EXCLUDED — Employee ID has a forbidden character ("+badChars.length+"): "+badChars.join("; "));
   if(unmappedCodes.size)_lines.push("","⚠ SKIPPED — unmapped Earning Code(s) encountered: "+[...unmappedCodes].join(", ")+"\n(Map each one in Settings → Paycom schedule export → Earning Code mapping, then re-run.)");
   if(unreadable.length)_lines.push("","⚠ SKIPPED — unreadable shift value(s): "+unreadable.slice(0,10).join("; ")+(unreadable.length>10?", …":""));
   _lines.push("","Continue and download the CSV for the "+rows.length+" ready row(s) above?");
   const _proceed=await uiConfirm(_lines.join("\n"));
   if(!_proceed)return;
-  if(!rows.length){uiAlert("Nothing to export — no ready rows for "+dept.label+", week of "+wk+". See the reasons listed above.");return;}
+  if(!rows.length){uiAlert("Nothing to export — no ready rows for "+dept.label+", "+_rangeLabel+". See the reasons listed above.");return;}
   // No header row (per Paycom's own explicit rule: "No header record should be included"); plain comma-joined,
   // no quoting needed since every field used here is either a validated identifier/code or a numeric/time value
   // — none of which can legitimately contain a comma once hasPaycomForbiddenChars() has already screened the
   // one real free-text-ish field (Employee ID) above.
   const csv=rows.map(r=>r.join(",")).join("\n");
   const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download=dept.label.replace(/ /g,"_")+"_Paycom_Schedule_Import_"+wk+".csv";a.click();
+  a.download=dept.label.replace(/ /g,"_")+"_Paycom_Schedule_Import_"+from+"_to_"+to+".csv";a.click();
   // CHANGED this round (per explicit request: "paycom step by step to import once report exported from app") —
   // flashNote() is a small, auto-dismissing (6s) toast, genuinely too brief/small to hold a real multi-step
   // walkthrough — swapped for a proper uiAlert() with the FULL import walkthrough, taken directly from the real
   // Scheduling_Import_Instructions.pdf (Paycom, May 2021) this export was itself built against, not a generic
   // guess at Paycom's own UI.
   await uiAlert(
-    "Downloaded "+rows.length+" row(s): "+dept.label.replace(/_/g," ")+"_Paycom_Schedule_Import_"+wk+".csv\n\n"+
+    "Downloaded "+rows.length+" row(s): "+dept.label.replace(/_/g," ")+"_Paycom_Schedule_Import_"+from+"_to_"+to+".csv\n\n"+
     "Next steps in Paycom:\n\n"+
     "1. Go to the Schedule Import screen (Time Management).\n"+
     "2. Select \u201c"+paycomEmployeeIdType()+"\u201d as the employee identifier \u2014 this must match the type this file's Employee ID column actually contains (set in Settings \u2192 Paycom schedule export).\n"+
@@ -7468,10 +7552,12 @@ function maybeLocalNotify(title,body,key){
   s.keys.push(key);_saveNotifiedSet(s);
   if(typeof Notification!=="undefined"&&Notification.permission==="granted"){
     try{
+      // FIXED — matches the same icon-filename correction as the <head> section above (the real, already-
+      // uploaded file is named android-chrome-192x192.png, not icon-192.png).
       if(navigator.serviceWorker&&navigator.serviceWorker.controller){
-        navigator.serviceWorker.ready.then(reg=>reg.showNotification(title,{body,icon:"icon-192.png",tag:key}));
+        navigator.serviceWorker.ready.then(reg=>reg.showNotification(title,{body,icon:"android-chrome-192x192.png",tag:key}));
       } else {
-        new Notification(title,{body,icon:"icon-192.png",tag:key});
+        new Notification(title,{body,icon:"android-chrome-192x192.png",tag:key});
       }
     }catch(e){console.warn("local notification failed",e);}
   }
@@ -9057,9 +9143,15 @@ function _categorizeConflictLine(line){
   return "Schedule"; // the remaining shape is the per-cell schedule diff: "NAME — DEPT DAY (WK): ..."
 }
 const _CONFLICT_CATEGORY_ORDER=["Schedule","Demand","Leave requests","Staff roster","Coverage minimums","Rules & thresholds","Default shifts","Role list","App-wide settings"];
-function showUploadChoiceDialog(changes,conflicts,cfgChanged){
+function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync){
   return new Promise(res=>{
     const nonConflicting=changes.filter(c=>!conflicts.includes(c));
+    // A short, one-time clarifying note for the specific case where this project's shared app-wide settings
+    // have genuinely never been synced before (see _lastPulledAppConfig's own comment) — several familiar-
+    // looking "App-wide setting" lines can appear here purely because this hotel's Supabase project predates
+    // that sync feature, not because of anything the user just changed. This note only ever appears once per
+    // project (the very next successful Upload permanently resolves it for every future connection).
+    const firstSyncNote=isFirstAppWideSync?`<div class="small muted" style="margin-bottom:6px">\u2139\ufe0f Several "App-wide setting" items below are appearing because these settings have never been synced to this live project before (not necessarily something you just changed) \u2014 this is expected the first time, and won't repeat after the next Upload.</div>`:"";
     // Groups items into their category first, then renders one sub-heading per category actually present
     // (never an empty "Demand (0)" heading for a category with nothing to show) — genuinely easier to scan
     // than one long undifferentiated list, while the OUTER max-height+overflow:auto scroll box is unchanged,
@@ -9082,6 +9174,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged){
     const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";
     bg.innerHTML=`<div class="modal" style="max-width:520px">
       <div style="font-weight:600;margin-bottom:8px">You have local changes not yet on the live copy.</div>
+      ${firstSyncNote}
       ${listBlock("\u26a0 Conflicts \u2014 would overwrite live data",conflicts,"#b30000")}
       ${listBlock("Other local changes \u2014 safe to upload",nonConflicting,"")}
       ${cfgBlock}
@@ -9131,13 +9224,32 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   if(!fromOnlineEvent)await pullAll(); // connect() awaits this function directly now; only pull here for the online-event path
   const liveSnapshot={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS))}; // the just-pulled live data \u2014 needed if the user picks "discard local changes"
   // whatever pullAll() just applied (the live roster, if a row existed yet, else still the local one untouched)
+  // — used below for the "Go live"/"Cancel" restore actions, which is the historically-correct meaning of
+  // "current effective live state" for THOSE actions specifically (see this variable's own use further down).
   const _cfgDeptsLive={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:_snapAppWide()};
+  // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "change that I made to hide settings and readme
+  // from view only wasn't listed in pop up of changes"). See _lastPulledAppConfig's own comment for the full
+  // root-cause writeup: _cfgDeptsLive (above) reflects CFG's state AFTER pullAll() ran, which — for any field
+  // never previously pushed to this live project (e.g. right after this app-wide-settings-sync feature first
+  // ships, or on any Supabase project still running an older deployed version) — is identical to the LOCAL,
+  // not-yet-uploaded value, since pullAll() only ever overwrites a key it actually received from the server.
+  // Using that as the "live" side of a diff silently compares the local edit against itself, hiding a
+  // genuinely real, still-pending change. This diff-ONLY snapshot instead uses the RAW data pullAll() actually
+  // received (falling back to the CFG-based snapshot only for FO/HSK, and only when the live project has no
+  // roster at all yet — avoiding a misleading wall of "every single person is new" noise for that specific,
+  // much rarer first-ever-connect case; appWide always uses the raw data directly, since that's exactly the
+  // piece this bug is about).
+  const _cfgDeptsLiveForDiff={
+    FO:(_lastPulledAppConfig&&_lastPulledAppConfig.FO)||_cfgDeptsLive.FO,
+    HSK:(_lastPulledAppConfig&&_lastPulledAppConfig.HSK)||_cfgDeptsLive.HSK,
+    appWide:(_lastPulledAppConfig&&_lastPulledAppConfig.appWide)||{}
+  };
   const {changes,conflicts}=analyzeUploadChanges(localSnapshot,liveSnapshot);
   // Merges the roster/settings diff (see analyzeCfgChanges()'s own comment for the full "generic banner instead
   // of an itemized list" gap this closes) into the SAME changes/conflicts arrays the schedule diff already
   // populates — both feed the SAME scrollable lists in showUploadChoiceDialog(), so a scheduler sees exactly
   // which staff member/coverage minimum/rule differs, not just a "some roster/settings changed" notice.
-  const _cfgDiff=analyzeCfgChanges(_cfgDeptsLocal,_cfgDeptsLive);
+  const _cfgDiff=analyzeCfgChanges(_cfgDeptsLocal,_cfgDeptsLiveForDiff);
   changes.push(..._cfgDiff.changes);conflicts.push(..._cfgDiff.conflicts);
   ASSIGN=JSON.parse(JSON.stringify(localSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(localSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(localSnapshot.leaveRequests)); // show local values while the dialog is open, so "Upload" (if chosen) uploads YOUR edits, not the just-pulled live ones
   // restore the LOCAL roster/settings too (see this function's own comment above), same "show local while the
@@ -9153,7 +9265,8 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   // and a difference there was never meaningful to surface here.
   const _cfgChanged=(JSON.stringify(_cfgDeptsLocal)!==JSON.stringify(_cfgDeptsLive));
   if(!changes.length&&!_cfgChanged){ if(DB){setStatus("live","#2c9e5f");} return; } // nothing actually pending in any syncable data \u2014 nothing to ask about, already live
-    const choice=await showUploadChoiceDialog(changes,conflicts,_cfgChanged);
+    const _isFirstAppWideSync=!(_lastPulledAppConfig&&_lastPulledAppConfig.appWide&&Object.keys(_lastPulledAppConfig.appWide).length);
+    const choice=await showUploadChoiceDialog(changes,conflicts,_cfgChanged,_isFirstAppWideSync);
   if(choice==="upload"){ await pushPending(); if(DB)setStatus("live","#2c9e5f"); }
   else if(choice==="live"){ ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);_pullingConfigNow=false;setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
   else { // Cancel / dismissed \u2014 do NOT go live; keep local data and tear the connection back down
@@ -9433,6 +9546,12 @@ function _looksLikeSchemaCacheError(err){
   const m=(err&&err.message)?String(err.message):String(err||"");
   return /schema cache|could not find the table|does not exist/i.test(m);
 }
+// Set by pullAll()'s own app_config fetch to the RAW data actually returned by Supabase for the shared
+// roster/settings row (or {FO:null,HSK:null,appWide:{}} if that row genuinely doesn't exist or holds nothing
+// yet) — see that fetch's own comment for the full "CFG's post-pull state is not a reliable stand-in for what
+// live actually holds" bug this exists to fix. Deliberately a plain global (not a return value from pullAll()
+// itself), matching this file's own established pattern for out-of-band pull results (_pullingConfigNow, etc.).
+let _lastPulledAppConfig=null;
 async function pullAll(isRetry){
   if(!DB)return;
   const errors=[]; // {label, err}
@@ -9483,15 +9602,24 @@ async function pullAll(isRetry){
   // this same pulled data is saved to localStorage below.
   await pullTable("app_config","settings & roster",rows=>{
     const row=rows.find(r=>r.id==="depts");
+    // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "change that I made to hide settings and
+    // readme from view only wasn't listed in pop up of changes"). ROOT CAUSE, confirmed via direct testing:
+    // maybeUploadOnConnect() previously inferred "what does live currently hold" by snapshotting CFG itself
+    // AFTER this pull ran — but if the live app_config row predates this feature (or simply never had a given
+    // key pushed yet, e.g. a project still running an older deployed version of this file), row.data.appWide
+    // is undefined here, so the loop below never touches CFG for ANY shared key at all. That left CFG exactly
+    // as it was BEFORE the pull — i.e., still the user's own just-made local edit — which the diff logic then
+    // misread as "identical to live" (comparing the local edit against itself), silently hiding a change that
+    // is very much real and still fully pending upload. FIX: the actual raw fetched data (or an empty object,
+    // if genuinely absent) is now stored separately in _lastPulledAppConfig, and analyzeCfgChanges() /
+    // maybeUploadOnConnect() are built to compare local values against THIS raw record directly, rather than
+    // against CFG's own post-pull state — so a field that was never previously synced now correctly shows as a
+    // real, listed difference (your local value vs. "never set on live"), instead of silently vanishing.
+    _lastPulledAppConfig=(row&&row.data)?{FO:row.data.FO||null,HSK:row.data.HSK||null,appWide:row.data.appWide||{}}:{FO:null,HSK:null,appWide:{}};
     if(row&&row.data){
       _pullingConfigNow=true;
       if(row.data.FO)CFG.FO=row.data.FO;
       if(row.data.HSK)CFG.HSK=row.data.HSK;
-      // EXPANDED — pulls every SHARED_APP_CFG_KEYS field too (see that constant's own comment for the full
-      // "Paycom mapping/clock-in policy/etc. never actually reached live" gap this closes). A brand-new
-      // Supabase project (or one that predates this fix) simply has no row.data.appWide yet — treated as a
-      // normal "nothing to pull yet" case, never an error, so a first connection still proceeds normally with
-      // whatever this device already has locally for these settings.
       if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
     }
@@ -13409,6 +13537,25 @@ async function ensureWeekEditable(){
   }
   uiAlert("This week is locked. Use the lock button (top-right) to unlock.");
   return false;
+}
+// Desktop/Mobile view toggle — see the header button's own comment for the full "why" and technique used.
+// Deliberately a plain, standalone localStorage flag (not part of CFG) — this is a per-DEVICE display
+// preference, not a shared team fact, matching this app's own established convention for other genuinely
+// personal/device-only settings (e.g. _notifName).
+function _desktopViewForced(){try{return localStorage.getItem("hotel_forceDesktopView")==="1";}catch(e){return false;}}
+function _applyViewModeMeta(){
+  const meta=document.querySelector('meta[name="viewport"]');
+  if(!meta)return;
+  const forced=_desktopViewForced();
+  meta.setAttribute("content",forced?"width=1200":"width=device-width, initial-scale=1");
+  const btn=el("viewModeBtn");
+  if(btn)btn.textContent=forced?"\ud83d\udda5\ufe0f Desktop view":"\ud83d\udcf1 Mobile view";
+}
+function toggleDesktopMobileView(){
+  const next=!_desktopViewForced();
+  try{localStorage.setItem("hotel_forceDesktopView",next?"1":"0");}catch(e){}
+  _applyViewModeMeta();
+  flashNote(next?"Desktop view — pinch/zoom or scroll to reach any part of the full layout. Tap this button again to return to the mobile-optimized view.":"Mobile view — back to this app's own phone-optimized layout.");
 }
 async function toggleEdit(){
   // FOUND AND FIXED A REAL BUG this round (per feedback: "In view only, FO reason/type padlocked but not HSK
@@ -18210,10 +18357,47 @@ function sendTestNotification(){
 // "missing" for a "during"+no-check-in shift) \u2014 this panel shows BOTH states explicitly so it's clear which
 // (if either) applies to the exact shift/time being tested, rather than assuming only one specific reminder is
 // possible.
+// ADDED — closes a real, confirmed feature gap (per direct report: "notifications section behavior weird. If
+// I click diagnose even with something checked off, it says nothing checked off"). ROOT CAUSE, confirmed by
+// direct testing: diagnoseReminders() (below) has ALWAYS required a personal reminder NAME to be selected —
+// it was built specifically to trace one individual's own shift, and has no way to check anything at all for
+// someone who only wants manager/scheduler-side alerts with no personal name picked (exactly the reported
+// setup: "no personal reminders" selected, Housekeeping manager-alerts checkbox checked). This was a genuine,
+// disclosed gap, not a bug in the existing check — there was simply no manager-facing diagnostic at all. This
+// function is the new, separate manager-mode counterpart: for each department this device is subscribed to
+// manager alerts for, it lists every CURRENT attendance exception (no clock-in with a shift in progress or
+// already ended, or clocked in but never clocked out) — the exact same conditions runReminderCheck() itself
+// polls for — so a manager can directly see "is there anything to alert on right now" instead of guessing.
+function _diagnoseManagerAlertsHtml(mgrDepts){
+  const{wk,dayIdx}=todaysWeekAndDayIdx();
+  const sections=mgrDepts.map(dp=>{
+    const dept=CFG[dp];if(!dept)return "";
+    const rows=[];
+    (dept.staff||[]).filter(s=>s.employed!==false).forEach(s=>{
+      const v=cellValFor(dp,wk,s.n,dayIdx);
+      if(classify(v)!=="work")return;
+      const attn=attendanceStateFor(s.n,dayIdx,v,dp,wk);
+      if(attn==="missing"||attn==="noshow"||attn==="notout"){
+        const label=attn==="notout"?"Clocked in, never clocked out":attn==="missing"?"Shift in progress, no clock-in":"Shift ended, no clock-in (no-show)";
+        rows.push(`<tr><td>${esc(s.n)}</td><td>${esc(v)}</td><td>${esc(label)}</td></tr>`);
+      }
+    });
+    const body=rows.length
+      ?`<table class="small leftAlignCells"><tr><th style="text-align:left">Name</th><th style="text-align:left">Today's shift</th><th style="text-align:left">Exception</th></tr>${rows.join("")}</table>`
+      :`<div class="small muted">No current attendance exceptions for ${esc(dept.label)} \u2014 nothing to alert on right now.</div>`;
+    return `<div style="margin-top:8px"><b>${esc(dept.label)}</b><div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:4px">${body}</div></div>`;
+  }).join("");
+  return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px"><div class="small muted">Manager-alert check \u2014 every current staff member's attendance state for each department you're subscribed to:</div>${sections}
+  <div class="small muted" style="margin-top:6px">If everything above says no exceptions, but you still expect an alert, double-check: the specific shift is classified as a real working shift (not OFF/leave/blank), and enough time has passed since the shift's own scheduled start/end for the configured grace period (Settings → Clock in/out) to have elapsed.</div></div>`;
+}
 function diagnoseReminders(){
   const box=el("reminderDiag");if(!box)return;
   const myName=CFG._notifName;
-  if(!myName){box.innerHTML=`<div class="mflag">No personal reminder name is selected above \u2014 pick a name in "Remind me about my own shifts, as:" first, then run this again.</div>`;return;}
+  const mgrDepts=CFG._notifManagerDepts||[];
+  if(!myName){
+    if(mgrDepts.length){box.innerHTML=_diagnoseManagerAlertsHtml(mgrDepts);return;}
+    box.innerHTML=`<div class="mflag">No personal reminder name is selected above, and no manager-alert department is checked \u2014 pick a name in "Remind me about my own shifts, as:", or check at least one department under "Also alert me as a manager/scheduler", then run this again.</div>`;return;
+  }
   const{wk,dayIdx}=todaysWeekAndDayIdx();
   let found=null;
   ["FO","HSK"].forEach(dp=>{const dept=CFG[dp];if(!dept)return;const s=(dept.staff||[]).find(x=>x.n===myName&&x.employed!==false);if(s)found={dp,dept,s};});
@@ -18269,8 +18453,13 @@ function diagnoseReminders(){
   // default instead \u2014 a real header-vs-data mismatch. Scoped via inline style on the <table> itself (affecting
   // only its own direct <td> children) rather than editing all 11 individual row-construction lines above,
   // which keeps this single, centralized fix from drifting out of sync if a 12th row is ever added later.
+  // Appends the SAME manager-alert check used standalone above (see _diagnoseManagerAlertsHtml()'s own
+  // comment) whenever this device is ALSO subscribed to manager alerts for at least one department — a
+  // manager who has picked a personal name too would otherwise never see this section at all, even though
+  // it's just as relevant to them.
+  const _mgrSection=mgrDepts.length?_diagnoseManagerAlertsHtml(mgrDepts):"";
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
-  <div class="small muted" style="margin-top:4px">If everything above says a notification SHOULD fire, but nothing appears within ~60 seconds, the issue is in DELIVERY, not detection \u2014 most commonly: this tab/PWA must stay open (even in the background) for local reminders to fire at all (see Readme \u2014 a fully closed app/locked phone needs background push, a separate, server-dependent mechanism); or the OS/browser notification permission for this site was silently blocked outside this app.</div>`;
+  <div class="small muted" style="margin-top:4px">If everything above says a notification SHOULD fire, but nothing appears within ~60 seconds, the issue is in DELIVERY, not detection \u2014 most commonly: this tab/PWA must stay open (even in the background) for local reminders to fire at all (see Readme \u2014 a fully closed app/locked phone needs background push, a separate, server-dependent mechanism); or the OS/browser notification permission for this site was silently blocked outside this app.</div>${_mgrSection}`;
 }
 function allActiveStaffOptions(){const out=[];["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).filter(s=>s.employed!==false).forEach(s=>out.push({dept:dp,name:s.n,role:s.role}));});return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);}
 function pendingReqFor(dept,name,iso){return Object.values(LEAVE_REQUESTS).find(r=>r.status==="pending"&&r.dept===dept&&r.name===name&&iso>=r.from&&iso<=r.to)||null;}
@@ -22733,6 +22922,10 @@ function seedRoster(){try{
   // very FIRST genuine edit of a session needs as its own undo target, rather than incorrectly capturing its own
   // already-mutated state (the actual bug being fixed).
   try{_lastSettledSnapshot=_undoSnapshot();}catch(e){console.warn("undo baseline seed skipped (non-fatal):",e);}
+  // Restores this device's own saved Desktop/Mobile view preference (see toggleDesktopMobileView()'s own
+  // comment) — runs at the very end of boot(), after the header itself has been written into the page, so
+  // el("viewModeBtn") already exists for its own label to be set correctly on load.
+  try{_applyViewModeMeta();}catch(e){console.warn("view-mode restore skipped (non-fatal):",e);}
 })();
 </script>
 </body>
