@@ -215,6 +215,43 @@
   #gridTitle{line-height:1.8;}
   #gridTitle button.mini,#gridTitle .pill{margin:3px 0;}
   table{border-collapse:separate;border-spacing:0;width:100%;font-size:12.5px;table-layout:fixed;}
+  /* FOUND AND FIXED A REAL, CONFIRMED SYSTEMIC GAP (per direct report: "Diagnose today's reminder table only
+     shows leftmost column in narrow screen, in wide screen exceptions column too narrow, borders missing
+     between some rows. shouldn't global settings prevent this kind of issue from happening every time a table
+     is added?"). Direct answer: yes — this exact class of bug (a NEW, ad-hoc table added without also hand-
+     building a matching <colgroup>) has now recurred multiple times across this app's own history (the
+     Paycom earning-code table, the autodeny table, and now this diagnostic table all hit the identical root
+     cause independently before being fixed one at a time). ROOT CAUSE, confirmed directly: the base rule above
+     sets table-layout:fixed globally — under the fixed algorithm, a table with NO <colgroup> and no explicit
+     per-cell width falls back to dividing the AVAILABLE WIDTH EQUALLY across however many columns exist,
+     completely ignoring how much text each column's own content actually needs. A 3-column table with a long
+     name, a medium shift-time value, and a long free-text explanation forced into 3 EQUAL thirds is exactly
+     why the longest column (Exception) wrapped so severely that it appeared "missing"/squeezed at typical
+     widths, while shorter columns sat mostly empty — and why the FIRST column alone appeared to consume the
+     entire visible area on a narrow screen (fixed layout, unlike auto, does not reflow columns based on actual
+     content once initial widths are set). This is a genuine, systemic gap: table-layout:fixed is the CORRECT,
+     deliberate choice for this app's own hand-built, precisely-proportioned grids (the schedule, coverage
+     tables, etc. — which all supply their own <colgroup>), but is actively HARMFUL as a silent DEFAULT for any
+     future simple, ad-hoc info/diagnostic table that doesn't. Rather than hand-fixing each new table's own
+     colgroup one at a time as this keeps recurring, this new OPT-IN class is the standing, documented fix:
+     any table whose columns should size themselves naturally to their own content (not a hand-tuned, pixel-
+     proportioned grid) should carry class="autoTable" — this single override switches JUST that table back to
+     content-based sizing, with no colgroup required, closing off this entire class of bug for any table using
+     it, present or future. */
+  table.autoTable{table-layout:auto;}
+  table.autoTable td,table.autoTable th{white-space:normal;overflow-wrap:break-word;}
+  /* CONFIRMED the true, full root cause via direct measurement: #settingsBody table{...} (further below) is
+     scoped by ID, giving it HIGHER specificity than the plain class selector above alone — so table-layout:
+     fixed, min-width:900px, and (critically) an automatic width:34px + text-align:center forced onto every
+     LAST column (originally meant only for the small icon/remove-button column other Settings tables end
+     with) were ALL still silently winning over .autoTable for any such table rendered inside Settings — which
+     is exactly why the Exception column above measured a hard 34px regardless of viewport width, and why the
+     narrow-screen table needed horizontal scrolling to reach it at all (a 900px-wide table inside a normal-
+     width card). These matching-or-higher-specificity overrides are what actually make .autoTable win
+     correctly wherever it's used, including inside Settings. */
+  #settingsBody table.autoTable{table-layout:auto;min-width:0;}
+  #settingsBody table.autoTable td,#settingsBody table.autoTable th{white-space:normal;overflow-wrap:break-word;}
+  #settingsBody table.autoTable th:last-child,#settingsBody table.autoTable td:last-child{width:auto;text-align:left;}
   /* FIXED per feedback ("some rows like Graveyard PA and Laundry/Uniform suddenly increased in height — revert
      so it's standardized"): td.name allows text to wrap (white-space:normal;overflow-wrap:anywhere), and at the
      previous 200px width, several longer name+type-label combinations (e.g. "Jada (Abi) Deem-Hinson (PT · TRN)",
@@ -1857,6 +1894,12 @@
          compact") \u2014 kept deliberately compact (a short "Today" label, matching Prev/Next's own terse style). -->
     <button class="ghostw weeknav" id="btnCurrentWeek" onclick="jumpToCurrentWeek()" style="display:none" title="Jump to the current week">Today</button>
     <span class="status" id="syncStatus"><span class="dot" style="background:#c7d0da"></span>local</span>
+    <!-- ADDED — see _awayChanges' own comment (near pullAll()) for the full "what changed while away" feature.
+         An empty, hidden-by-default span filled in only by renderAwayChangesBadge() — kept genuinely EMPTY
+         (rather than a static placeholder) so it takes up zero visual space until there's actually something
+         to show, matching this header's own established "don't reserve space for a state that isn't active"
+         convention (e.g. headerConnect only appears once genuinely relevant). -->
+    <span id="awayChangesBadge"></span>
     <!-- NEW this round (per direct, genuine question: "if Settings/Readme are checked to be hidden to view-only
          users, how are they supposed to see the live version of the app?"): investigated this directly rather
          than assuming — confirmed the app DOES auto-reconnect on every load if a Supabase URL/key was EVER saved
@@ -5159,10 +5202,30 @@ function render(){
   // just below, which already correctly no-ops entirely for a view-only click. Now guarded the same way.
   el("grid").querySelectorAll(".cellbtn").forEach(b=>b.addEventListener("click",(e)=>{
     if(!EDIT)return;
+    // ADDED — see initDragSelect()'s own comment for the full "genuinely new, not previously built" drag-select
+    // feature this closes off. Suppresses the ordinary single-cell click/shift/ctrl behavior for the SPECIFIC
+    // click that ends a real drag gesture (a mouseup/touchend that moved across more than one cell) — without
+    // this, that same click would ALSO immediately fire _handlePlainCellClick() (opening the single-cell shift
+    // editor) or toggleCellSelection() a second, redundant time right after the drag itself already built the
+    // real selection, which would be a confusing double-action on every single drag.
+    if(_dragSelectJustFinished){_dragSelectJustFinished=false;return;}
     const nm=decodeURIComponent(b.dataset.nm),day=+b.dataset.day;
     if(MULTISEL.active||e.shiftKey||e.ctrlKey||e.metaKey){toggleCellSelection(nm,day,{shift:e.shiftKey,ctrl:e.ctrlKey||e.metaKey});return;}
     _handlePlainCellClick(nm,day);
   }));
+  // ADDED (per direct request: "can mobile version make it so features work with touch screen like multiselect
+  // can work by dragging"). CONFIRMED via direct code review this was a genuinely NEW feature to build, not an
+  // existing mouse-only behavior that merely needed porting to touch — this app's multi-selection previously
+  // only ever supported a plain click (one cell), Shift+click (a rectangular range from the last-clicked
+  // anchor), and Ctrl/Cmd+click (toggle one cell) — there was no press-and-drag-across-cells gesture for
+  // EITHER input method before this. Built once, using Pointer Events (not separate mouse/touch listener
+  // pairs) — a single, standard W3C API that already unifies mouse, touch, and pen input identically, so mouse
+  // drag-select and touch drag-select are the exact same code path, not two parallel implementations that
+  // could drift apart. Deliberately gated behind MULTISEL.active (the existing "Select multiple" toggle) — an
+  // ordinary, non-multiselect tap/click/scroll gesture on the schedule grid is completely unaffected either
+  // way, so this can never interfere with normal single-cell editing or with a finger simply scrolling the
+  // page on a phone.
+  initDragSelect();
   // NEW this round \u2014 see _focusedCell's own comment for the full "row/column focus highlight" design. This is
   // a GENUINELY SEPARATE, additional listener (never modifies or replaces the edit-mode-gated listeners above/
   // below it) \u2014 deliberately has NO `if(!EDIT)return` guard, since this is a pure visual navigational aid that
@@ -6412,12 +6475,18 @@ function paycomDateRangeModal(){
     bg.focus({preventScroll:true});
   });
 }
-async function exportPaycomScheduleImport(){
-  const dept=CFG[DEPT];
+// ADDED explicit `deptKey` parameter — defaults to the global DEPT (the currently-displayed schedule tab) so
+// every OTHER, older call site (e.g. the Export… menu's own "Paycom Schedule Import (CSV)" option) keeps
+// working exactly as before with zero changes needed there; the new Settings-section dropdown (see that
+// button's own comment) is what actually passes an explicit department now, letting it export EITHER
+// department without ever needing to leave Settings.
+async function exportPaycomScheduleImport(deptKey){
+  const _dk=deptKey||DEPT;
+  const dept=CFG[_dk];
   const _range=await paycomDateRangeModal();
   if(!_range)return;
   const {from,to}=_range;
-  const deptCode=(CFG.paycomDeptCode||{})[DEPT]||"";
+  const deptCode=(CFG.paycomDeptCode||{})[_dk]||"";
   const earnMap=CFG.paycomEarnCodeMap||{};
   const missingId=[],unmappedCodes=new Set(),unreadable=[],badChars=[];
   const rows=[];
@@ -6430,22 +6499,41 @@ async function exportPaycomScheduleImport(){
   for(let d=new Date(from+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){
     const wk=weekKey(mondayOfWeekStartThu(new Date(d)));
     const dow=(d.getDay()-dowOffset()+7)%7;
-    _dates.push({wk,dow,dateStr:fmtMMDDYYYY(new Date(d))});
+    // A real calendar Date object (not just the formatted string) is kept alongside dateStr specifically so an
+    // overnight shift's OUT punch can compute "the next real calendar day" correctly (see the FOUND AND FIXED
+    // comment below) — a plain string can't have a day added to it.
+    _dates.push({wk,dow,dateObj:new Date(d),dateStr:fmtMMDDYYYY(new Date(d))});
   }
   dept.staff.filter(s=>s.employed!==false).forEach(s=>{
     const eid=(s.paycomEmployeeId||"").trim();
     if(!eid){missingId.push(s.n);return;}
     if(hasPaycomForbiddenChars(eid)){badChars.push(s.n+" (Employee ID contains a character Paycom's own importer rejects: , ' \" \\\\ ; or $)");return;}
-    _dates.forEach(({wk,dow,dateStr})=>{
-      const v=cellValFor(DEPT,wk,s.n,dow);
+    _dates.forEach(({wk,dow,dateObj,dateStr})=>{
+      const v=cellValFor(_dk,wk,s.n,dow);
       const cls=classify(v);
       if(!v||cls==="")return; // genuinely blank/unassigned — nothing to import for this day
       if(cls==="work"||cls==="special"){
         const segs=parseShiftSegments(v);
         if(!segs.length){unreadable.push(s.n+" — "+dateStr+" (\""+v+"\")");return;}
+        // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct request: "check if format correct" — verified
+        // directly against Paycom's own "Scheduling_Import_Instructions.pdf," specifically its own official
+        // Sample Import Files table on page 4). ROOT CAUSE: this previously stamped BOTH the ID (in-duty) and
+        // OD (out-duty) punch of a SINGLE shift with the exact same calendar date — correct for an ordinary
+        // same-day shift, but Paycom's own official sample file explicitly shows an OVERNIGHT shift example
+        // (23:00 ID on 12/14/2020, immediately followed by 07:00 OD on 12/15/2020 — the NEXT calendar day, not
+        // the same one) confirming the OUT punch of a shift that crosses midnight must be dated the day AFTER
+        // the IN punch. An overnight segment is identified the same way this app already does everywhere else
+        // (its own end time is numerically BEFORE its own start time, e.g. "22:30-07:00" — see
+        // shiftEndMinutesFor()'s own established "add 24h" convention for exactly this shape) — only in that
+        // specific case does the OD row's own date get bumped forward by one real calendar day; an ordinary
+        // same-day shift (the overwhelming majority) is completely unaffected by this fix.
         segs.forEach(seg=>{
+          const _startMin=(+seg.startHM.split(":")[0])*60+(+seg.startHM.split(":")[1]);
+          const _endMin=(+seg.endHM.split(":")[0])*60+(+seg.endHM.split(":")[1]);
+          const _isOvernight=_endMin<=_startMin;
+          const _odDateStr=_isOvernight?fmtMMDDYYYY(new Date(dateObj.getFullYear(),dateObj.getMonth(),dateObj.getDate()+1)):dateStr;
           rows.push([eid,deptCode,dateStr,seg.startHM,"ID","","","","","","","",""]);
-          rows.push([eid,deptCode,dateStr,seg.endHM,"OD","","","","","","","",""]);
+          rows.push([eid,deptCode,_odDateStr,seg.endHM,"OD","","","","","","","",""]);
           punchPairs++;
         });
       }else if(cls==="off"||cls==="leave"){
@@ -6473,7 +6561,7 @@ async function exportPaycomScheduleImport(){
     // ANY Front Office rows at all, so this field could never be pre-filled for FO from real data — it has
     // always been, and remains, a manual, hand-entered field for FO staff specifically. This is expected,
     // current behavior for FO, not a bug, and is unrelated to whether a schedule exists for the dates chosen.
-    const _foContext=(DEPT==="FO")?" (Front Office's own Employee IDs were never available to pre-fill from any real Paycom export examined while building this feature — see the Readme's own Paycom integration section — so this is expected until each person's ID is entered by hand, not a sign of a missing or incorrect schedule.)":"";
+    const _foContext=(_dk==="FO")?" (Front Office's own Employee IDs were never available to pre-fill from any real Paycom export examined while building this feature — see the Readme's own Paycom integration section — so this is expected until each person's ID is entered by hand, not a sign of a missing or incorrect schedule.)":"";
     _lines.push("","❌ EXCLUDED — no Employee ID entered ("+missingId.length+"):"+_foContext+" "+missingId.slice(0,15).join(", ")+(missingId.length>15?", …":"")+"\n(Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run this export.)");
   }
   if(badChars.length)_lines.push("","❌ EXCLUDED — Employee ID has a forbidden character ("+badChars.length+"): "+badChars.join("; "));
@@ -8961,14 +9049,26 @@ async function pushPending(){ if(!DB){uiAlert("Connect a Supabase project first 
 // field) and LEAVE_REQUESTS (by id) \u2014 the two other data types pushPending() genuinely pushes to Supabase.
 // CFG/Settings changes are surfaced separately (see the _cfgChanged flag in maybeUploadOnConnect below) since CFG
 // currently has NO Supabase table at all \u2014 itemizing it field-by-field here would be misleading.
+// FOUND AND FIXED A REAL, CONFIRMED GAP (surfaced while building the new "changes since you were away" badge
+// — see _awayChanges' own comment near pullAll()). ROOT CAUSE: every section of this function previously
+// iterated ONLY `Object.keys(localSnapshot...)` — correct for this function's ORIGINAL, narrower purpose (a
+// pending-local-edit-vs-live diff, where "what's pending" is inherently scoped to structure the local device
+// already has), but genuinely incomplete for the broader question "what is different between these two
+// snapshots, in either direction" — an entire week, staff member, demand week, or leave request that exists
+// ONLY on the live side (e.g. a brand-new week another device scheduled while this one had zero prior
+// knowledge of it at all) was silently invisible to this diff, in BOTH its original use (the local-vs-live
+// conflict popup) and the new away-changes comparison. Now iterates the UNION of keys at every level (local ∪
+// live), so a live-only addition is correctly surfaced as a real change (never a "conflict," since there is no
+// local edit at risk of being overwritten by it) — a strict superset of what this function already caught, with
+// no change in behavior for anything it already correctly found before.
 function analyzeUploadChanges(localSnapshot,liveSnapshot){
   const changes=[];const conflicts=[];
   ["FO","HSK"].forEach(dept=>{
     const localWeeks=(localSnapshot.assign&&localSnapshot.assign[dept])||{};
     const liveWeeks=(liveSnapshot.assign&&liveSnapshot.assign[dept])||{};
-    Object.keys(localWeeks).forEach(wk=>{
+    new Set([...Object.keys(localWeeks),...Object.keys(liveWeeks)]).forEach(wk=>{
       const localStaff=localWeeks[wk]||{};const liveStaff=liveWeeks[wk]||{};
-      Object.keys(localStaff).forEach(nm=>{
+      new Set([...Object.keys(localStaff),...Object.keys(liveStaff)]).forEach(nm=>{
         const localDays=localStaff[nm]||{};const liveDays=liveStaff[nm]||{};
         for(let d=0;d<7;d++){
           const lv=localDays[d],rv=liveDays[d];
@@ -8980,13 +9080,13 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
       });
     });
   });
-  // NEW this round: Demand table diff — same "your copy vs live" line format, field-by-field per day/week.
+  // Demand table diff — same "your copy vs live" line format, field-by-field per day/week.
   {
     const localDem=localSnapshot.demand||{};const liveDem=liveSnapshot.demand||{};
     const fields=["occ","arr","dep","credits","ooo","house","events","transportation","unassigned"];
-    Object.keys(localDem).forEach(wk=>{
+    new Set([...Object.keys(localDem),...Object.keys(liveDem)]).forEach(wk=>{
       const localDays=localDem[wk]||{};const liveDays=liveDem[wk]||{};
-      Object.keys(localDays).forEach(d=>{
+      new Set([...Object.keys(localDays),...Object.keys(liveDays)]).forEach(d=>{
         const lv=localDays[d]||{},rv=liveDays[d]||{};
         fields.forEach(f=>{
           const a=lv[f],b=rv[f];
@@ -8998,15 +9098,21 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
       });
     });
   }
-  // NEW this round: Leave Requests diff — by id, since these are whole-record objects rather than per-field cells;
-  // a genuinely NEW local request (no live counterpart at all) is a safe addition, never a conflict; a request
-  // that exists in BOTH but differs (e.g. locally approved/denied while live still shows pending) is a conflict.
+  // Leave Requests diff — by id, since these are whole-record objects rather than per-field cells; a genuinely
+  // NEW local request (no live counterpart at all) is a safe addition, never a conflict; a request that exists
+  // in BOTH but differs (e.g. locally approved/denied while live still shows pending) is a conflict; a request
+  // that exists ONLY on live (e.g. a worker submitted one, or a manager decided one, on a different device
+  // entirely) is a real, new, non-conflicting change to surface.
   {
     const localLR=localSnapshot.leaveRequests||{};const liveLR=liveSnapshot.leaveRequests||{};
-    Object.keys(localLR).forEach(id=>{
+    new Set([...Object.keys(localLR),...Object.keys(liveLR)]).forEach(id=>{
       const lv=localLR[id],rv=liveLR[id];
-      if(rv&&JSON.stringify(rv)===JSON.stringify(lv))return;
-      const line=`Leave request ${lv.name||id} (${lv.code||"?"}, ${lv.from||"?"}) \u2014 ${rv?"differs from live version":"new, not yet on live"}`;
+      if(lv&&rv&&JSON.stringify(rv)===JSON.stringify(lv))return;
+      if(!lv&&!rv)return;
+      const nameForLine=(lv&&lv.name)||(rv&&rv.name)||id;
+      const codeForLine=(lv&&lv.code)||(rv&&rv.code)||"?";
+      const fromForLine=(lv&&lv.from)||(rv&&rv.from)||"?";
+      const line=`Leave request ${nameForLine} (${codeForLine}, ${fromForLine}) \u2014 ${(!lv&&rv)?"new on live, not yet on your copy":(lv&&rv)?"differs from live version":"new, not yet on live"}`;
       changes.push(line);
       if(rv)conflicts.push(line);
     });
@@ -9143,6 +9249,46 @@ function _categorizeConflictLine(line){
   return "Schedule"; // the remaining shape is the per-cell schedule diff: "NAME — DEPT DAY (WK): ..."
 }
 const _CONFLICT_CATEGORY_ORDER=["Schedule","Demand","Leave requests","Staff roster","Coverage minimums","Rules & thresholds","Default shifts","Role list","App-wide settings"];
+// Renders the small, dismissible "N changes since you last had this open" badge — see _awayChanges' own
+// comment (near pullAll()) for the full feature this supports. Reuses the SAME per-category grouping/
+// collapsible convention showUploadChoiceDialog() already established, so this stays visually consistent with
+// that popup rather than introducing a third, different way of presenting the same kind of list.
+function renderAwayChangesBadge(){
+  const el2=el("awayChangesBadge");if(!el2)return;
+  if(_awayChangesDismissed||!_awayChanges.length){el2.innerHTML="";return;}
+  el2.innerHTML=`<span class="pill" style="background:#fde9c8;color:#7a4b00;cursor:pointer;margin-left:4px" onclick="toggleAwayChangesPanel(event)" title="Click to see what changed on the shared live copy since you last had this open">${_awayChanges.length} change${_awayChanges.length===1?"":"s"} since you were away \u25be</span>`;
+}
+function toggleAwayChangesPanel(e){
+  if(e)e.stopPropagation();
+  const existing=document.getElementById("awayChangesPanel");
+  if(existing){existing.remove();return;}
+  const byCat={};_awayChanges.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
+  const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
+    const items=byCat[c];const openAttr=items.length<=2?" open":"";
+    return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${items.length})</summary><div style="white-space:pre-wrap;margin-top:2px;margin-left:4px;font-size:11.5px">${items.map(x=>esc(x)).join("\n")}</div></details>`;
+  }).join("");
+  const panel=document.createElement("div");
+  panel.id="awayChangesPanel";
+  panel.style.cssText="position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px;max-width:420px;max-height:320px;overflow:auto;z-index:500;font-size:12px;color:#1f2d3d";
+  panel.innerHTML=`<div style="font-weight:600;margin-bottom:6px">Changed on the shared live copy since you were away</div>${body}<div class="mrow" style="justify-content:flex-end;margin-top:8px"><button class="mini" onclick="dismissAwayChanges()">Dismiss</button></div>`;
+  const badge=el("awayChangesBadge");
+  document.body.appendChild(panel);
+  const r=badge.getBoundingClientRect();
+  panel.style.top=(r.bottom+window.scrollY+4)+"px";
+  panel.style.left=Math.max(8,r.left+window.scrollX)+"px";
+  // Closes the panel on any click elsewhere on the page — standard dropdown/popover convention, matching how
+  // this app's own other click-outside-to-dismiss modals already behave.
+  setTimeout(()=>{
+    document.addEventListener("click",function _close(ev){
+      if(!panel.contains(ev.target)&&ev.target!==badge){panel.remove();document.removeEventListener("click",_close);}
+    });
+  },0);
+}
+function dismissAwayChanges(){
+  _awayChangesDismissed=true;
+  const panel=document.getElementById("awayChangesPanel");if(panel)panel.remove();
+  renderAwayChangesBadge();
+}
 function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync){
   return new Promise(res=>{
     const nonConflicting=changes.filter(c=>!conflicts.includes(c));
@@ -9157,13 +9303,24 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync)
     // than one long undifferentiated list, while the OUTER max-height+overflow:auto scroll box is unchanged,
     // so a hotel with many changes across several categories still gets one bounded, scrollable area, not a
     // separately-scrolling box per category.
+    // CHANGED (per direct follow-up: "organize further, make sections collapsible if necessary, for list of
+    // changes/conflicts when local to live"). Each per-category sub-block below is now a real, native
+    // <details>/<summary> element — the SAME collapsible convention this app already uses everywhere else
+    // (the Readme, Checks panel flags, coverage-heatmap bands, etc.) — rather than a plain, always-fully-
+    // expanded <div>. A category with only 1-2 items defaults OPEN (nothing meaningful to hide by collapsing
+    // it); a category with 3+ items defaults CLOSED, showing just its own heading/count until explicitly
+    // expanded — this is what actually helps once a hotel has many changes spread across several categories,
+    // letting a scheduler open only the specific category they want to inspect rather than scrolling through
+    // every single line of every category at once inside the shared scroll box.
     const listBlock=(title,items,color)=>{
       if(!items.length)return "";
       const byCat={};items.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
-      const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>
-        `<div style="margin-top:4px"><b style="font-size:11px">${esc(c)} (${byCat[c].length})</b><div style="white-space:pre-wrap">${byCat[c].map(x=>esc(x)).join("\n")}</div></div>`
-      ).join("");
-      return `<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px">${body}</div></div>`;
+      const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
+        const catItems=byCat[c];
+        const openAttr=catItems.length<=2?" open":"";
+        return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${catItems.length})</summary><div style="white-space:pre-wrap;margin-top:2px;margin-left:4px">${catItems.map(x=>esc(x)).join("\n")}</div></details>`;
+      }).join("");
+      return `<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px">${body}</div></div>`;
     };
     // CHANGED — roster/coverage/rules/shift-preset differences are now itemized directly INTO the two lists
     // above (see analyzeCfgChanges()'s own comment for the full "generic banner, no specifics" gap this
@@ -9221,7 +9378,10 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   // can silently overwrite it" protection ASSIGN/DEMAND/LEAVE_REQUESTS/CFG.FO/CFG.HSK already had.
   const _snapAppWide=()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>{o[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return o;};
   const _cfgDeptsLocal={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:_snapAppWide()};
-  if(!fromOnlineEvent)await pullAll(); // connect() awaits this function directly now; only pull here for the online-event path
+  // computeAwayBadge=false — this whole flow (maybeUploadOnConnect) already surfaces every real difference via
+  // its own dedicated conflict popup below; the separate "away changes" badge exists specifically for the
+  // no-pending-local-edits case, so it would be pure duplicate noise to also compute/show it here.
+  if(!fromOnlineEvent)await pullAll(false,false); // connect() awaits this function directly now; only pull here for the online-event path
   const liveSnapshot={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS))}; // the just-pulled live data \u2014 needed if the user picks "discard local changes"
   // whatever pullAll() just applied (the live roster, if a row existed yet, else still the local one untouched)
   // — used below for the "Go live"/"Cancel" restore actions, which is the historically-correct meaning of
@@ -9385,9 +9545,40 @@ async function connect(){
     // DB is only left non-null here if the user actually chose to go live (with or without uploading).
     if(PENDING){ await maybeUploadOnConnect(false); }
     else { await pullAll(); }
-    if(DB){ setStatus("live","#2c9e5f"); }
+    if(DB){ setStatus("live","#2c9e5f"); await maybeSyncExistingPushSubscription(); }
     render();
   }catch(e){uiAlert("Connect failed: "+e.message);DB=null;SYNC_ERR=null;setStatus("local","#c7d0da");}
+}
+// FOUND AND FIXED A REAL, CONFIRMED GAP (per direct report: real background-notifications diagnostic output
+// still showing pushSubscriptionsOnFile:0 even after directly confirming notifications were enabled on that
+// device). ROOT CAUSE, confirmed by tracing enableNotifications(): the actual push_subscriptions upload to
+// Supabase only ever happens `if(DB)` at the exact moment Enable/Update is clicked — but the ordinary, expected
+// sequence for a brand-new device is to enable notifications BEFORE ever connecting live (there's no
+// requirement to connect first), which means a real, valid browser-side push subscription gets created and
+// registered with the OS/push service just fine, but is NEVER uploaded anywhere, since DB was still null at
+// that exact moment — permanently leaving that device invisible to the server-side function no matter how
+// many times notifications are toggled afterward, unless this exact gap is closed. This runs once, right after
+// EVERY successful connection (regardless of whether notifications were enabled before or after connecting),
+// checking whether THIS device already holds a real, valid local push subscription that simply never made it
+// to Supabase — and uploads it if so. A device with no local subscription at all (notifications never enabled
+// here) is a fast, harmless no-op.
+async function maybeSyncExistingPushSubscription(){
+  if(!DB)return;
+  if(!CFG._notifEnabled)return; // nothing to sync if this device was never actually enabled in the first place
+  try{
+    if(!("serviceWorker" in navigator))return;
+    const reg=await navigator.serviceWorker.getRegistration();
+    if(!reg||!("pushManager" in reg))return;
+    const sub=await reg.pushManager.getSubscription();
+    if(!sub)return; // no local subscription exists yet (e.g. this browser/device never supported background push)
+    const subJson=sub.toJSON();
+    const{error}=await DB.from("push_subscriptions").upsert({
+      endpoint:subJson.endpoint,subscription:subJson,name:CFG._notifName||null,
+      manager_depts:CFG._notifManagerDepts||[],updated_at:new Date().toISOString()
+    },{onConflict:"endpoint"});
+    if(error){console.warn("push subscription re-sync failed (non-fatal)",error);return;}
+    console.log("Push subscription synced to the newly-connected live project.");
+  }catch(e){console.warn("push subscription re-sync skipped",e);}
 }
 // FIXED a real bug (per feedback: "sync error even when local/downloaded", "in local/offline mode I still see sync
 // error pill which doesn't make sense"): disconnect() previously nulled DB and switched the status to "local" but
@@ -9430,6 +9621,19 @@ function _scheduleRealtimeReconnect(channelKey){
     if(!DB)return; // re-check — the user may have disconnected during the delay
     if(channelKey==="sched"){if(CHAN)DB.removeChannel(CHAN);_subscribeSchedChannel();}
     else{if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_subscribeCheckinsChannel();}
+    // FOUND AND FIXED A REAL, CONFIRMED GAP (surfaced while directly answering "what happens if the app is
+    // closed/backgrounded and reopened into live mode" — this exact reconnect path is the ONE place a real,
+    // already-connected device could silently miss another device's changes even WITHOUT ever closing the tab
+    // at all: a realtime channel can drop (laptop sleep, wifi blip, a backgrounded mobile tab getting
+    // throttled) and take up to ~1 minute (the exponential backoff above) to reconnect — any change another
+    // device pushed DURING that exact window is a real Postgres row-level event this channel was not
+    // listening for at the time, and simply reconnecting the channel does NOT retroactively deliver events
+    // that already happened while it was down; only a fresh pull can. Previously, this device would silently
+    // stay on stale data for whatever it missed during the outage until its next full page reload — now, a
+    // successful reconnect (regardless of which channel) always triggers a real pullAll() immediately after,
+    // closing that exact gap. Harmless to call twice in quick succession if BOTH channels happen to drop and
+    // reconnect around the same time — pullAll() itself is a plain, idempotent full refresh either way.
+    if(DB)pullAll();
   },delayMs);
 }
 function subscribe(){
@@ -9552,8 +9756,31 @@ function _looksLikeSchemaCacheError(err){
 // live actually holds" bug this exists to fix. Deliberately a plain global (not a return value from pullAll()
 // itself), matching this file's own established pattern for out-of-band pull results (_pullingConfigNow, etc.).
 let _lastPulledAppConfig=null;
-async function pullAll(isRetry){
+// ADDED (per direct question: "if user closes the app and reopens into live mode, what happens? ... should
+// there be a popup listing what changed while away?"). Confirmed by tracing the real boot/reconnect flow: with
+// no local edits pending, reopening silently pulls and overwrites local state with zero summary of what
+// actually changed — not a bug, just a real, confirmed gap. Rather than an interruptive popup (which becomes
+// noise on a busy week with many changes), this is a small, dismissible badge next to the sync status pill —
+// informative without forcing an interruption. _awayChanges holds the itemized list from the MOST RECENT
+// catch-up pull; _awayChangesDismissed hides the badge until a NEW pull produces something new to show.
+// _everPulledBefore (persisted) exists specifically to suppress this on a device's very first-ever successful
+// connection — every single seeded value would otherwise show as "new," which is pure noise for a first-time
+// setup, not a genuine "changed while away" fact.
+let _awayChanges=[];
+let _awayChangesDismissed=false;
+function _everPulledBefore(){try{return localStorage.getItem("hotel_everPulled")==="1";}catch(e){return false;}}
+function _markEverPulled(){try{localStorage.setItem("hotel_everPulled","1");}catch(e){}}
+async function pullAll(isRetry,computeAwayBadge){
   if(!DB)return;
+  if(computeAwayBadge===undefined)computeAwayBadge=true;
+  // Snapshotted BEFORE any table below is pulled/overwritten — this is "what this device already had" going
+  // into this specific sync, the correct baseline for "what changed while I was away" (as opposed to
+  // maybeUploadOnConnect()'s OWN, separate snapshot, which serves a different purpose: preserving a genuinely
+  // pending LOCAL edit so it isn't silently lost — see that function's own comment).
+  const _awaySnapBefore=computeAwayBadge?{
+    assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS)),
+    cfg:{FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:(()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>{o[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return o;})()}
+  }:null;
   const errors=[]; // {label, err}
   async function pullTable(tableName,label,onRows){
     try{
@@ -9637,6 +9864,26 @@ async function pullAll(isRetry){
   // app_config pull already guards its own CFG assignment closes this off at the root — pullAll() itself should
   // only ever PULL and persist locally, never silently push back out on its own.
   _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;
+  // See _awayChanges' own comment above for the full "what changed while away" feature this computes. Skipped
+  // entirely on this device's very first-ever successful pull (no genuine "before" state to meaningfully
+  // compare against — everything would show as "new," which is noise, not a real finding).
+  if(computeAwayBadge&&_awaySnapBefore){
+    if(_everPulledBefore()){
+      const _awaySnapAfter={
+        assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS)),
+        cfg:{FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:(()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>{o[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return o;})()}
+      };
+      // Reuses analyzeUploadChanges()/analyzeCfgChanges() directly — the SAME diff logic the local-vs-live
+      // conflict popup already uses, just with the roles reversed (here, "local" IS the before-snapshot and
+      // "live" IS the after-snapshot, since there's no pending local edit to protect in this scenario at all).
+      const _sched=analyzeUploadChanges(_awaySnapBefore,_awaySnapAfter);
+      const _cfgDiff=analyzeCfgChanges(_awaySnapBefore.cfg,_awaySnapAfter.cfg);
+      _awayChanges=[..._sched.changes,..._cfgDiff.changes];
+      _awayChangesDismissed=false;
+    }
+    _markEverPulled();
+    renderAwayChangesBadge();
+  }
   render();
   if(!errors.length){clearSyncError();return;}
   const _schemaCacheErrs=errors.filter(e=>_looksLikeSchemaCacheError(e.err));
@@ -10798,6 +11045,59 @@ function setCellQuiet(name,day,val){
 // as the RANGE ANCHOR for a subsequent Shift+click; it is not itself part of the selection. Cleared whenever
 // selection is cleared/select-mode is turned off so a stale anchor from a previous session can never leak in.
 let MULTISEL={active:false,cells:new Set(),lastCell:null};
+// See initDragSelect()'s own comment (below eligibleFor()'s neighborhood, per this file's own organization —
+// searchable by name) for the full drag-select feature this supports. A plain boolean, not part of MULTISEL
+// itself, since this only ever needs to survive from "gesture just ended" to "the click event that immediately
+// follows it" (the SAME native mouseup/touchend, per the pointer-events spec, always fires a click event right
+// after on a supporting browser) — never persisted, never part of any save()'d state.
+let _dragSelectJustFinished=false;
+// The actual drag-select implementation — a single shared Pointer Events listener set (covers mouse, touch,
+// and pen identically; see the call site's own comment for why this was built this way). Re-bound every
+// render() (matching every other per-render event-binding convention already used throughout this file, since
+// render() fully rebuilds #grid's own DOM each time) — deliberately idempotent-safe: re-adding the same
+// listener functions to a freshly-rebuilt #grid element each render is always correct, never double-binds a
+// stale handler to an element that no longer exists.
+function initDragSelect(){
+  const g=el("grid");if(!g)return;
+  let dragging=false,startNm=null,startDay=null,pointerMoved=false;
+  const cellFromPoint=(x,y)=>{
+    const el2=document.elementFromPoint(x,y);
+    const btn=el2&&el2.closest?el2.closest(".cellbtn"):null;
+    if(!btn)return null;
+    return {nm:decodeURIComponent(btn.dataset.nm),day:+btn.dataset.day};
+  };
+  g.addEventListener("pointerdown",(e)=>{
+    if(!EDIT||!MULTISEL.active)return; // only while "Select multiple" mode is explicitly on — never hijacks an ordinary tap/click/scroll
+    const btn=e.target.closest&&e.target.closest(".cellbtn");if(!btn)return;
+    dragging=true;pointerMoved=false;
+    startNm=decodeURIComponent(btn.dataset.nm);startDay=+btn.dataset.day;
+  });
+  g.addEventListener("pointermove",(e)=>{
+    if(!dragging)return;
+    const cur=cellFromPoint(e.clientX,e.clientY);if(!cur)return;
+    pointerMoved=true;
+    // Prevents the page itself from scrolling while actively dragging a selection on a touchscreen — without
+    // this, a finger-drag gesture on a phone would simultaneously try to scroll the schedule grid AND select
+    // cells, fighting each other; a mouse drag is unaffected either way since a mouse has no separate
+    // page-scroll gesture to conflict with.
+    if(e.pointerType==="touch")e.preventDefault();
+    // Builds the SAME rectangular range toggleCellSelection()'s own Shift+click branch already computes —
+    // reused directly (not reimplemented) so a drag-select and a Shift+click produce byte-for-byte identical
+    // selection shapes for the same two corner cells, with no risk of the two ever drifting apart.
+    MULTISEL.lastCell={nm:startNm,day:startDay};
+    MULTISEL.cells.clear();
+    toggleCellSelection(cur.nm,cur.day,{shift:true});
+  },{passive:false});
+  const endDrag=()=>{
+    if(dragging&&pointerMoved){
+      _dragSelectJustFinished=true; // suppresses the immediately-following click event's own single-cell-edit/toggle behavior — see that listener's own comment
+      renderMultiSelBar();
+    }
+    dragging=false;pointerMoved=false;
+  };
+  g.addEventListener("pointerup",endDrag);
+  g.addEventListener("pointercancel",endDrag);
+}
 // NEW this round (per direct request: "make it so clicking in row or column makes it easy to see where cells in
 // that row/column are like focus cell but don't affect colors"). Tracks the single currently-focused cell (if
 // any) \u2014 {nm,day} identifying its row (staff member) and column (day index) \u2014 for the pure, non-destructive
@@ -13911,6 +14211,7 @@ function renderReadme(){
 <li>A PIN in a static page is a casual gate, not real security; Supabase Auth provides genuine access control when configured.</li>
 <li>If edit access is granted for one department while a different department's schedule is being viewed (e.g. deciding a Leave Request), the header shows a "Partial access" state rather than defaulting to a plain "View-only" label that no longer matches reality — clicking it once locks everything back down.</li>
 <li>A "Connect…" button sits directly in the header, styled to match Settings' own Connect button (green, same height as every other header control) and independent of Settings' own visibility toggle — this covers a device that has never connected before, used by a view-only visitor while Settings is hidden from them, which would otherwise have no way to ever reach the Connect controls; it disappears once connected, and prefills the same URL/key Settings uses.</li>
+<li><b>Mobile/Desktop view toggle:</b> a header button ("📱 Mobile view" / "🖥️ Desktop view") switches between this app's own phone-optimized responsive layout and the full desktop layout (with pinch-zoom/pan available to reach any part of it) — useful on a phone for a complex, multi-column edit where the full desktop grid is genuinely preferred over the narrower mobile view. Persisted per device (a plain, local browser preference, not a shared team setting), and has no effect at all on an already-wide desktop screen.</li>
 </ul>
 </details>
 
@@ -14056,6 +14357,7 @@ function renderReadme(){
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Multi-select bulk-stamp</b></summary>
 <p>Schedule → "☐ Select multiple" toggles select-mode; while on, clicking any cell (any mix of staff/days/roles) adds it to a running selection instead of opening the single-cell editor. A floating toolbar offers the same preset-shift/off-code buttons the single-cell editor uses, plus free text, to stamp every selected cell at once. Protected by the SAME hard-block conflict checks (unavailable/off, part-day time-overlap, PT weekly cap, no-graveyard, approved-leave-conflict) the single-cell editor already uses \u2014 a summary of any conflicts is shown up front, with the choice to skip just the conflicted cells or override all of them with one typed reason (logged, same as a single-cell override).</p>
+<p><b>Drag-to-select:</b> while select-mode is on, pressing down on a cell and dragging across others (mouse, touch, or pen \u2014 built on the Pointer Events API, which unifies all three as one input type) selects the full rectangular range in one continuous gesture, matching the same range shape a Shift+click already produces between two corner cells. Only active while select-mode is on \u2014 an ordinary tap/click, or a finger simply scrolling the page, is completely unaffected either way.</p>
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Copy week</b></summary>
@@ -14103,6 +14405,7 @@ function renderReadme(){
 <li><b>In-app reminders (works today, on any device, zero setup beyond clicking Enable):</b> a lightweight check runs every 60 seconds while this device's tab/installed app is open, reusing the exact same before/during/late/no-show logic the schedule grid's own corner marker and Checks panel already compute (see Schedule format &amp; flags above) — so all three surfaces always agree. Fires a real system notification once permission is granted. The one real limitation: this only works while the tab/app is genuinely open (a background tab still checks fine; a fully closed tab/app does not).</li>
 <li><b>Background push (works even with the app fully closed / phone locked):</b> uses the open, standard Web Push protocol — free, no per-message cost, not a paid SMS/push service — via each browser's own push infrastructure (Chrome/Android → Google FCM, Safari/iOS → Apple's APNs, Firefox → Mozilla autopush). The client-side half (service worker registration, push subscription, permission prompt) is fully built and already wired into Settings. The <b>server-side half</b> — a scheduled job that actually detects "hasn't clocked in yet" while nothing is open and sends the push — needs a one-time deployment of a Supabase Edge Function to this hotel's own Supabase project (provided as a separate, ready-to-deploy file alongside this app, with full step-by-step instructions) — not something this session had the credentials to deploy directly. Until that deployment happens, enabling notifications still gives the full in-app half above; background push activates automatically once that one deployment step is done, with no app-side change needed.</li>
 <li><b>iOS-specific platform requirement (not a bug in this app):</b> Safari on iPhone/iPad only supports Web Push once this app has been installed to the Home Screen (Add to Home Screen), Safari 16.4+ — a plain browser tab on iOS cannot receive background push at all, regardless of anything built here. Android Chrome/Edge and any desktop browser support it directly with no install step, though installing is recommended everywhere for the best experience (this app is already installable — a manifest + service worker are included).</li>
+<li><b>A previously-enabled subscription that never reached the live project:</b> enabling notifications does NOT require connecting to a live Supabase project first — a device can enable notifications while still local-only, creating a real, valid browser push subscription that simply has nowhere to be uploaded yet. Every time a connection is (re-)established, this device automatically checks whether it already holds such a subscription and uploads it at that point, with no need to re-toggle notifications off and back on \u2014 so a device that enabled notifications BEFORE ever connecting still correctly reaches the server-side background-push function once it does connect.</li>
 <li><b>Manager alerts are deliberately narrower than worker reminders:</b> a manager is only alerted for the two escalated/actionable conditions (apparent no-show, missed clock-out) — not for the ordinary "still running, hasn't clocked in yet" case — matching this app's own existing severity distinction between an amber "late" state and an escalated no-show (see Schedule format &amp; flags above); alerting on every ordinary case would be noisy rather than actionable.</li>
 <li><b>Room/floor assignment notification (Housekeeping only):</b> a separate, opt-in checkbox ("Also notify me of my room/floor assignment for today") lets a Housekeeping worker also receive their floor/zone assignment (the same value shown on the schedule grid's own "Floor/zone"/"Assignment" column, sourced from the SAME FLOORS data — never a second, separately-maintained figure) at the exact same "shift coming up" moment as the existing "Upcoming shift" reminder, using its own independent de-duplication key so the two don't interfere with each other. Front Office has no equivalent per-shift room/zone concept, so this option only ever applies to Housekeeping shifts. The "🔍 Diagnose today's reminder" tool (below) also reports this notification's own current status for whichever name is selected.</li>
 <li><b>Manager alert — special-consideration leave requests:</b> a leave request submitted despite a breached auto-deny cap (see Leave Requests → auto-deny) now surfaces to a manager the same way an attendance exception does — through the manager-alert polling loop, gated on the same wantsManagerAlerts/"Manager alerts for" opt-in per department, rather than firing immediately on whichever device the employee happened to submit from. Fires once per request (keyed by request id), and stops once the request is approved/denied.</li>
@@ -14343,6 +14646,8 @@ truncate table public.snapshots;
 <li><b>CONFIRMED — 7 real EarnCode values found, each individually investigated (not guessed) via their own sample rows/comments:</b> <code>PTO</code> (exact match to this app's own PTO code — high confidence); <code>FMA</code> (suggested match to this app's own FMLA — different abbreviation, not a confirmed identical string, flagged for hotel confirmation); <code>BDY</code> (suggested match to a Bereavement Day, matching this app's own existing free-text "BDY" support — flagged for confirmation); <code>HOL</code> (Holiday pay — this app has NO holiday-specific code today, genuinely unmapped); <code>VLP</code> (every sample row's own comment says "Automated Time-Off Punch" — confirms SOME kind of paid time-off, but not confidently which specific type; genuinely unmapped); <code>MLF</code> (CONFIRMED via real comments — "Awarded from shift differential: Meals" — this is a MEAL PAY marker, not a leave code at all, and always carries 0 hours); <code>CPO</code> (CONFIRMED via real comments — e.g. "Comp 7/9 & 7..." — this is Compensatory Time Off, a genuinely different category from PTO this app has no equivalent code for today). None of the unmapped/suggested codes are ever silently auto-applied — the importer always reports every EarnCode found, by name, with its own confidence level, for a human to confirm.</li>
 <li><b>Employee ID cross-check:</b> BOTH real Paycom exports available (the Time Detail Report AND the "Timecard Search Export," an 87-employee current-roster snapshot) are 100% Housekeeping (department 1013) — neither contains ANY Front Office rows at all, so FO's own Employee ID column could NOT be filled from either; it remains a manual, hand-entered field for FO staff until an FO-department Paycom export becomes available. On the Housekeeping side: cross-matching both reports against this app's own 101-person HSK roster (by name, token-overlap + fuzzy-similarity, every ambiguous case resolved by hand rather than guessed) confidently matched <b>78 of 101</b> HSK roster staff, whose EE Codes are now pre-filled directly in the roster itself. 23 roster names could not be safely matched (no corresponding row in either report) and remain unset — reconcile by hand if any of them are current, active staff.</li>
 <li><b>If a deployed/live copy shows these 78 HSK Employee IDs blank</b> despite this section's own claim they're pre-filled: this is a genuine staleness gap, not a case of the IDs never having been entered — any browser/device that already had ANY saved data before this pre-fill existed (or a live Supabase project whose own shared settings were last saved before this fix), simply never re-checks this file's own updated defaults on its own. A one-time, automatic, self-healing check now runs once per device/browser on load specifically for this: it fills in ONLY a still-blank Employee ID for a name it recognizes from this exact pre-fill list, and never touches a real, already-entered or already-corrected value for anyone. If a specific device still shows blanks after reloading, that name is very likely one of the 23 unmatched roster names above (never had a real ID to begin with), not an unmigrated device.</li>
+<li><b>Choosing a department and date range for the Schedule Import export:</b> Settings → "Paycom schedule export" now has its own "Export for:" department dropdown directly in that section (defaulting to whichever department is currently displayed) — exporting Housekeeping while Front Office's schedule is on screen (or vice versa) no longer requires switching schedule tabs first. Clicking the export button then opens a From/To date picker (defaulting to the currently displayed week), which can span multiple weeks in one export if needed.</li>
+<li><b>Overnight/graveyard shifts — the OUT punch's own date:</b> confirmed directly against Paycom's own official Scheduling Import Instructions PDF (its own "Sample Import Files" page shows exactly this case: a 23:00 IN punch followed by a 07:00 OUT punch dated the NEXT calendar day). A shift whose own end time is numerically before its start time (e.g. "22:30-07:00") is recognized as crossing midnight, and its OUT punch row is now dated one real calendar day after the IN punch — matching Paycom's own documented convention exactly. An ordinary same-day shift is entirely unaffected by this.</li>
 <li><b>15 confirmed name-spelling/nickname differences among the 78 matched employees</b> — <mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> (matched by shared name tokens — a reasonable, high-confidence heuristic, but not a byte-for-byte confirmed identity match the way an exact EE Code lookup would be; worth a human glance before treating as fully settled, especially anywhere a nickname could plausibly belong to a different real person): Aida Panlilo ↔ Paycom "AIDA PANLILIO" (spelling); Akinha Bartolome ↔ "AKIHNA BARTOLOME" (letter transposition); Darrell Serrano ↔ "DARREL MATIC SERRANO" (spelling); Jennifer Gonzalez ↔ "JENNIFER S GONZALES" (Z vs. S); Kathy Javier ↔ "KATHERINE A JAVIER" (nickname vs. full legal name); Kelly Jacinto ↔ "KELLY JASINTO" (C vs. S); Kercy Mikey ↔ "KERCY K MICKY" (spelling); Ma.Seline Senior ↔ "MARIASELINE SENIOR" (punctuation/spacing); Magnonia Jacinto ↔ "MAGNONIA JASINTO" (C vs. S); Meslynn Valentine ↔ "MERSLYNN VALENTIN" (spelling); Nancy Java ↔ "MA NANCY PAMA JAVA" (extra legal-name prefix); Oscar Ejan ↔ "OSCAR CANILAO EJAN JR" (suffix); Sosariy Gideon ↔ "SOSARY GIDEON" (spelling); Tamperina Jacinto ↔ "TAMPENINA JASINTO" (spelling); Ulisses De Guzman ↔ "ULYSSES BRANDON DE GUZMAN" (spelling). None of these 15 were auto-corrected in either direction — each still shows exactly as it already did in its own respective system; this list exists purely so a human can confirm none of these are accidentally the WRONG person paired together.</li>
 <li><b>FOUND AND FIXED A REAL, CONFIRMED ACCURACY GAP:</b> tested the new importer's own name-matching against this app's REAL 101-person HSK roster and the REAL Paycom file — only 49 of 101 names matched on a straightforward (if whitespace-normalized) comparison. This is <b>not</b> a bug in the matching logic — it's a genuine, confirmed identity mismatch between the two systems' own records for the same real people: e.g. "Ulisses De Guzman" (this app's roster) vs. "ULYSSES DE GUZMAN" (Paycom) — a real spelling difference; "Kathy Javier" (roster, a nickname) vs. "KATHERINE JAVIER" (Paycom, the full legal name); "Ma.Seline Senior" (roster) vs. "MARIASELINE SENIOR" (Paycom) — punctuation/spacing; "Nancy Java" (roster) vs. "MA NANCY JAVA" (Paycom) — an extra legal-name prefix. No smarter STRING normalization can safely resolve nickname-vs-legal-name differences without risking a false match between two different real people, so this needs an explicit, human-reviewed, ONE-TIME reconciliation — which is exactly what was built: after any import with unmatched names, a "Reconcile unmatched Paycom names" dialog lists every unmatched name (sorted by how many rows it affects, so the highest-impact ones are addressed first) with a dropdown of every real roster person to map it to (or "Skip — not on roster" for a genuine non-match); saved mappings are remembered permanently (CFG.paycomNameAliases) so this reconciliation is a true one-time cost per person, not a recurring one on every future import.</li>
 <li><b>How to test, using this newly-verified, real column-name knowledge:</b> (1) Settings → Backup &amp; versions… → "Import actual hours from Paycom (Excel)" → pick the real Time Detail Report export. (2) Review the confirmation dialog's own summary: matched worked-hours day-count, any leave-type EarnCodes found (with their mapping confidence), and any unmatched names. (3) If prompted, reconcile any unmatched names against the real roster — a one-time step per person. (4) Check the schedule grid: imported hours appear as GREEN actual-hours values for the specific people/days in the file. The older CSV path (Settings → Backup &amp; versions… → "Import actual hours from Paycom (CSV)" / "Download sample Paycom CSV") remains available for a simpler, manually-constructed file using the original generic column names (Employee Name/Date/Hours or Time In+Time Out).</li>
@@ -14415,6 +14720,7 @@ truncate table public.snapshots;
 <li><b>Prefilled inputs stay editable:</b> an auto-filled/estimated value must be selectable and backspaceable, never force-overwritten.</li>
 <li><b>Checkboxes are a fixed, consistent size app-wide (16×16)</b> — enforced at the base <code>input[type=checkbox]</code> selector itself (width, height, and <code>flex-shrink:0</code>).</li>
 <li><b>One font size/typeface for body text and one for tables:</b> set once, at the <code>body</code> and <code>table</code> level.</li>
+<li><b>New ad-hoc info/diagnostic tables must use <code>class="autoTable"</code>, not go undeclared:</b> this app's global default is <code>table-layout:fixed</code> — the right choice for a hand-built, precisely-proportioned grid with its own <code>&lt;colgroup&gt;</code> (the schedule grid, coverage tables, etc.), but actively harmful as a silent default for a simple table with no colgroup, since fixed layout divides available width EQUALLY across however many columns exist regardless of actual content — this exact bug (a column too narrow to read, or a column that looks "missing" on a narrow screen) recurred independently across several different tables before being fixed one at a time. Any new table whose columns should size to their own content, rather than a hand-tuned pixel/percentage split, should carry <code>class="autoTable"</code> from the start — this single class switches that table to content-based sizing app-wide, including inside Settings (where an ID-scoped table rule would otherwise silently override a plain class alone).</li>
 <li><b>One colour for every hyperlink app-wide</b> — set once on the base <code>a</code>/<code>a:visited</code> selector.</li>
 <li><b>Vertically align text on the same line:</b> any flex row mixing different-height content must set <code>align-items:center</code> explicitly.</li>
 <li><b>A direct-child text input inside <code>.cfgrow</code> gets stretched full-width on narrow screens</b> by this app's own responsive rule — a short field that should not stretch must be wrapped in its own <code>&lt;label&gt;</code>.</li>
@@ -14841,7 +15147,24 @@ function renderSettings(){
          carrying the button along with it regardless of the button's own, already-correct internal wrap rules.
          Fixed by adding the same min-width:0;width:100% pair already proven correct on every sibling element in
          this exact section. -->
-    <div class="cfgrow" style="min-width:0;width:100%"><button class="brand" onclick="exportPaycomScheduleImport()" title="Generates a Paycom-format Scheduling Import CSV (no header row, exact 13-column layout) for the CURRENT department + displayed week — reviews missing Employee IDs and unmapped Earning Codes upfront, before any file is produced.">\u2b07 Export Paycom Schedule Import CSV\u2026</button></div>
+    <!-- ADDED (per direct request: "right now to switch from fo to hsk export paycom csv I need to go to hsk
+         tab then settings, make it chooseable within actual section"). ROOT CAUSE, confirmed by tracing the
+         actual export call: this button always called exportPaycomScheduleImport() with no arguments, which
+         then read the global DEPT variable (whichever Front Office/Housekeeping SCHEDULE tab happens to be
+         currently displayed) — since this whole Paycom section already shows BOTH departments' own settings
+         side by side (Department Code for Front Office/Housekeeping, just above), needing to leave this exact
+         section and switch schedule tabs just to change which department's file gets exported was a genuine,
+         avoidable extra step. Added a plain department dropdown directly in this button's own row (defaulting
+         to whichever department is currently displayed, matching the exact previous one-click behavior when
+         left unchanged) — exportPaycomScheduleImport() now accepts an explicit dept argument instead of always
+         reading the global DEPT, so this section is fully self-contained and never requires leaving Settings. -->
+    <div class="cfgrow" style="min-width:0;width:100%;display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+      <label class="small" style="display:flex;align-items:center;gap:6px">Export for: <select class="sfield small" id="paycomExportDept">
+        <option value="FO" ${DEPT==="FO"?"selected":""}>${esc(CFG.FO.label)}</option>
+        <option value="HSK" ${DEPT==="HSK"?"selected":""}>${esc(CFG.HSK.label)}</option>
+      </select></label>
+      <button class="brand" onclick="exportPaycomScheduleImport(el('paycomExportDept').value)" title="Generates a Paycom-format Scheduling Import CSV (no header row, exact 13-column layout) for the department chosen above + a date range you'll pick next — reviews missing Employee IDs and unmapped Earning Codes upfront, before any file is produced.">\u2b07 Export Paycom Schedule Import CSV\u2026</button>
+    </div>
   </div>
   </details>
 </div>
@@ -18301,6 +18624,23 @@ function renderNotificationsSettingsBlock(){
     ${enabled?'<button onclick="disableNotifications()">Disable on this device</button>':""}
     ${enabled?'<button onclick="sendTestNotification()" title="Fires a notification immediately, bypassing the attendance/timing logic AND the once-per-day de-duplication \u2014 isolates whether delivery itself works, separately from whether a specific shift/test is being detected as expected">\ud83d\udd14 Send test notification now</button>':""}
     ${enabled?'<button onclick="diagnoseReminders()" title="Shows exactly what this app currently computes for today\u2019s shift for the person selected above \u2014 use this to see WHY a specific test did or didn\u2019t fire, instead of guessing">\ud83d\udd0d Diagnose today\u2019s reminder</button>':""}
+    <!-- ADDED (per direct report: "I tried downloading app on computer and am getting notifications but this
+         is still what shows [diag=1: pushSubscriptionsOnFile: 0]"). ROOT CAUSE of the confusion, confirmed by
+         tracing maybeLocalNotify() (the function BOTH "Send test notification now" AND the real 60-second
+         foreground reminder loop actually call): it is 100% client-side and NEVER touches Supabase or the
+         push_subscriptions table at all — getting a real notification while this tab/app is open only ever
+         proves the FOREGROUND half works, and says nothing whatsoever about whether the SEPARATE background-
+         push subscription (what the server-side diag=1 tool actually measures) ever reached the shared
+         database. This is exactly why the diagnostic could keep showing 0 even after a real, working
+         notification was seen — they are two genuinely independent mechanisms this app has always disclosed
+         (see the Readme's own "Notifications & reminders" section), but nothing in the UI itself previously
+         drew a clear, explicit line between them at the moment someone is trying to verify one specifically.
+         This new button closes that gap directly: it checks, in order, whether this device is connected live
+         at all, whether a real local push subscription object exists, and — if connected — queries the SAME
+         push_subscriptions table the server-side function reads, for the EXACT endpoint this device holds, so
+         "is my background push actually registered" gets one clear, unambiguous yes/no answer instead of an
+         inference from an unrelated foreground test. -->
+    ${enabled?'<button onclick="checkBackgroundPushStatus()" title="Directly confirms whether THIS device\u2019s background push subscription actually reached the shared database \u2014 a foreground test notification (above) cannot tell you this, since it never touches the server at all">\ud83d\udce1 Check background push status</button>':""}
   </div>
   <div id="reminderDiag"></div>
   <!-- NEW this round (per feedback: "still not getting notification" after repeated same-day tests) \u2014 added to
@@ -18383,17 +18723,68 @@ function _diagnoseManagerAlertsHtml(mgrDepts){
       }
     });
     const body=rows.length
-      ?`<table class="small leftAlignCells"><tr><th style="text-align:left">Name</th><th style="text-align:left">Today's shift</th><th style="text-align:left">Exception</th></tr>${rows.join("")}</table>`
+      ?`<table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Name</th><th style="text-align:left">Today's shift</th><th style="text-align:left">Exception</th></tr>${rows.join("")}</table>`
       :`<div class="small muted">No current attendance exceptions for ${esc(dept.label)} \u2014 nothing to alert on right now.</div>`;
     return `<div style="margin-top:8px"><b>${esc(dept.label)}</b><div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:4px">${body}</div></div>`;
   }).join("");
   return `<div style="margin-top:10px;border-top:1px solid var(--line);padding-top:8px"><div class="small muted">Manager-alert check \u2014 every current staff member's attendance state for each department you're subscribed to:</div>${sections}
   <div class="small muted" style="margin-top:6px">If everything above says no exceptions, but you still expect an alert, double-check: the specific shift is classified as a real working shift (not OFF/leave/blank), and enough time has passed since the shift's own scheduled start/end for the configured grace period (Settings → Clock in/out) to have elapsed.</div></div>`;
 }
+// See the button's own comment above for the full "foreground test proves nothing about background push"
+// confusion this closes. Walks through the real chain step by step, in order, so whichever step actually
+// fails is immediately obvious rather than a single opaque count.
+async function checkBackgroundPushStatus(){
+  const box=el("reminderDiag");if(!box)return;
+  const rows=[];
+  rows.push(`<tr><td>Notification permission</td><td>${(typeof Notification!=="undefined")?Notification.permission:"unsupported in this browser"}</td></tr>`);
+  rows.push(`<tr><td>Connected to the shared live copy right now?</td><td>${DB?"Yes":"<b>No</b> \u2014 background push CANNOT reach the server-side function at all until this device connects (Settings \u2192 Live sync). A foreground/in-app test notification can still work perfectly fine while disconnected \u2014 that's a separate, local-only mechanism (see Readme)."}</td></tr>`);
+  if(!("serviceWorker" in navigator)){
+    rows.push(`<tr><td>Service worker support</td><td><b>Not supported</b> in this browser \u2014 background push is not possible on this device regardless of connection.</td></tr>`);
+    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>`;
+    return;
+  }
+  const reg=await navigator.serviceWorker.getRegistration();
+  rows.push(`<tr><td>Service worker registered?</td><td>${reg?"Yes":"<b>No</b> \u2014 check that manifest.json/sw.js were actually uploaded to the SAME folder as this app file on your host (see Readme's install guide)."}</td></tr>`);
+  let sub=null;
+  if(reg&&reg.pushManager){try{sub=await reg.pushManager.getSubscription();}catch(e){}}
+  rows.push(`<tr><td>Local push subscription exists on this device?</td><td>${sub?"Yes":"<b>No</b> \u2014 try Disable then Enable again on this device to create one."}</td></tr>`);
+  if(sub&&DB){
+    try{
+      const subJson=sub.toJSON();
+      const{data,error}=await DB.from("push_subscriptions").select("*").eq("endpoint",subJson.endpoint);
+      if(error){
+        rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(error.message||String(error))}</td></tr>`);
+      }else if(data&&data.length){
+        rows.push(`<tr><td>Registered in the shared database?</td><td><b>YES</b> \u2014 this exact device's subscription IS present in push_subscriptions, updated ${esc(data[0].updated_at||"")}. If a real background push still isn't arriving with the app fully closed, the issue is on the SERVER side (the attendance-reminders function itself, or its schedule) \u2014 not this device's own registration.</td></tr>`);
+      }else{
+        rows.push(`<tr><td>Registered in the shared database?</td><td><b>NO</b> \u2014 a local subscription exists on this device, but it never reached the shared database. Try Disable then Enable again while connected \u2014 this re-uploads it directly.</td></tr>`);
+      }
+    }catch(e){
+      rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
+    }
+  }else if(sub&&!DB){
+    rows.push(`<tr><td>Registered in the shared database?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync), which will also automatically upload this existing subscription if it hasn't reached the server yet.</td></tr>`);
+  }
+  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
+  <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway \u2014 it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
+}
 function diagnoseReminders(){
   const box=el("reminderDiag");if(!box)return;
-  const myName=CFG._notifName;
-  const mgrDepts=CFG._notifManagerDepts||[];
+  // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "I unchecked everything for notifications then
+  // pressed diagnose and nothing happened"). ROOT CAUSE, confirmed via direct testing: this previously read
+  // CFG._notifName/CFG._notifManagerDepts directly — the last-SAVED state, only ever updated when the Enable/
+  // Update button is actually clicked — completely ignoring whatever the dropdown/checkboxes on screen
+  // currently show. So unchecking every box and clearing the name dropdown, then clicking Diagnose WITHOUT
+  // first clicking Update, produced the exact SAME result as before (the still-saved old selection), which
+  // looks/feels exactly like "nothing happened" even though a real, valid result WAS produced — it just didn't
+  // match anything the user could see on screen. Diagnose's whole purpose is to preview "what would happen
+  // with my current selections" BEFORE committing to Update, so it now reads the LIVE form elements directly
+  // (falling back to the saved CFG values only if the form itself isn't currently rendered, e.g. a future
+  // programmatic call) — an unsaved change to the dropdown/checkboxes is now immediately reflected the next
+  // time Diagnose is clicked, with no need to click Update first just to test a hypothetical selection.
+  const _nameEl=el("notifName"),_mgrFoEl=el("notifMgrFO"),_mgrHskEl=el("notifMgrHSK");
+  const myName=_nameEl?_nameEl.value:CFG._notifName;
+  const mgrDepts=_nameEl?[_mgrFoEl&&_mgrFoEl.checked?"FO":null,_mgrHskEl&&_mgrHskEl.checked?"HSK":null].filter(Boolean):(CFG._notifManagerDepts||[]);
   if(!myName){
     if(mgrDepts.length){box.innerHTML=_diagnoseManagerAlertsHtml(mgrDepts);return;}
     box.innerHTML=`<div class="mflag">No personal reminder name is selected above, and no manager-alert department is checked \u2014 pick a name in "Remind me about my own shifts, as:", or check at least one department under "Also alert me as a manager/scheduler", then run this again.</div>`;return;
@@ -18458,7 +18849,7 @@ function diagnoseReminders(){
   // manager who has picked a personal name too would otherwise never see this section at all, even though
   // it's just as relevant to them.
   const _mgrSection=mgrDepts.length?_diagnoseManagerAlertsHtml(mgrDepts):"";
-  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
+  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">If everything above says a notification SHOULD fire, but nothing appears within ~60 seconds, the issue is in DELIVERY, not detection \u2014 most commonly: this tab/PWA must stay open (even in the background) for local reminders to fire at all (see Readme \u2014 a fully closed app/locked phone needs background push, a separate, server-dependent mechanism); or the OS/browser notification permission for this site was silently blocked outside this app.</div>${_mgrSection}`;
 }
 function allActiveStaffOptions(){const out=[];["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).filter(s=>s.employed!==false).forEach(s=>out.push({dept:dp,name:s.n,role:s.role}));});return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);}
