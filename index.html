@@ -1580,7 +1580,19 @@
      never had that same hardening, since it predates select.sfield's own fix and uses a different, narrower
      footprint. A smaller chevron/padding than select.sfield's own, matching this control's own compact
      10px-font sizing rather than a normal form-field's. */
-  select.zoneSelect{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%236b7a8d"><path d="M5.5 7.5l4.5 5 4.5-5z"/></svg>');background-repeat:no-repeat;background-position:right 3px center;background-size:9px;padding-right:14px!important;}
+  /* ADDED min-width:0 (and a genuinely responsive max-width) — closes a real, confirmed overflow gap: this
+     select already had an inline max-width:110px (see floorSelect()'s own call site), but a flex item's own
+     DEFAULT min-width is "auto" (its own intrinsic/content-based minimum), not 0 — meaning max-width alone
+     cannot shrink it below that intrinsic size, regardless of how narrow its actual containing cell has
+     become. Confirmed via direct measurement in view-only mode specifically: #grid.hidetotals (applied
+     whenever EDIT is false — see render()'s own "hidetotals" toggle) shrinks the sticky Name column to a
+     percentage-based ~20% width (roughly 60-70px on a narrow phone), far below this select's own 110px cap —
+     with no min-width:0, the select kept its own wider intrinsic footprint and visually spilled into the next
+     day column, even though the page itself never triggered a horizontal scrollbar (the overflow was purely
+     INTO the neighboring cell, not the whole page). min-width:0 lets it actually shrink all the way down to
+     whatever room its own cell genuinely has, in every view/edit-mode combination, not just the wider
+     edit-mode column width this was originally verified against. */
+  select.zoneSelect{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%236b7a8d"><path d="M5.5 7.5l4.5 5 4.5-5z"/></svg>');background-repeat:no-repeat;background-position:right 3px center;background-size:9px;padding-right:14px!important;min-width:0;max-width:100%!important;}
   /* FOUND AND FIXED A REAL, CONFIRMED GAP this round (per repeated feedback: "make all placeholder values
      throughout the app grey (eg mm/dd/yyyy), NOT FIXED"). CONFIRMED the earlier round's own fix (a plain
      input::placeholder/textarea::placeholder rule) was correct as far as it went, but incomplete: this app has
@@ -8877,6 +8889,102 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
   }
   return {changes,conflicts};
 }
+// FOUND AND FIXED A REAL, CONFIRMED SYNC GAP (per direct report: "deployed/live version doesn't have paycom
+// codes filled in for hsk"). ROOT CAUSE, confirmed by tracing pushConfig()/pullAll(): they only ever synced
+// CFG.FO/CFG.HSK — every OTHER top-level CFG setting (the Paycom Earning Code mapping, Clock in/out grace
+// periods, auto-deny rules, overstaff/understaff flags, etc.) was silently local-device-only, despite being a
+// genuine, hotel-wide policy fact (not a personal preference) that a scheduler would reasonably expect to
+// reach every device once configured — exactly matching the report: filling in the Paycom mapping on one
+// device never reached the deployed/live copy at all, since nothing ever pushed it anywhere. This explicit,
+// curated list is what now ALSO gets pushed/pulled alongside CFG.FO/CFG.HSK (see pushConfig()/pullAll()'s own
+// updated code) — deliberately excluding genuinely personal/device-only fields (_notifName, _notifEnabled,
+// _notifManagerDepts, _notifRoomAssignment, which panels are expanded, etc.) and every internal one-time
+// migration-guard flag (_xxxFix/_xxxMig booleans — these record which local-data migrations have already run
+// on THIS device and would actively cause harm if synced, e.g. silently telling a device its own local data
+// migration already happened when it hasn't).
+const SHARED_APP_CFG_KEYS=[
+  "autoDenyCountMode","autoDenyEnabledByDept","autoDenyRules",
+  "clockInEarlyGraceMinutes","clockInEditOnly","clockInLateGraceMinutes","clockInLateStartGraceMinutes",
+  "dontFlagUnderstaffIfRosterShort",
+  "hideChecksForNonManagers","hideForViewers","hideLeaveTypeReasonFromViewers",
+  "multiWeekFairnessWeeks","otDisplayMode","overstaffEnabled","overstaffMargin",
+  "paycomAppCodeAlias","paycomDeptCode","paycomEarnCodeMap","paycomEmployeeIdType","paycomNameAliases",
+  "sameDayOffCheckDaysByDept","sameDayOffNoteScope","shiftBandCreditMode","taskCodesCombineTime",
+  "unpaidBreakMinutes","unpaidBreakPer","weekStartDow","accrual","autoComputeActualFromClock"
+];
+// ADDED — closes a real, confirmed gap: the local-vs-live conflict popup already itemized ASSIGN/DEMAND/
+// LEAVE_REQUESTS differences line-by-line (see analyzeUploadChanges() above), but CFG.FO/CFG.HSK (the staff
+// roster, coverage minimums, rules & thresholds, and default shift presets) were only ever summarized as one
+// generic "you also have local roster/coverage/rules changes" banner — never WHICH staff member, WHICH
+// coverage minimum, or WHICH rule actually differs. Builds the same kind of readable, line-by-line diff for
+// the roster/settings side, in the exact same format/severity convention as the schedule diff above, so both
+// feed into the SAME scrollable Conflicts/Other-changes lists in showUploadChoiceDialog() instead of a second,
+// separate UI.
+function analyzeCfgChanges(localDepts,liveDepts){
+  const changes=[];const conflicts=[];
+  const STAFF_FIELDS=["role","type","rate","employed","hireDate","birthday","guestRating","performanceScore","priorityOverride","paycomEmployeeId","note"];
+  ["FO","HSK"].forEach(dept=>{
+    const loc=localDepts[dept]||{};const live=liveDepts[dept]||{};
+    const deptLabel=loc.label||live.label||dept;
+    // --- Staff roster, matched by name (the same natural identity key the roster table itself uses) ---
+    const locStaff=loc.staff||[];const liveStaff=live.staff||[];
+    const locByName=new Map(locStaff.map(s=>[s.n,s]));const liveByName=new Map(liveStaff.map(s=>[s.n,s]));
+    const allNames=new Set([...locByName.keys(),...liveByName.keys()]);
+    allNames.forEach(name=>{
+      const l=locByName.get(name),r=liveByName.get(name);
+      if(l&&!r){
+        changes.push(`${deptLabel} roster: "${name}" exists only on your device \u2014 new, not yet on live.`);
+      }else if(!l&&r){
+        const line=`${deptLabel} roster: "${name}" exists only on live \u2014 choosing "Upload" would remove them from the roster; choosing "Go live" keeps them.`;
+        changes.push(line);conflicts.push(line);
+      }else if(l&&r){
+        const diffFields=STAFF_FIELDS.filter(f=>JSON.stringify(l[f]??null)!==JSON.stringify(r[f]??null));
+        if(diffFields.length){
+          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${f}: yours=${JSON.stringify(l[f]??null)}, live=${JSON.stringify(r[f]??null)}`).join("; ");
+          changes.push(line);conflicts.push(line);
+        }
+      }
+    });
+    // --- Coverage minimums, by role ---
+    const locCov=loc.coverage||{};const liveCov=live.coverage||{};
+    new Set([...Object.keys(locCov),...Object.keys(liveCov)]).forEach(role=>{
+      const l=locCov[role],r=liveCov[role];
+      if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
+        const line=`${deptLabel} coverage minimum \u2014 ${role}: yours=${l?l.min+"/"+l.per:"(none)"}, live=${r?r.min+"/"+r.per:"(none)"}`;
+        changes.push(line);if(r)conflicts.push(line);
+      }
+    });
+    // --- Rules & thresholds, by key ---
+    const locRules=loc.rules||{};const liveRules=live.rules||{};
+    new Set([...Object.keys(locRules),...Object.keys(liveRules)]).forEach(k=>{
+      const l=locRules[k],r=liveRules[k];
+      if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
+        const line=`${deptLabel} rule \u2014 ${k}: yours=${JSON.stringify(l??null)}, live=${JSON.stringify(r??null)}`;
+        changes.push(line);if(r!=null)conflicts.push(line);
+      }
+    });
+    // --- Default shift presets ---
+    if(JSON.stringify(loc.shifts||[])!==JSON.stringify(live.shifts||[])){
+      const line=`${deptLabel} default shifts: yours="${(loc.shifts||[]).join(", ")}", live="${(live.shifts||[]).join(", ")}"`;
+      changes.push(line);conflicts.push(line);
+    }
+    // --- Role list (membership/order) ---
+    if(JSON.stringify(loc.roles||[])!==JSON.stringify(live.roles||[])){
+      const line=`${deptLabel} role list differs from live (a role was added, removed, or reordered).`;
+      changes.push(line);conflicts.push(line);
+    }
+  });
+  // --- Shared, app-wide settings (see SHARED_APP_CFG_KEYS' own comment for exactly what is/isn't included) ---
+  const locAppWide=(localDepts.appWide)||{};const liveAppWide=(liveDepts.appWide)||{};
+  SHARED_APP_CFG_KEYS.forEach(k=>{
+    const l=locAppWide[k],r=liveAppWide[k];
+    if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
+      const line=`App-wide setting \u2014 ${k}: yours=${JSON.stringify(l??null)}, live=${JSON.stringify(r??null)}`;
+      changes.push(line);if(r!==undefined&&r!==null)conflicts.push(line);
+    }
+  });
+  return {changes,conflicts};
+}
 // Central decision point, now with THREE distinct outcomes instead of a plain yes/no (see the buttons below):
 //   "Stay local" (or dismissing the dialog) \u2014 does NOT go live at all; the Supabase connection just made is torn
 //     back down via disconnect(), so the app stays in local mode exactly as if Connect had never been clicked.
@@ -8897,15 +9005,12 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged){
   return new Promise(res=>{
     const nonConflicting=changes.filter(c=>!conflicts.includes(c));
     const listBlock=(title,items,color)=>items.length?`<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:130px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px;white-space:pre-wrap">${items.map(x=>esc(x)).join("\n")}</div></div>`:"";
-    // UPDATED this round \u2014 CFG.FO/CFG.HSK (staff roster, roles, coverage minimums, rules & thresholds, shift
-    // presets) now genuinely sync (see pushConfig()'s own comment for the full "roster never actually synced"
-    // gap this closes) \u2014 the previous wording here ("these have no live-sync support and stay on this device
-    // only") is no longer accurate and would actively mislead a scheduler into thinking a real roster edit won't
-    // reach other devices. Reworded to state plainly that these ARE included in the choice below, exactly like
-    // the schedule/demand/leave data already itemized above; only genuinely personal, device-only settings
-    // (e.g. this device's own "remind me as" notification target, or which panels are expanded) remain untouched
-    // either way, since those were never meant to be a shared team fact.
-    const cfgBlock=cfgChanged?`<div class="small muted" style="margin-top:4px">\u2139\ufe0f You also have local roster/coverage/rules changes (Settings \u2192 staff roster, coverage minimums, rules &amp; thresholds, shift presets) \u2014 these ARE included in the choice below: \u201cUpload\u201d sends them live, \u201cGo live\u201d discards them in favor of what's already live. Personal, device-only settings (e.g. your own notification choices, or which panels are expanded) are never affected either way.</div>`:"";
+    // CHANGED — roster/coverage/rules/shift-preset differences are now itemized directly INTO the two lists
+    // above (see analyzeCfgChanges()'s own comment for the full "generic banner, no specifics" gap this
+    // closes) — the vague catch-all banner that used to sit here is no longer needed for that purpose. Kept as
+    // a short, purely SCOPE-clarifying note (personal/device-only settings are never part of any of this
+    // either way), not a substitute for detail that's now genuinely itemized above.
+    const cfgBlock=cfgChanged?`<div class="small muted" style="margin-top:4px">\u2139\ufe0f Roster/coverage/rules/shift-preset differences are itemized above, alongside the schedule/demand/leave differences. Personal, device-only settings (e.g. your own notification choices, or which panels are expanded) are never affected either way.</div>`:"";
     const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";
     bg.innerHTML=`<div class="modal" style="max-width:520px">
       <div style="font-weight:600;margin-bottom:8px">You have local changes not yet on the live copy.</div>
@@ -8950,17 +9055,29 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   // choose. Only CFG.FO/CFG.HSK are snapshotted here \u2014 matching pushConfig()'s own deliberately narrow scope \u2014
   // never the top-level personal/device-only CFG fields (_notifName, _rulesOpen, etc.), which were never synced
   // and are correctly left untouched by this whole flow.
-  const _cfgDeptsLocal={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK))};
+  // EXPANDED — now also snapshots every SHARED_APP_CFG_KEYS field (see that constant's own comment for the
+  // full "Paycom mapping never actually reached live" gap this closes), the SAME "snapshot before pullAll()
+  // can silently overwrite it" protection ASSIGN/DEMAND/LEAVE_REQUESTS/CFG.FO/CFG.HSK already had.
+  const _snapAppWide=()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>{o[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return o;};
+  const _cfgDeptsLocal={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:_snapAppWide()};
   if(!fromOnlineEvent)await pullAll(); // connect() awaits this function directly now; only pull here for the online-event path
   const liveSnapshot={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS))}; // the just-pulled live data \u2014 needed if the user picks "discard local changes"
   // whatever pullAll() just applied (the live roster, if a row existed yet, else still the local one untouched)
-  const _cfgDeptsLive={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK))};
+  const _cfgDeptsLive={FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),appWide:_snapAppWide()};
   const {changes,conflicts}=analyzeUploadChanges(localSnapshot,liveSnapshot);
+  // Merges the roster/settings diff (see analyzeCfgChanges()'s own comment for the full "generic banner instead
+  // of an itemized list" gap this closes) into the SAME changes/conflicts arrays the schedule diff already
+  // populates — both feed the SAME scrollable lists in showUploadChoiceDialog(), so a scheduler sees exactly
+  // which staff member/coverage minimum/rule differs, not just a "some roster/settings changed" notice.
+  const _cfgDiff=analyzeCfgChanges(_cfgDeptsLocal,_cfgDeptsLive);
+  changes.push(..._cfgDiff.changes);conflicts.push(..._cfgDiff.conflicts);
   ASSIGN=JSON.parse(JSON.stringify(localSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(localSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(localSnapshot.leaveRequests)); // show local values while the dialog is open, so "Upload" (if chosen) uploads YOUR edits, not the just-pulled live ones
   // restore the LOCAL roster/settings too (see this function's own comment above), same "show local while the
   // dialog is open" principle \u2014 done directly, not via save(), so this restoration itself never triggers a
-  // redundant push back out before the user has actually made a choice.
+  // redundant push back out before the user has actually made a choice. Now also restores every
+  // SHARED_APP_CFG_KEYS field for the same reason (see that constant's own comment).
   CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLocal.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLocal.HSK));
+  SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLocal.appWide[k]));});
   // UPDATED this round \u2014 CFG.FO/HSK now genuinely sync (see this function's own updated comment above), so this
   // is a REAL, itemizable "did the roster/settings actually differ" check now, not just a whole-CFG catch-all for
   // data that could never be uploaded anyway. Any OTHER top-level CFG field (_notifName, _rulesOpen, etc.) is
@@ -8970,10 +9087,22 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   if(!changes.length&&!_cfgChanged){ if(DB){setStatus("live","#2c9e5f");} return; } // nothing actually pending in any syncable data \u2014 nothing to ask about, already live
     const choice=await showUploadChoiceDialog(changes,conflicts,_cfgChanged);
   if(choice==="upload"){ await pushPending(); if(DB)setStatus("live","#2c9e5f"); }
-  else if(choice==="live"){ ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);_pullingConfigNow=false;setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
+  else if(choice==="live"){ ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);_pullingConfigNow=false;setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
   else { // Cancel / dismissed \u2014 do NOT go live; keep local data and tear the connection back down
-    ASSIGN=JSON.parse(JSON.stringify(localSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(localSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(localSnapshot.leaveRequests));CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLocal.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLocal.HSK));save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);
+    // FIXED a real, confirmed bug: disconnect() must run FIRST, before the save() calls below, not after.
+    // save("hotel_cfg",CFG) triggers pushConfig() (a fire-and-forget async push) whenever DB is still non-null
+    // at the moment it's called — and DB was still the live client here (disconnect() hadn't run yet), so
+    // choosing Cancel was ALREADY silently pushing the restored local roster/settings to Supabase in the
+    // background. Confirmed via direct testing that this background push, once it resolved a moment later,
+    // called setPending(false) — silently marking "no local changes pending" even though the user explicitly
+    // chose to stay local and NONE of ASSIGN/DEMAND/LEAVE_REQUESTS were ever actually pushed. This is exactly
+    // why a SECOND Connect attempt afterward skipped the local-vs-live conflict popup entirely and went
+    // straight to live: connect() only shows that popup `if(PENDING)`, and PENDING had already been wiped out
+    // by this same stray background push from the first Cancel. Calling disconnect() first means DB is
+    // already null by the time save("hotel_cfg",...) runs, so pushConfig()'s own `if(!DB)return;` guard
+    // correctly skips it — matching the "Cancel" choice's own stated intent of never reaching Supabase at all.
     if(DB)disconnect();
+    ASSIGN=JSON.parse(JSON.stringify(localSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(localSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(localSnapshot.leaveRequests));CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLocal.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLocal.HSK));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLocal.appWide[k]));});save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);
   }
 }
 // NEW this round: the function behind the always-visible header "Connect…" link (see that element's own comment
@@ -9254,10 +9383,28 @@ async function pullAll(isRetry){
       _pullingConfigNow=true;
       if(row.data.FO)CFG.FO=row.data.FO;
       if(row.data.HSK)CFG.HSK=row.data.HSK;
+      // EXPANDED — pulls every SHARED_APP_CFG_KEYS field too (see that constant's own comment for the full
+      // "Paycom mapping/clock-in policy/etc. never actually reached live" gap this closes). A brand-new
+      // Supabase project (or one that predates this fix) simply has no row.data.appWide yet — treated as a
+      // normal "nothing to pull yet" case, never an error, so a first connection still proceeds normally with
+      // whatever this device already has locally for these settings.
+      if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
     }
   });
-  save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);
+  save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);
+  // FOUND AND FIXED A REAL, CONFIRMED GAP: this final save("hotel_cfg",CFG) — needed purely to PERSIST locally
+  // whatever pullAll() just retrieved from live — previously ran with no _pullingConfigNow guard, unlike the
+  // app_config-specific pull above which correctly sets that guard around ITS OWN CFG.FO/CFG.HSK assignment.
+  // save()'s own logic fires an unrelated, redundant pushConfig() echo any time DB is set and this guard is
+  // false — meaning EVERY plain pullAll() (not just one where CFG genuinely changed) silently re-pushed
+  // CFG.FO/CFG.HSK/every SHARED_APP_CFG_KEYS field right back to Supabase a moment later, entirely in the
+  // background. Confirmed via direct testing this caused a genuine race: that background echo-push, once it
+  // resolved, called setPending(false) — completely unrelated to whatever choice a scheduler was about to make
+  // in the local-vs-live conflict dialog that hadn't even been shown yet. Guarding this call the same way the
+  // app_config pull already guards its own CFG assignment closes this off at the root — pullAll() itself should
+  // only ever PULL and persist locally, never silently push back out on its own.
+  _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;
   render();
   if(!errors.length){clearSyncError();return;}
   const _schemaCacheErrs=errors.filter(e=>_looksLikeSchemaCacheError(e.err));
@@ -9320,7 +9467,11 @@ async function pushConfig(){
   if(!DB)return;
   _pushStarted();
   try{
-    const {error}=await DB.from("app_config").upsert({id:"depts",data:{FO:CFG.FO,HSK:CFG.HSK}},{onConflict:"id"});
+    // EXPANDED — now also pushes every SHARED_APP_CFG_KEYS field (see that constant's own comment for the full
+    // "Paycom mapping/clock-in policy/etc. never actually reached live" gap this closes), alongside CFG.FO/
+    // CFG.HSK exactly as before.
+    const appWide={};SHARED_APP_CFG_KEYS.forEach(k=>{if(CFG[k]!==undefined)appWide[k]=CFG[k];});
+    const {error}=await DB.from("app_config").upsert({id:"depts",data:{FO:CFG.FO,HSK:CFG.HSK,appWide}},{onConflict:"id"});
     if(error){reportSyncError("push settings & roster",error);_pushSettled(false);return;}
     clearSyncError();_pushSettled(true);
   }catch(e){reportSyncError("push settings & roster",e);_pushSettled(false);}
@@ -13867,6 +14018,7 @@ create policy "allow all (anon)" on public.app_config for all using (true) with 
 NOTIFY pgrst, 'reload schema';</pre>
 <p class="small muted">The 3 tables (checkins, push_subscriptions, notified_events) are also provided as a standalone migration file, alongside a ready-to-deploy Edge Function and full step-by-step deployment instructions, for the server-side half of the Notifications &amp; reminders feature (see that section above) — that deployment needs this hotel's own Supabase project credentials, which this session did not have access to.</p>
 <p class="small muted"><b>app_config (staff roster/settings sync):</b> for a Supabase project already set up from before, running the SQL above once adds this new table — it's what makes an added/removed staff member, a coverage-minimum change, or a rules/thresholds edit made on one device actually show up on every other connected device, which was never possible before (only the schedule itself synced; the roster/settings feeding it never did). No action needed for a brand-new project — the SQL above already includes it.</p>
+<p class="small muted"><b>Which settings this actually covers:</b> alongside CFG.FO/CFG.HSK (staff roster, coverage minimums, rules & thresholds, default shifts), a curated set of shared, hotel-wide settings also syncs the same way — the Paycom Employee ID type/Earning Code mapping/department code, Clock in/out grace periods and edit-mode restriction, auto-deny rules, overstaff/understaff flags, the same-day-off-last-week check days (per department), PTO accrual rates, and a few others. Deliberately excluded: anything genuinely personal/device-only (which name this device reminds as its own shifts, whether notifications are enabled on this specific device, which Settings panels are expanded) — those were never meant to be a shared team fact and stay local to each device on purpose. The local-vs-live conflict popup (see "How this interacts..." below) lists exactly which of these differ, by name/value, whenever a device reconnects with pending local edits.</p>
 <p class="small muted">A sync error reading <b>"permission denied for table X"</b> means the GRANT statements in the SQL above were never run for that table (RLS policies alone do NOT grant table access — see the GRANTS section's own comment) — re-run the SQL above (safe, every statement is idempotent) and reload. A sync error reading something like <b>"could not find the table 'public.checkins'"</b> (or any other table this schema defines) means either (a) that specific table hasn't been created in THIS Supabase project yet — run the SQL above once, in the Supabase dashboard's SQL editor, to add it; or (b) it WAS just created (including via the standalone migration file), but PostgREST's own schema cache hasn't picked it up yet — the SQL above now ends with a "NOTIFY pgrst, 'reload schema'" specifically to force that refresh immediately, so re-running the SQL above is the fastest fix if this error appears right after a table was just added. Clock in/out (and every other feature) keeps working locally in the meantime either way, only its cross-device sync is affected. If either error still persists after that, the schema cache reload can also be triggered manually — in the Supabase dashboard, go to Settings → API and reload the schema cache — and as a last resort, disconnecting and reconnecting (the header's own Connect/Disconnect button) re-establishes a fresh client connection too.</p>
 <p><b>Before going live</b> (optional — only if test data was pushed to this Supabase project during development):</p>
 <pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px">truncate table public.assignments;
@@ -13939,6 +14091,7 @@ truncate table public.snapshots;
     <li><b>CONFIRMED — a real Paycom "Time Detail Report" export (31,585 rows, one full department, Dec 2025–Aug 2026) was examined directly, replacing the previous PENDING VERIFICATION flag with real, tested facts.</b> Real column names (genuinely different from this app's previous CSV-based guesses): <code>Lastname</code>, <code>Firstname</code> (two SEPARATE columns, no combined "name" field at all), <code>InPunchTime</code>/<code>OutPunchTime</code> (full timestamps, not a separate date column — the date is embedded inside them), <code>EarnCode</code>, <code>EarnHours</code> (Paycom's own pre-computed duration per row — no need to compute from punch times at all). The file is a real <b>.xlsx</b>, not a .csv, and can have 2–6 separate punch-pair rows for the SAME person on the SAME day (e.g. a lunch-break split shift). A brand-new importer (Settings → Backup &amp; versions… → "Import actual hours from Paycom (Excel)") was built and tested specifically against this real shape: it groups every row by (person, day), SUMS EarnHours across all of that day's punches for rows with a blank EarnCode (genuine worked hours), and keeps this completely separate from EarnCode-coded rows (leave/pay-differential types — see below) — never treating one as the other. The original CSV importer is kept as-is for a simpler, manually-built file in the old generic shape.</li>
 <li><b>CONFIRMED — 7 real EarnCode values found, each individually investigated (not guessed) via their own sample rows/comments:</b> <code>PTO</code> (exact match to this app's own PTO code — high confidence); <code>FMA</code> (suggested match to this app's own FMLA — different abbreviation, not a confirmed identical string, flagged for hotel confirmation); <code>BDY</code> (suggested match to a Bereavement Day, matching this app's own existing free-text "BDY" support — flagged for confirmation); <code>HOL</code> (Holiday pay — this app has NO holiday-specific code today, genuinely unmapped); <code>VLP</code> (every sample row's own comment says "Automated Time-Off Punch" — confirms SOME kind of paid time-off, but not confidently which specific type; genuinely unmapped); <code>MLF</code> (CONFIRMED via real comments — "Awarded from shift differential: Meals" — this is a MEAL PAY marker, not a leave code at all, and always carries 0 hours); <code>CPO</code> (CONFIRMED via real comments — e.g. "Comp 7/9 & 7..." — this is Compensatory Time Off, a genuinely different category from PTO this app has no equivalent code for today). None of the unmapped/suggested codes are ever silently auto-applied — the importer always reports every EarnCode found, by name, with its own confidence level, for a human to confirm.</li>
 <li><b>Employee ID cross-check:</b> BOTH real Paycom exports available (the Time Detail Report AND the "Timecard Search Export," an 87-employee current-roster snapshot) are 100% Housekeeping (department 1013) — neither contains ANY Front Office rows at all, so FO's own Employee ID column could NOT be filled from either; it remains a manual, hand-entered field for FO staff until an FO-department Paycom export becomes available. On the Housekeeping side: cross-matching both reports against this app's own 101-person HSK roster (by name, token-overlap + fuzzy-similarity, every ambiguous case resolved by hand rather than guessed) confidently matched <b>78 of 101</b> HSK roster staff, whose EE Codes are now pre-filled directly in the roster itself. 23 roster names could not be safely matched (no corresponding row in either report) and remain unset — reconcile by hand if any of them are current, active staff.</li>
+<li><b>If a deployed/live copy shows these 78 HSK Employee IDs blank</b> despite this section's own claim they're pre-filled: this is a genuine staleness gap, not a case of the IDs never having been entered — any browser/device that already had ANY saved data before this pre-fill existed (or a live Supabase project whose own shared settings were last saved before this fix), simply never re-checks this file's own updated defaults on its own. A one-time, automatic, self-healing check now runs once per device/browser on load specifically for this: it fills in ONLY a still-blank Employee ID for a name it recognizes from this exact pre-fill list, and never touches a real, already-entered or already-corrected value for anyone. If a specific device still shows blanks after reloading, that name is very likely one of the 23 unmatched roster names above (never had a real ID to begin with), not an unmigrated device.</li>
 <li><b>15 confirmed name-spelling/nickname differences among the 78 matched employees</b> — <mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> (matched by shared name tokens — a reasonable, high-confidence heuristic, but not a byte-for-byte confirmed identity match the way an exact EE Code lookup would be; worth a human glance before treating as fully settled, especially anywhere a nickname could plausibly belong to a different real person): Aida Panlilo ↔ Paycom "AIDA PANLILIO" (spelling); Akinha Bartolome ↔ "AKIHNA BARTOLOME" (letter transposition); Darrell Serrano ↔ "DARREL MATIC SERRANO" (spelling); Jennifer Gonzalez ↔ "JENNIFER S GONZALES" (Z vs. S); Kathy Javier ↔ "KATHERINE A JAVIER" (nickname vs. full legal name); Kelly Jacinto ↔ "KELLY JASINTO" (C vs. S); Kercy Mikey ↔ "KERCY K MICKY" (spelling); Ma.Seline Senior ↔ "MARIASELINE SENIOR" (punctuation/spacing); Magnonia Jacinto ↔ "MAGNONIA JASINTO" (C vs. S); Meslynn Valentine ↔ "MERSLYNN VALENTIN" (spelling); Nancy Java ↔ "MA NANCY PAMA JAVA" (extra legal-name prefix); Oscar Ejan ↔ "OSCAR CANILAO EJAN JR" (suffix); Sosariy Gideon ↔ "SOSARY GIDEON" (spelling); Tamperina Jacinto ↔ "TAMPENINA JASINTO" (spelling); Ulisses De Guzman ↔ "ULYSSES BRANDON DE GUZMAN" (spelling). None of these 15 were auto-corrected in either direction — each still shows exactly as it already did in its own respective system; this list exists purely so a human can confirm none of these are accidentally the WRONG person paired together.</li>
 <li><b>FOUND AND FIXED A REAL, CONFIRMED ACCURACY GAP:</b> tested the new importer's own name-matching against this app's REAL 101-person HSK roster and the REAL Paycom file — only 49 of 101 names matched on a straightforward (if whitespace-normalized) comparison. This is <b>not</b> a bug in the matching logic — it's a genuine, confirmed identity mismatch between the two systems' own records for the same real people: e.g. "Ulisses De Guzman" (this app's roster) vs. "ULYSSES DE GUZMAN" (Paycom) — a real spelling difference; "Kathy Javier" (roster, a nickname) vs. "KATHERINE JAVIER" (Paycom, the full legal name); "Ma.Seline Senior" (roster) vs. "MARIASELINE SENIOR" (Paycom) — punctuation/spacing; "Nancy Java" (roster) vs. "MA NANCY JAVA" (Paycom) — an extra legal-name prefix. No smarter STRING normalization can safely resolve nickname-vs-legal-name differences without risking a false match between two different real people, so this needs an explicit, human-reviewed, ONE-TIME reconciliation — which is exactly what was built: after any import with unmatched names, a "Reconcile unmatched Paycom names" dialog lists every unmatched name (sorted by how many rows it affects, so the highest-impact ones are addressed first) with a dropdown of every real roster person to map it to (or "Skip — not on roster" for a genuine non-match); saved mappings are remembered permanently (CFG.paycomNameAliases) so this reconciliation is a true one-time cost per person, not a recurring one on every future import.</li>
 <li><b>How to test, using this newly-verified, real column-name knowledge:</b> (1) Settings → Backup &amp; versions… → "Import actual hours from Paycom (Excel)" → pick the real Time Detail Report export. (2) Review the confirmation dialog's own summary: matched worked-hours day-count, any leave-type EarnCodes found (with their mapping confidence), and any unmatched names. (3) If prompted, reconcile any unmatched names against the real roster — a one-time step per person. (4) Check the schedule grid: imported hours appear as GREEN actual-hours values for the specific people/days in the file. The older CSV path (Settings → Backup &amp; versions… → "Import actual hours from Paycom (CSV)" / "Download sample Paycom CSV") remains available for a simpler, manually-constructed file using the original generic column names (Employee Name/Date/Hours or Time In+Time Out).</li>
@@ -14488,7 +14641,7 @@ function renderSettings(){
   <div class="small" style="display:flex;flex-direction:column;gap:4px">
     <span>Show an informational (non-blocking) note when approving leave or assigning off/leave if the same worker was also off the same day the week before, for:</span>
     <div style="display:flex;gap:10px;flex-wrap:wrap">
-      ${DOW.map((dn,i)=>`<label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" ${sameDayOffCheckDays().includes(i)?"checked":""} onchange="toggleSameDayOffCheckDay(${i},this.checked)"> ${dn}</label>`).join("")}
+      ${DOW.map((dn,i)=>`<label style="display:flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" ${sameDayOffCheckDays(SETDEPT).includes(i)?"checked":""} onchange="toggleSameDayOffCheckDay(${i},this.checked,'${SETDEPT}')"> ${dn}</label>`).join("")}
     </div>
     <!-- CHANGED this round (per direct feedback: "Radio button is not consistent with rest of form which uses
          checkboxes, is that really right option") — correctly re-examined: checkboxes are for INDEPENDENT
@@ -19398,16 +19551,36 @@ function defaultSameDayOffCheckDays(){
   const satIdx=(6-dowOffset()+7)%7,sunIdx=(0-dowOffset()+7)%7;
   return [satIdx,sunIdx];
 }
-function sameDayOffCheckDays(){return (CFG.sameDayOffCheckDays!=null)?CFG.sameDayOffCheckDays:defaultSameDayOffCheckDays();}
-// NEW this round — the Settings checkbox handler for sameDayOffCheckDays() above. Reads the CURRENT effective
-// list (which may still be the computed default, if never explicitly saved before) rather than assuming
-// CFG.sameDayOffCheckDays already exists, so the FIRST checkbox toggle correctly starts from the real default
-// state (Sat+Sun already checked) instead of an empty array.
-function toggleSameDayOffCheckDay(dayIdx,checked){
-  const cur=sameDayOffCheckDays().slice();
+// CHANGED (per direct request: "day of week to check whether off prev week make it dept wide not app wide").
+// ROOT CAUSE, confirmed by tracing this exact setting: it was a single, APP-WIDE CFG.sameDayOffCheckDays array
+// shared identically by both departments, even though it renders inside each department's own Settings panel
+// (Flags & thresholds), visually indistinguishable from every genuinely per-department control right next to it
+// (coverage minimums, rules & thresholds, etc.) — so changing it while viewing FO's Settings silently changed
+// the SAME value HSK also used, with no way to configure the two independently. Now genuinely scoped per
+// department via CFG.sameDayOffCheckDaysByDept[dept] (matching this app's own established "one shared top-level
+// key, one sub-object per department" convention already used by autoDenyEnabledByDept). A one-time migration
+// (see boot()'s own migration block, _sameDayOffCheckDaysDeptMig) seeds BOTH departments from whatever single
+// value was already saved under the old flat CFG.sameDayOffCheckDays key, so nobody's existing customization is
+// silently reset back to the Sat+Sun default the first time this runs — after that, each department's own value
+// evolves independently.
+function sameDayOffCheckDays(dept){
+  const d=dept||DEPT;
+  const byDept=CFG.sameDayOffCheckDaysByDept||{};
+  if(byDept[d]!=null)return byDept[d];
+  return defaultSameDayOffCheckDays();
+}
+// The Settings checkbox handler for sameDayOffCheckDays() above. Reads the CURRENT effective list for the
+// SPECIFIC department being edited (which may still be the computed default, if never explicitly saved before)
+// rather than assuming CFG.sameDayOffCheckDaysByDept[dept] already exists, so the FIRST checkbox toggle for
+// either department correctly starts from the real default state (Sat+Sun already checked) instead of an
+// empty array.
+function toggleSameDayOffCheckDay(dayIdx,checked,dept){
+  const d=dept||SETDEPT||DEPT;
+  const cur=sameDayOffCheckDays(d).slice();
   if(checked){if(!cur.includes(dayIdx))cur.push(dayIdx);}
   else{const idx=cur.indexOf(dayIdx);if(idx>=0)cur.splice(idx,1);}
-  CFG.sameDayOffCheckDays=cur;
+  CFG.sameDayOffCheckDaysByDept=CFG.sameDayOffCheckDaysByDept||{};
+  CFG.sameDayOffCheckDaysByDept[d]=cur;
   save("hotel_cfg",CFG);
   renderSettings();
 }
@@ -19452,7 +19625,7 @@ function setAutoDenyRuleMax(idx,v){
 function findSameDayOffPreviousWeek(dept,name,dateIso){
   const d=new Date(dateIso+"T00:00:00");
   const dow=(d.getDay()-dowOffset()+7)%7;
-  if(!sameDayOffCheckDays().includes(dow))return null;
+  if(!sameDayOffCheckDays(dept).includes(dow))return null;
   const prevWeekDate=new Date(d);prevWeekDate.setDate(prevWeekDate.getDate()-7);
   const prevWk=weekKey(mondayOfWeekStartThu(prevWeekDate));
   const existing=((ASSIGN[dept]||{})[prevWk]||{})[name]||{};
@@ -22275,6 +22448,41 @@ function seedRoster(){try{
  }catch(e){console.warn("roster seed skipped",e);}}
 /* ---------- BOOT ---------- */
 (function boot(){
+  // One-time migration: re-applies this exact file's own seeded HSK Employee ID pre-fill (the SAME 78
+  // name-to-EE-Code mappings already baked into seed()'s own HSK.staff array, matching the Readme's own
+  // "confidently matched 78 of 101 HSK roster staff" disclosure) to any EXISTING installation, regardless of
+  // when it first loaded the app or whether it has ever connected to a live Supabase project. ROOT CAUSE this
+  // closes: CFG=load("hotel_cfg",seed()) only ever falls back to seed()'s own fresh defaults when NOTHING is
+  // saved yet — any device/browser that already has ANY prior local hotel_cfg (even from before these Employee
+  // IDs existed in this file), or any live Supabase project whose own app_config row was last pushed before
+  // this pre-fill was added, permanently keeps the OLDER, blank-ID version forever afterward — a real
+  // deployed/live copy can genuinely show every HSK Employee ID blank despite this exact file's own seed()
+  // already containing them, exactly matching the reported "deployed/live version doesn't have paycom codes
+  // filled in for hsk" (a staleness gap, not a case of the codes never having been entered). Only ever fills
+  // in a CURRENTLY BLANK paycomEmployeeId for a name this migration recognizes — never overwrites a real,
+  // already-entered or already-corrected value for anyone, matching this app's own established "never silently
+  // clobber existing data" migration convention used throughout this file.
+  try{if(!CFG._hskPaycomIdReseedMig){
+    const _hskIdMap={"Elsa Aguilo":"2363","Ma.Seline Senior":"2357","Jade Soram":"2407","Julie Serrano":"2400","Maria Teresa Ibanez":"2580","Daisy Anne Nalicat":"4247","Florencia (Au) Orino":"2352","Ros Calma":"2377","Flory Unas":"2382","Ulisses De Guzman":"2531","Dante Vergara":"2484","Marcelo Quitugua":"2371","Jacob Verhoeff":"2588","Maricel Carbon":"2537","Ma. Lourdes Gueco":"2483","Kathy Javier":"3686","Wilma Mendoza":"4424","Jocelyn Lumanlan":"2565","Meslynn Valentine":"1878","Kercy Mikey":"4323","Myline Sahagun":"2427","Arleen Lazarus":"2587","Marietta Escoto":"2396","Suhlinda Wapol":"4311","Myrna Villacorta":"2569","Lillyjean Deleon":"2579","Magnonia Jacinto":"2585","Monica Santos":"2566","Jenny Sos":"1743","Blesilda Carlos":"2384","Sosariy Gideon":"4427","Jojo Roces":"2605","Generose dela Cruz":"2547","Donna Mojica":"2507","Lorien Stephen":"4481","Daralynn William":"4378","Tamperina Jacinto":"3935","Kelly Jacinto":"4651","Carolina Calilung":"2595","Marian Lacsina":"4432","Kayleen Ruda":"2403","Ernoleen Welter":"4542","Akinha Bartolome":"2571","Amalia Macapagal":"2401","Bessie Hicban":"4297","Fe Valencia":"2378","Janeth Saitanan":"2591","Jennifer Gonzalez":"2426","Jocelyn Tolentino":"2516","Lucricia Kaainoa":"2434","Marizel Rebamonte":"2428","Kevin Malanum":"2512","Jonas Jimmy":"2058","Jahred Etse":"4490","Oscar Ejan":"4649","TN Francis":"4557","Johnny Mondina":"4294","Rillen Labadnoy":"4555","Kyson Dohrres":"6732","Eduardo Gamboa":"2495","Alma Garcia":"2389","Nicole Uy":"2424","Aida Panlilo":"2578","Carolina De Dios":"2515","Arnel Lacsina":"4434","Nancy Java":"2553","Maria Leonora Bondoc":"2546","Demetrio Bilon":"2367","Lydia Antonio":"2435","Renato David":"2432","Liana Martinez":"2393","Lydia Falan":"2524","Chester Lordios":"2535","Elsie Geronimo":"4480","Francisco Roman":"2448","Evelyn B. Topacio":"2391","Franco Pili":"2556","Darrell Serrano":"4377"};
+    (CFG.HSK.staff||[]).forEach(st=>{
+      if(!st.paycomEmployeeId&&_hskIdMap[st.n])st.paycomEmployeeId=_hskIdMap[st.n];
+    });
+    CFG._hskPaycomIdReseedMig=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+  }}catch(e){}
+  // One-time migration: seeds the new per-department CFG.sameDayOffCheckDaysByDept from whatever single value
+  // was already saved under the old flat, app-wide CFG.sameDayOffCheckDays key (see sameDayOffCheckDays()'s own
+  // comment for the full "app-wide instead of dept-wide" bug this closes) — both FO and HSK start from that
+  // SAME already-customized value (preserving existing behavior exactly), and can then be adjusted
+  // independently going forward. A hotel that never touched this setting at all has nothing to migrate here;
+  // sameDayOffCheckDays() already falls back to the computed Sat+Sun default for either department in that case.
+  try{if(!CFG._sameDayOffCheckDaysDeptMig){
+    if(CFG.sameDayOffCheckDays!=null){
+      CFG.sameDayOffCheckDaysByDept=CFG.sameDayOffCheckDaysByDept||{};
+      if(CFG.sameDayOffCheckDaysByDept.FO==null)CFG.sameDayOffCheckDaysByDept.FO=CFG.sameDayOffCheckDays.slice();
+      if(CFG.sameDayOffCheckDaysByDept.HSK==null)CFG.sameDayOffCheckDaysByDept.HSK=CFG.sameDayOffCheckDays.slice();
+    }
+    CFG._sameDayOffCheckDaysDeptMig=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+  }}catch(e){}
   try{if(!CFG._rateMig){["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.rate!=null&&+st.rate===(DEFAULT_RATE[st.type]||11))delete st.rate;});});CFG._rateMig=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}}catch(e){}
   // migrate any pre-existing saved config (from before this update) to pick up the new coverage minimums,
   // FO rules (transport/events ratios), and the Valet role
