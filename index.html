@@ -7505,6 +7505,18 @@ function todaysWeekAndDayIdx(){
 //      new "Notifications & reminders" section for the exact, disclosed line between what's live today vs. what
 //      needs that one deployment step.
 const VAPID_PUBLIC_KEY="BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk";
+// ADDED (per direct request: capitalize "Granted" for notif permissions). Notification.permission is a raw
+// browser API value ("granted"/"denied"/"default") — correct and required lowercase for every actual
+// programmatic comparison elsewhere in this file (e.g. enableNotifications()'s own `perm!=="granted"` check,
+// which MUST stay lowercase to keep matching the real API value), but the two diagnostic tables below print
+// this SAME raw value directly as human-facing text, where the lowercase form reads like a lowercase sentence
+// fragment rather than a proper status label. This is display-only — every comparison against the real
+// Notification.permission value elsewhere in this file is untouched and still uses the raw lowercase string.
+function notifPermissionLabel(){
+  if(typeof Notification==="undefined")return "Unsupported in this browser";
+  const p=Notification.permission;
+  return p==="granted"?"Granted":p==="denied"?"Denied":p==="default"?"Not yet asked":(p.charAt(0).toUpperCase()+p.slice(1));
+}
 function urlBase64ToUint8Array(base64String){
   const padding="=".repeat((4-base64String.length%4)%4);
   const base64=(base64String+padding).replace(/-/g,"+").replace(/_/g,"/");
@@ -9004,11 +9016,34 @@ function reconnectWithLatestDefault(){
   connect();
 }
 function setStatus(txt,color){const _showErr=SYNC_ERR&&DB;const _staleKey=_showErr&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(SYNC_ERR)}"`:""}></span>${txt}${_showErr?` <span class="pill err" title="${esc(SYNC_ERR)}\n\nClick to dismiss." onclick="event.stopPropagation();clearSyncError();">sync error \u26a0</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default \u2014 the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;}
-function reportSyncError(where,error){SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));setPending(true);console.error("[sync failed]",where,error);setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");}
+// ADDED _statusFlickerTimer + the grace window in both functions below (per direct report: "when I go live it
+// keeps flickering between live and unsynced"). ROOT CAUSE, confirmed by tracing the realtime channel
+// lifecycle: a channel can drop for a few seconds at a time for reasons that are NOT a real, lasting problem —
+// a brief wifi blip, a mobile tab getting throttled in the background, a laptop waking from sleep — and the
+// bounded auto-reconnect (see _scheduleRealtimeReconnect()'s own 2s/4s/8s/16s/30s backoff) usually re-
+// subscribes within a few seconds of any one drop. Previously, EVERY individual drop immediately flipped the
+// visible pill to "unsynced," then immediately back to "live" the moment it reconnected — each brief,
+// self-healing blip was fully visible as an instant flicker, even though nothing about the actual data was
+// ever at risk for that short a window (every edit is saved locally first, always — see this app's own
+// established local-first guarantee; the pill reflects REAL-TIME sync reach, not data safety). FIX: a drop now
+// only visibly flips the pill to "unsynced" if it's STILL down after a short grace window (4s — comfortably
+// longer than the reconnect logic's own FIRST attempt at 2s) — an ordinary quick blip that heals within that
+// window never visibly flickers the pill at all. A genuinely sustained outage (still down after 4s) still
+// surfaces "unsynced" exactly as before, with no delay hidden from a real, lasting problem — this only smooths
+// the DISPLAY of brief, self-healing drops.
+let _statusFlickerTimer=null;
+function reportSyncError(where,error){
+  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));setPending(true);console.error("[sync failed]",where,error);
+  if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
+  _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;if(SYNC_ERR)setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");},4000);
+}
 // Now also manually clickable (see setStatus above) — lets a user dismiss a persistent error that can't
 // self-resolve (e.g. a genuinely missing Supabase table/schema issue that requires an admin to fix separately)
 // instead of it being stuck showing forever with no way to acknowledge and move on.
-function clearSyncError(){if(SYNC_ERR){SYNC_ERR=null;setStatus(DB?"live":"local",DB?"#2c9e5f":"#c7d0da");}}
+function clearSyncError(){
+  if(_statusFlickerTimer){clearTimeout(_statusFlickerTimer);_statusFlickerTimer=null;}
+  if(SYNC_ERR){SYNC_ERR=null;setStatus(DB?"live":"local",DB?"#2c9e5f":"#c7d0da");}
+}
 window.addEventListener("offline",()=>{if(DB)setStatus("unsynced","#e0a800");});
 window.addEventListener("online",async()=>{if(DB){if(PENDING){await maybeUploadOnConnect(true);if(DB)setStatus("live","#2c9e5f");}else{setStatus("live","#2c9e5f");}}});
 async function pushPending(){ if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return;}
@@ -9150,6 +9185,26 @@ const SHARED_APP_CFG_KEYS=[
 // the roster/settings side, in the exact same format/severity convention as the schedule diff above, so both
 // feed into the SAME scrollable Conflicts/Other-changes lists in showUploadChoiceDialog() instead of a second,
 // separate UI.
+// ADDED (per direct report: "Summary of changes when going from local to live shows things like
+// yours={"Hsk":[2,3,4], live=null" which isn't easy plain language for human eyes"). ROOT CAUSE: every line
+// below built its "yours=X, live=Y" text with a bare JSON.stringify(value) — technically accurate, but
+// JSON's own syntax (quoted keys, {}/[] punctuation, literal "null") is not how a manager reading this popup
+// thinks about their own settings. This walks the SAME value tree JSON.stringify would, but renders it in
+// plain, comma/colon English instead: a missing value reads as "(not set)" instead of "null", an array reads
+// as its own comma-joined contents instead of "[...]", a nested object (e.g. a per-department settings map)
+// reads as "key: value" pairs instead of raw {"K":V} punctuation, and a boolean reads as "Yes"/"No" instead of
+// "true"/"false". Recursive, so a nested array-of-objects or object-of-arrays (the actual shape behind the
+// reported example) still renders sensibly at every level, not just the top one.
+function humanizeDiffValue(v){
+  if(v===null||v===undefined||v==="")return "(not set)";
+  if(Array.isArray(v))return v.length?v.map(humanizeDiffValue).join(", "):"(none)";
+  if(typeof v==="boolean")return v?"Yes":"No";
+  if(typeof v==="object"){
+    const keys=Object.keys(v);
+    return keys.length?keys.map(k=>`${k}: ${humanizeDiffValue(v[k])}`).join("; "):"(none)";
+  }
+  return String(v);
+}
 function analyzeCfgChanges(localDepts,liveDepts){
   const changes=[];const conflicts=[];
   const STAFF_FIELDS=["role","type","rate","employed","hireDate","birthday","guestRating","performanceScore","priorityOverride","paycomEmployeeId","note"];
@@ -9170,7 +9225,7 @@ function analyzeCfgChanges(localDepts,liveDepts){
       }else if(l&&r){
         const diffFields=STAFF_FIELDS.filter(f=>JSON.stringify(l[f]??null)!==JSON.stringify(r[f]??null));
         if(diffFields.length){
-          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${f}: yours=${JSON.stringify(l[f]??null)}, live=${JSON.stringify(r[f]??null)}`).join("; ");
+          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${f}: yours=${humanizeDiffValue(l[f]??null)}, live=${humanizeDiffValue(r[f]??null)}`).join("; ");
           changes.push(line);conflicts.push(line);
         }
       }
@@ -9189,7 +9244,7 @@ function analyzeCfgChanges(localDepts,liveDepts){
     new Set([...Object.keys(locRules),...Object.keys(liveRules)]).forEach(k=>{
       const l=locRules[k],r=liveRules[k];
       if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
-        const line=`${deptLabel} rule \u2014 ${k}: yours=${JSON.stringify(l??null)}, live=${JSON.stringify(r??null)}`;
+        const line=`${deptLabel} rule \u2014 ${k}: yours=${humanizeDiffValue(l??null)}, live=${humanizeDiffValue(r??null)}`;
         changes.push(line);if(r!=null)conflicts.push(line);
       }
     });
@@ -9209,7 +9264,7 @@ function analyzeCfgChanges(localDepts,liveDepts){
   SHARED_APP_CFG_KEYS.forEach(k=>{
     const l=locAppWide[k],r=liveAppWide[k];
     if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
-      const line=`App-wide setting \u2014 ${k}: yours=${JSON.stringify(l??null)}, live=${JSON.stringify(r??null)}`;
+      const line=`App-wide setting \u2014 ${k}: yours=${humanizeDiffValue(l??null)}, live=${humanizeDiffValue(r??null)}`;
       changes.push(line);if(r!==undefined&&r!==null)conflicts.push(line);
     }
   });
@@ -13256,8 +13311,57 @@ function showCellContextMenu(x,y,nm,day){
 // entire selection as one shape (preserving each cell's relative row/day offset from the dragged one) — the
 // exact same relative-shape logic pasteClipboardAtAnchor() already uses for a keyboard paste — so a multi-cell
 // drag behaves consistently with a multi-cell copy/paste, not as a separate, narrower feature.
+// ADDED _buildRelocateShape()/_completeRelocate() below — pulled out of the dragstart/drop handlers as their
+// own named helpers (per the touch fix right after this function — see its own comment for the full "shift
+// drag doesn't work on touch" root cause). Behavior is 100% unchanged for the existing Alt+mouse-drag path
+// below; this refactor exists ONLY so the new touch long-press path can share the exact same shape-building and
+// move/copy logic instead of re-implementing (and risking drifting out of sync with) a second copy of it.
+function _buildRelocateShape(nm,day){
+  const order=visualStaffRowOrder();
+  const key=nm+"|"+day;
+  let cells;
+  if(MULTISEL.cells.has(key)&&MULTISEL.cells.size>1)cells=[...MULTISEL.cells];else cells=[key];
+  const parsed=cells.map(k=>{const idx=k.lastIndexOf("|");const _nm=k.slice(0,idx),_day=+k.slice(idx+1);return {nm:_nm,day:_day,row:order.indexOf(_nm),val:cellVal(_nm,_day)};}).filter(c=>c.row>=0);
+  if(!parsed.length)return null;
+  const minRow=Math.min(...parsed.map(c=>c.row)),minDay=Math.min(...parsed.map(c=>c.day));
+  return {anchorRow:order.indexOf(nm),anchorDay:day,shape:parsed.map(c=>({relRow:c.row-minRow,relDay:c.day-minDay,srcRow:c.row,srcDay:c.day,val:c.val}))};
+}
+async function _completeRelocate(dragSource,targetNm,targetDay,isCopy){
+  const order=visualStaffRowOrder();
+  const targetRow=order.indexOf(targetNm);if(targetRow<0)return;
+  // Offset every shape cell relative to the ORIGINAL anchor (the cell actually grabbed), landing that exact
+  // cell on the drop target — the same "anchor-relative shape" convention pasteClipboardAtAnchor() already
+  // uses, so a multi-cell drag behaves identically to a multi-cell paste, not a separate/inconsistent rule.
+  const rowDelta=targetRow-dragSource.anchorRow,dayDelta=targetDay-dragSource.anchorDay;
+  const targets=dragSource.shape.map(c=>({toRow:c.srcRow+rowDelta,toDay:c.srcDay+dayDelta,fromRow:c.srcRow,fromDay:c.srcDay,val:c.val}));
+  const outOfBounds=targets.some(t=>t.toRow<0||t.toRow>=order.length||t.toDay<0||t.toDay>6);
+  if(outOfBounds){uiAlert("Can't drop there \u2014 part of the dragged selection would land outside the grid.");return;}
+  const label=targets.length>1?(targets.length+" cells"):(order[targets[0].fromRow]+"\u2019s "+DOW[targets[0].fromDay]);
+  if(!(await uiConfirm((isCopy?"Copy ":"Move ")+label+" to "+order[targetRow]+"\u2019s "+DOW[targetDay]+"? This will overwrite whatever is currently there.")))return;
+  targets.forEach(t=>{setCell(order[t.toRow],t.toDay,t.val);});
+  if(!isCopy)targets.forEach(t=>{if(!targets.some(o=>o.toRow===t.fromRow&&o.toDay===t.fromDay))setCell(order[t.fromRow],t.fromDay,"");}); // clear source cells for a MOVE, unless a source cell also happens to be one of the targets (a same-row/shifted-day drag could overlap its own source, which must not be blanked out again after being written)
+  flashNote((isCopy?"Copied ":"Moved ")+targets.length+" cell(s).");
+}
 function initCellDragRelocate(){
   let _dragSource=null; // {nm,day,shape:[{relRow,relDay,val}]}
+  // ADDED — touch-screen equivalent of the Alt+mouse-drag relocate this function already had (see below).
+  // CONFIRMED, TOTAL GAP (per direct report: "shift drag doesn't seem to work on touch"): native HTML5
+  // drag-and-drop — dragstart/dragover/drop, the mechanism the mouse path below relies on — has NO touch
+  // equivalent on ANY mobile browser; the WHATWG Drag and Drop spec itself scopes native dragstart to mouse
+  // input only, so it was never a matter of a missing touch listener somewhere, relocating a shift by dragging
+  // was 100% impossible on a touchscreen device before this, full stop. FIX: a genuine long-press (450ms, finger
+  // held within a small ~10px jitter tolerance) arms the SAME relocate flow via Pointer Events (which DO fire
+  // uniformly for touch), reusing _buildRelocateShape()/_completeRelocate() above so touch and mouse share one
+  // identical move/copy/confirm/bounds-check code path. Deliberately gated behind a genuine long-press rather
+  // than a plain touch-drag: .cellbtn is intentionally touch-action:manipulation (see that CSS rule's own
+  // comment — needed to fix a real tap-delay/double-tap-zoom bug) so an ordinary one-finger swipe still scrolls
+  // the grid exactly as before; only a deliberate hold-still gesture (which no ordinary scroll or tap ever
+  // produces) claims the gesture for relocate instead, via e.preventDefault() on the pointer stream from that
+  // point on. Touch has no Ctrl/Cmd modifier available mid-gesture, so a long-press-drag always MOVES (never
+  // copies) — a distinct "two-finger long-press to copy" gesture could be added later if that specific case is
+  // requested, but isn't guessed at here.
+  let _touchDrag=null; // {timer,armed,source,startX,startY,srcBtn,lastTd}
+  const _LP_MS=450,_LP_JITTER=10;
   el("grid").querySelectorAll(".cellbtn").forEach(btn=>{
     btn.setAttribute("draggable",EDIT?"true":"false");
     if(!EDIT)return;
@@ -13272,14 +13376,8 @@ function initCellDragRelocate(){
       // needs to see in order to engage instead.
       if(!e.altKey){e.preventDefault();return;}
       const nm=decodeURIComponent(btn.dataset.nm),day=+btn.dataset.day;
-      const order=visualStaffRowOrder();
-      const key=nm+"|"+day;
-      let cells;
-      if(MULTISEL.cells.has(key)&&MULTISEL.cells.size>1)cells=[...MULTISEL.cells];else cells=[key];
-      const parsed=cells.map(k=>{const idx=k.lastIndexOf("|");const _nm=k.slice(0,idx),_day=+k.slice(idx+1);return {nm:_nm,day:_day,row:order.indexOf(_nm),val:cellVal(_nm,_day)};}).filter(c=>c.row>=0);
-      if(!parsed.length)return;
-      const minRow=Math.min(...parsed.map(c=>c.row)),minDay=Math.min(...parsed.map(c=>c.day));
-      _dragSource={anchorRow:order.indexOf(nm),anchorDay:day,shape:parsed.map(c=>({relRow:c.row-minRow,relDay:c.day-minDay,srcRow:c.row,srcDay:c.day,val:c.val}))};
+      _dragSource=_buildRelocateShape(nm,day);
+      if(!_dragSource)return;
       try{e.dataTransfer.effectAllowed="move";e.dataTransfer.setData("text/plain","");}catch(_){}
     });
     btn.addEventListener("dragover",(e)=>{if(_dragSource)e.preventDefault();});
@@ -13290,22 +13388,55 @@ function initCellDragRelocate(){
       if(!_dragSource)return;
       e.preventDefault();
       const nm=decodeURIComponent(btn.dataset.nm),day=+btn.dataset.day;
-      const order=visualStaffRowOrder();
-      const targetRow=order.indexOf(nm);if(targetRow<0){_dragSource=null;return;}
-      // Offset every shape cell relative to the ORIGINAL anchor (the cell actually grabbed), landing that exact
-      // cell on the drop target — the same "anchor-relative shape" convention pasteClipboardAtAnchor() already
-      // uses, so a multi-cell drag behaves identically to a multi-cell paste, not a separate/inconsistent rule.
-      const rowDelta=targetRow-_dragSource.anchorRow,dayDelta=day-_dragSource.anchorDay;
       const isCopy=e.ctrlKey||e.metaKey;
-      const targets=_dragSource.shape.map(c=>({toRow:c.srcRow+rowDelta,toDay:c.srcDay+dayDelta,fromRow:c.srcRow,fromDay:c.srcDay,val:c.val}));
-      const outOfBounds=targets.some(t=>t.toRow<0||t.toRow>=order.length||t.toDay<0||t.toDay>6);
-      if(outOfBounds){uiAlert("Can't drop there \u2014 part of the dragged selection would land outside the grid.");_dragSource=null;return;}
-      const label=targets.length>1?(targets.length+" cells"):(order[targets[0].fromRow]+"\u2019s "+DOW[targets[0].fromDay]);
-      if(!(await uiConfirm((isCopy?"Copy ":"Move ")+label+" to "+order[targetRow]+"\u2019s "+DOW[day]+"? This will overwrite whatever is currently there."))){_dragSource=null;return;}
-      targets.forEach(t=>{setCell(order[t.toRow],t.toDay,t.val);});
-      if(!isCopy)targets.forEach(t=>{if(!targets.some(o=>o.toRow===t.fromRow&&o.toDay===t.fromDay))setCell(order[t.fromRow],t.fromDay,"");}); // clear source cells for a MOVE, unless a source cell also happens to be one of the targets (a same-row/shifted-day drag could overlap its own source, which must not be blanked out again after being written)
-      flashNote((isCopy?"Copied ":"Moved ")+targets.length+" cell(s).");
-      _dragSource=null;
+      const src=_dragSource;_dragSource=null;
+      await _completeRelocate(src,nm,day,isCopy);
+    });
+    // --- touch long-press path (see this function's own top comment for the full root cause/design) ---
+    btn.addEventListener("pointerdown",(e)=>{
+      if(e.pointerType!=="touch")return; // mouse/pen already fully handled by the native Alt+drag above
+      const nm=decodeURIComponent(btn.dataset.nm),day=+btn.dataset.day;
+      const startX=e.clientX,startY=e.clientY,pointerId=e.pointerId;
+      const state={timer:null,armed:false,source:null,startX,startY,srcBtn:btn,lastTd:null};
+      state.timer=setTimeout(()=>{
+        const src=_buildRelocateShape(nm,day);
+        if(!src){_touchDrag=null;return;}
+        state.armed=true;state.source=src;
+        try{btn.setPointerCapture(pointerId);}catch(_){}
+        btn.style.opacity="0.55";
+        try{navigator.vibrate&&navigator.vibrate(15);}catch(_){}
+      },_LP_MS);
+      _touchDrag=state;
+    });
+    btn.addEventListener("pointermove",(e)=>{
+      if(!_touchDrag||e.pointerType!=="touch")return;
+      if(!_touchDrag.armed){
+        if(Math.abs(e.clientX-_touchDrag.startX)>_LP_JITTER||Math.abs(e.clientY-_touchDrag.startY)>_LP_JITTER){
+          clearTimeout(_touchDrag.timer);_touchDrag=null; // real finger movement before the long-press armed — an ordinary scroll/tap, not a relocate gesture; let the browser handle it natively
+        }
+        return;
+      }
+      e.preventDefault(); // now genuinely armed — suppress the page/grid scroll for the rest of this gesture
+      const target=document.elementFromPoint(e.clientX,e.clientY);
+      const overBtn=target&&target.closest?target.closest(".cellbtn"):null;
+      if(_touchDrag.lastTd){_touchDrag.lastTd.classList.remove("dragOverTarget");_touchDrag.lastTd=null;}
+      if(overBtn){const td=overBtn.closest("td");if(td){td.classList.add("dragOverTarget");_touchDrag.lastTd=td;}}
+    },{passive:false});
+    btn.addEventListener("pointerup",async(e)=>{
+      if(!_touchDrag||e.pointerType!=="touch")return;
+      clearTimeout(_touchDrag.timer);
+      if(_touchDrag.lastTd)_touchDrag.lastTd.classList.remove("dragOverTarget");
+      if(_touchDrag.srcBtn)_touchDrag.srcBtn.style.opacity="";
+      if(!_touchDrag.armed){_touchDrag=null;return;} // a plain tap — let the normal click/open-editor handler run as usual
+      const target=document.elementFromPoint(e.clientX,e.clientY);
+      const overBtn=target&&target.closest?target.closest(".cellbtn"):null;
+      const src=_touchDrag.source;_touchDrag=null;
+      if(!overBtn||!src)return;
+      const nm=decodeURIComponent(overBtn.dataset.nm),day=+overBtn.dataset.day;
+      await _completeRelocate(src,nm,day,false);
+    });
+    btn.addEventListener("pointercancel",()=>{
+      if(_touchDrag){clearTimeout(_touchDrag.timer);if(_touchDrag.lastTd)_touchDrag.lastTd.classList.remove("dragOverTarget");if(_touchDrag.srcBtn)_touchDrag.srcBtn.style.opacity="";_touchDrag=null;}
     });
   });
 }
@@ -18736,7 +18867,7 @@ function _diagnoseManagerAlertsHtml(mgrDepts){
 async function checkBackgroundPushStatus(){
   const box=el("reminderDiag");if(!box)return;
   const rows=[];
-  rows.push(`<tr><td>Notification permission</td><td>${(typeof Notification!=="undefined")?Notification.permission:"unsupported in this browser"}</td></tr>`);
+  rows.push(`<tr><td>Notification permission</td><td>${notifPermissionLabel()}</td></tr>`);
   rows.push(`<tr><td>Connected to the shared live copy right now?</td><td>${DB?"Yes":"<b>No</b> \u2014 background push CANNOT reach the server-side function at all until this device connects (Settings \u2192 Live sync). A foreground/in-app test notification can still work perfectly fine while disconnected \u2014 that's a separate, local-only mechanism (see Readme)."}</td></tr>`);
   if(!("serviceWorker" in navigator)){
     rows.push(`<tr><td>Service worker support</td><td><b>Not supported</b> in this browser \u2014 background push is not possible on this device regardless of connection.</td></tr>`);
@@ -18836,7 +18967,7 @@ function diagnoseReminders(){
       rows.push(`<tr><td>Already marked "sent today"?</td><td>${already?'<b>YES</b> \u2014 this exact shift/condition already notified once today; a repeat test with the SAME shift value produces nothing more \u2014 change the shift time (even by a minute) or wait until tomorrow to see it fire again, this is by design (no repeat spam), not a bug.':"No \u2014 nothing is blocking this from firing on the next 60-second check."}</td></tr>`);
     }
   }
-  rows.push(`<tr><td>Notification permission</td><td>${(typeof Notification!=="undefined")?Notification.permission:"unsupported in this browser"}</td></tr>`);
+  rows.push(`<tr><td>Notification permission</td><td>${notifPermissionLabel()}</td></tr>`);
   rows.push(`<tr><td>Reminder engine running?</td><td>${_reminderInterval?"Yes (polling every 60s)":"<b>No \u2014 not currently running on this tab</b>"}</td></tr>`);
   // FIXED this round (per direct alignment-consistency audit): both headers here are left-aligned (genuinely
   // appropriate \u2014 "Check"/"Result" are both real sentence-style text, not short centered labels), but every
