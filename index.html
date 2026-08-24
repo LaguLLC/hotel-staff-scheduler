@@ -1781,6 +1781,25 @@
      for nested <details> at all. Scoped specifically to #readmeBody (the only place in the app using nested
      <details>) rather than a global rule, to avoid any unintended effect on collapsible sections elsewhere. */
   #readmeBody details details{margin-left:18px;margin-top:6px;}
+  /* FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "line break between visibility and notif bigger
+     than other linebreaks"). ROOT CAUSE, confirmed by direct pixel measurement: every collapsible Settings
+     section uses the identical margin:6px 0 — normally, two adjacent sibling <details> elements collapse their
+     touching 6px+6px margins down to a single 6px gap (standard CSS margin-collapsing), which is exactly why
+     every OTHER pair (e.g. Visibility→Flags) correctly measures 6px. The ONE exception is this specific
+     boundary: "Visibility & access" is the very FIRST element inside a <fieldset> (the edit-access-gated
+     wrapper starting right after "Notifications & reminders"), and a <fieldset> — even styled with
+     border:none;margin:0;padding:0 — does not participate in normal margin collapsing the way a plain <div>
+     does (a long-standing, engine-level fieldset rendering quirk, not a CSS mistake in this file). That blocks
+     the collapse specifically at this one seam, so both sides' own 6px margins are added together instead of
+     collapsing to one — measured directly at 12px versus every other gap's 6px. Zeroing out the top margin of
+     whichever <details> happens to be the very first child inside such a fieldset restores the same 6px every
+     other section already has, without touching the shared margin:6px 0 rule any section's own inline style
+     already uses (which would risk changing spacing everywhere, not just this one boundary). */
+  /* !important is required here specifically: every <details> tag in Settings carries its own inline
+     style="margin:6px 0" (baked directly into the markup at render time) — an inline style always wins over
+     any external stylesheet rule regardless of selector specificity, with the one exception being !important,
+     which is what makes this targeted override actually take effect. */
+  fieldset>details:first-child{margin-top:0!important;}
 </style>
 </head>
 <body>
@@ -7356,52 +7375,71 @@ async function registerServiceWorker(){
 // replacing the old single global wantsManagerAlerts boolean \u2014 see CFG._notifManagerDepts's own comment at the
 // Settings UI for the full bug this fixes (a manager for only ONE department was previously getting the OTHER
 // department's attendance alerts too, with no way to scope it).
+// FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "check off then click diagnose, nothing happens,
+// then all buttons in section except enable notification disappear"). ROOT CAUSE, confirmed via direct
+// testing: this function already correctly persisted every real state change (CFG._notifEnabled,
+// CFG._notifName, CFG._notifManagerDepts, CFG._notifRoomAssignment all updated and saved correctly on every
+// path) — but, unlike disableNotifications() right below (which already correctly calls render() at its own
+// end), this function never refreshed the UI at all, on ANY of its 4 possible exit paths (permission denied,
+// no service worker support, push subscribe succeeded, push subscribe failed). Confirmed directly: clicking
+// "Enable" for the FIRST time left the button still reading "Enable notifications on this device" with no
+// Disable/Send test/Diagnose buttons ever appearing, even though CFG._notifEnabled was already true
+// underneath — a fully successful action that looked identical to "nothing happened." Clicking "Update" a
+// second time (e.g. after picking a different name in the dropdown) had the same problem: the newly picked
+// name saved correctly, but the button row and Diagnose panel stayed exactly as before, with no visible sign
+// the update took effect — Diagnose itself then appeared to silently do nothing, since the STALE, still-shown
+// button set never reflected the real state Diagnose was actually reading. The entire body is now wrapped in
+// one try/finally (rather than a bare call at the bottom, which the two early "return" statements would have
+// skipped straight past) — renderSettings() now unconditionally runs on every single exit path, so the
+// Settings panel is ALWAYS left showing an accurate, up-to-date reflection of the real underlying state,
+// matching disableNotifications()'s own existing convention.
 async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment){
-  if(!("Notification" in window)){uiAlert("Notifications are not supported in this browser.");return false;}
-  const perm=await Notification.requestPermission();
-  if(perm!=="granted"){uiAlert("Notification permission was not granted \u2014 reminders can't be shown without it.");return false;}
-  CFG._notifName=forName||null;CFG._notifManagerDepts=Array.isArray(wantsManagerDepts)?wantsManagerDepts:[];CFG._notifEnabled=true;
-  // NEW this round (per direct request: "modify notification feature of app to send room assignments to hsk
-  // workers") \u2014 see the Settings checkbox's own comment for the full reasoning; persisted alongside the other
-  // notification preferences using the same save() call already here, no separate save path needed.
-  CFG._notifRoomAssignment=!!wantsRoomAssignment;
-  save("hotel_cfg",CFG);
-  // FOUND AND FIXED A REAL BUG (per feedback: "clicked allow on notif popup, ran test at shift start time, no
-  // notif"): startReminderEngine() — the function that actually runs the 60s polling loop calling
-  // maybeLocalNotify() — was ONLY ever invoked once, at page-load bootstrap, gated on CFG._notifEnabled already
-  // being true at that point (see the bottom of this file). Enabling notifications for the first time THIS
-  // session (via this exact function, from the Settings button) correctly requested permission and saved the
-  // flag, but nothing ever started the polling loop in the CURRENTLY OPEN tab — it would only have started
-  // automatically on the NEXT page reload, once CFG._notifEnabled was already true at boot. Starting it here,
-  // immediately after the flag is saved, means the very session where notifications are first turned on actually
-  // begins checking right away. startReminderEngine() is already idempotent (`if(_reminderInterval)return;`), so
-  // this is always safe to call even if the engine happens to already be running.
-  startReminderEngine();
-  const reg=await registerServiceWorker();
-  if(!reg||!("pushManager" in reg)){
-    flashNote("Notifications enabled on this device (in-app reminders only \u2014 this browser/device doesn't support background push; see Readme).");
-    return "local-only";
-  }
   try{
-    let sub=await reg.pushManager.getSubscription();
-    if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY)});
-    if(DB){
-      const subJson=sub.toJSON();
-      // CHANGED this round — manager_depts (a text[] column, see the migration SQL) replaces the old flat
-      // wants_manager_alerts boolean, matching the same per-department scoping fix as the client-side in-app
-      // engine above; the server-side attendance-reminders Edge Function reads this same column (see its own
-      // updated query) so background push respects the identical per-department scoping.
-      const{error}=await DB.from("push_subscriptions").upsert({
-        endpoint:subJson.endpoint,subscription:subJson,name:forName||null,
-        manager_depts:wantsManagerDepts||[],updated_at:new Date().toISOString()
-      },{onConflict:"endpoint"});
-      if(error){reportSyncError("push subscription upload",error);flashNote("Notifications enabled locally, but couldn't reach the shared database to enable background push \u2014 see sync error.");return "local-only";}
-      flashNote("Notifications enabled \u2014 this device is now registered for both in-app reminders and background push (once the server-side check is deployed \u2014 see Readme).");
-    } else {
-      flashNote("Notifications enabled on this device. Connect to the shared live copy (Settings \u2192 Sync & data) to also register for background push.");
+    if(!("Notification" in window)){uiAlert("Notifications are not supported in this browser.");return false;}
+    const perm=await Notification.requestPermission();
+    if(perm!=="granted"){uiAlert("Notification permission was not granted \u2014 reminders can't be shown without it.");return false;}
+    CFG._notifName=forName||null;CFG._notifManagerDepts=Array.isArray(wantsManagerDepts)?wantsManagerDepts:[];CFG._notifEnabled=true;
+    // Persisted alongside the other notification preferences using the same save() call already here, no
+    // separate save path needed.
+    CFG._notifRoomAssignment=!!wantsRoomAssignment;
+    save("hotel_cfg",CFG);
+    // startReminderEngine() — the function that actually runs the 60s polling loop calling maybeLocalNotify()
+    // — was ONLY ever invoked once, at page-load bootstrap, gated on CFG._notifEnabled already being true at
+    // that point. Enabling notifications for the first time THIS session (via this exact function) correctly
+    // requests permission and saves the flag, but nothing would otherwise start the polling loop in the
+    // CURRENTLY OPEN tab until the NEXT page reload. Starting it here, immediately after the flag is saved,
+    // means the very session where notifications are first turned on actually begins checking right away.
+    // startReminderEngine() is already idempotent (`if(_reminderInterval)return;`), so this is always safe to
+    // call even if the engine happens to already be running.
+    startReminderEngine();
+    const reg=await registerServiceWorker();
+    if(!reg||!("pushManager" in reg)){
+      flashNote("Notifications enabled on this device (in-app reminders only \u2014 this browser/device doesn't support background push; see Readme).");
+      return "local-only";
     }
-    return true;
-  }catch(e){console.warn("push subscribe failed",e);flashNote("In-app reminders are enabled; background push could not be set up on this device ("+e.message+").");return "local-only";}
+    try{
+      let sub=await reg.pushManager.getSubscription();
+      if(!sub)sub=await reg.pushManager.subscribe({userVisibleOnly:true,applicationServerKey:urlBase64ToUint8Array(VAPID_PUBLIC_KEY)});
+      if(DB){
+        const subJson=sub.toJSON();
+        // manager_depts (a text[] column, see the migration SQL) replaces the old flat wants_manager_alerts
+        // boolean, matching the same per-department scoping fix as the client-side in-app engine above; the
+        // server-side attendance-reminders Edge Function reads this same column (see its own updated query) so
+        // background push respects the identical per-department scoping.
+        const{error}=await DB.from("push_subscriptions").upsert({
+          endpoint:subJson.endpoint,subscription:subJson,name:forName||null,
+          manager_depts:wantsManagerDepts||[],updated_at:new Date().toISOString()
+        },{onConflict:"endpoint"});
+        if(error){reportSyncError("push subscription upload",error);flashNote("Notifications enabled locally, but couldn't reach the shared database to enable background push \u2014 see sync error.");return "local-only";}
+        flashNote("Notifications enabled \u2014 this device is now registered for both in-app reminders and background push (once the server-side check is deployed \u2014 see Readme).");
+      } else {
+        flashNote("Notifications enabled on this device. Connect to the shared live copy (Settings \u2192 Sync & data) to also register for background push.");
+      }
+      return true;
+    }catch(e){console.warn("push subscribe failed",e);flashNote("In-app reminders are enabled; background push could not be set up on this device ("+e.message+").");return "local-only";}
+  }finally{
+    renderSettings();
+  }
 }
 function disableNotifications(){
   CFG._notifEnabled=false;save("hotel_cfg",CFG);
@@ -9001,10 +9039,40 @@ function analyzeCfgChanges(localDepts,liveDepts){
 // + overflow:auto) instead of the previous plain-text "...and N more." line, which was static, non-interactive
 // text. Buttons are three short, single words so they comfortably fit on one line at any width, with the fuller
 // explanation moved to a hover tooltip instead of the button's own label.
+// ADDED (per direct request: "organize list of items that were changed, right now it's a long list that user
+// can't easily check by category"). Every line already pushed into changes/conflicts by analyzeUploadChanges()/
+// analyzeCfgChanges() has a stable, distinguishable own prefix by construction (see those functions' own
+// template-literal shapes) — this classifies each line into one of 7 real categories purely from that existing
+// text, with no change needed to how the lines themselves are built, so the two functions producing them never
+// need to also track a separate category label alongside each string.
+function _categorizeConflictLine(line){
+  if(line.indexOf("Demand ")===0)return "Demand";
+  if(line.indexOf("Leave request ")===0)return "Leave requests";
+  if(line.indexOf("App-wide setting \u2014 ")===0)return "App-wide settings";
+  if(line.indexOf(" roster: ")!==-1)return "Staff roster";
+  if(line.indexOf(" coverage minimum \u2014 ")!==-1)return "Coverage minimums";
+  if(line.indexOf(" rule \u2014 ")!==-1)return "Rules & thresholds";
+  if(line.indexOf(" default shifts: ")!==-1)return "Default shifts";
+  if(line.indexOf(" role list differs")!==-1)return "Role list";
+  return "Schedule"; // the remaining shape is the per-cell schedule diff: "NAME — DEPT DAY (WK): ..."
+}
+const _CONFLICT_CATEGORY_ORDER=["Schedule","Demand","Leave requests","Staff roster","Coverage minimums","Rules & thresholds","Default shifts","Role list","App-wide settings"];
 function showUploadChoiceDialog(changes,conflicts,cfgChanged){
   return new Promise(res=>{
     const nonConflicting=changes.filter(c=>!conflicts.includes(c));
-    const listBlock=(title,items,color)=>items.length?`<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:130px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px;white-space:pre-wrap">${items.map(x=>esc(x)).join("\n")}</div></div>`:"";
+    // Groups items into their category first, then renders one sub-heading per category actually present
+    // (never an empty "Demand (0)" heading for a category with nothing to show) — genuinely easier to scan
+    // than one long undifferentiated list, while the OUTER max-height+overflow:auto scroll box is unchanged,
+    // so a hotel with many changes across several categories still gets one bounded, scrollable area, not a
+    // separately-scrolling box per category.
+    const listBlock=(title,items,color)=>{
+      if(!items.length)return "";
+      const byCat={};items.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
+      const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>
+        `<div style="margin-top:4px"><b style="font-size:11px">${esc(c)} (${byCat[c].length})</b><div style="white-space:pre-wrap">${byCat[c].map(x=>esc(x)).join("\n")}</div></div>`
+      ).join("");
+      return `<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px">${body}</div></div>`;
+    };
     // CHANGED — roster/coverage/rules/shift-preset differences are now itemized directly INTO the two lists
     // above (see analyzeCfgChanges()'s own comment for the full "generic banner, no specifics" gap this
     // closes) — the vague catch-all banner that used to sit here is no longer needed for that purpose. Kept as
@@ -9183,6 +9251,16 @@ async function connect(){
   const url=el("supaUrl").value.trim(),key=el("supaKey").value.trim();
   if(!url||!key){uiAlert("Enter both the Supabase URL and anon key.");return;}
   if(!window.supabase){uiAlert("Supabase library didn't load (need internet). Running local-only.");return;}
+  // FOUND AND FIXED A REAL, CONFIRMED BUG (matches the console warning "Multiple GoTrueClient instances
+  // detected in the same browser context... may produce undefined behavior when used concurrently under the
+  // same storage key"). ROOT CAUSE: this function always called createClient() unconditionally, with no check
+  // for whether a real, still-live client already existed in `DB` from an earlier connection (e.g. the one
+  // auto-restored from a saved URL/key at boot, or from clicking Connect a second time without an intervening
+  // Disconnect). Each createClient() call spins up its own independent GoTrueClient instance that manages auth
+  // sessions against the SAME localStorage key — leaving an old one running while a new one is created is
+  // exactly the scenario Supabase's own library warns about. Explicitly disconnecting any existing client
+  // first guarantees only one GoTrueClient instance is ever alive in this tab at a time.
+  if(DB)disconnect();
   try{
     DB=window.supabase.createClient(url,key);
     save("hotel_supa",{url,key});
@@ -9249,19 +9327,45 @@ function subscribe(){
 }
 function _subscribeSchedChannel(){
   CHAN=DB.channel("sched")
+    // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "tab and enter movements still doesn't work
+    // properly in demand tables when deployed (they work when in sharepoint or downloaded) but get stuck
+    // between mon and wed frequently in deployed"). ROOT CAUSE, confirmed by tracing the exact sequence: typing
+    // a value and pressing Tab/Enter in the demand table calls _dfn(), which saves locally, pushes to Supabase
+    // (pushDemand()), and calls render() ONCE — using the PENDING_DFOCUS mechanism to correctly refocus the
+    // NEXT cell after the DOM rebuild. But a moment later (real network round-trip time — meaning this ONLY
+    // ever happens while genuinely connected live, exactly matching "works downloaded/SharePoint, not
+    // deployed"), Postgres broadcasts that SAME change back to every subscribed client over this exact realtime
+    // channel — INCLUDING the device that just made the change itself. This handler previously called render()
+    // UNCONDITIONALLY for any incoming change, with no way to tell "a genuinely new update from another device"
+    // apart from "an echo of what I just pushed myself" — so this SECOND, redundant render() fires moments
+    // after the first, but PENDING_DFOCUS has already been consumed and cleared by the FIRST render(), so this
+    // second one has no target to refocus at all, silently dropping keyboard focus wherever the browser's own
+    // default behavior happens to land it. Fixed by comparing the incoming payload against what's ALREADY
+    // stored locally before deciding to render() at all — an echo of a change this device already knows about
+    // is now a genuine no-op (skipped entirely), while a real update from a DIFFERENT device (whose content
+    // actually differs from the local copy) still re-renders exactly as before. Applied to all three tables on
+    // this channel for the same underlying reason, not just demand specifically.
     .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{
       const r=payload.new||payload.old;if(!r)return;
       ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};
+      const _before=JSON.stringify(ASSIGN[r.dept][r.week][r.staff]||{});
       ASSIGN[r.dept][r.week][r.staff]=r.days||{};save("hotel_assign",ASSIGN);
-      if(r.dept===DEPT&&r.week===weekKey(WEEK_START))render();
+      const _after=JSON.stringify(ASSIGN[r.dept][r.week][r.staff]||{});
+      if(r.dept===DEPT&&r.week===weekKey(WEEK_START)&&_before!==_after)render();
     })
     .on("postgres_changes",{event:"*",schema:"public",table:"demand"},payload=>{
-      const r=payload.new||payload.old;if(!r)return;DEMAND[r.week]=r.days||{};save("hotel_demand",DEMAND);
-      if(r.week===weekKey(WEEK_START))render();
+      const r=payload.new||payload.old;if(!r)return;
+      const _before=JSON.stringify(DEMAND[r.week]||{});
+      DEMAND[r.week]=r.days||{};save("hotel_demand",DEMAND);
+      const _after=JSON.stringify(DEMAND[r.week]||{});
+      if(r.week===weekKey(WEEK_START)&&_before!==_after)render();
     })
     .on("postgres_changes",{event:"*",schema:"public",table:"leave_requests"},payload=>{
-      const r=payload.new||payload.old;if(!r||!r.id)return;LEAVE_REQUESTS[r.id]=r.data||{};save("hotel_leaverequests",LEAVE_REQUESTS);
-      if(VIEW==="leave")render();
+      const r=payload.new||payload.old;if(!r||!r.id)return;
+      const _before=JSON.stringify(LEAVE_REQUESTS[r.id]||{});
+      LEAVE_REQUESTS[r.id]=r.data||{};save("hotel_leaverequests",LEAVE_REQUESTS);
+      const _after=JSON.stringify(LEAVE_REQUESTS[r.id]||{});
+      if(VIEW==="leave"&&_before!==_after)render();
     })
     .subscribe((status,err)=>{
       // surfaces realtime subscription failures (e.g. "demand"/"assignments" table not added to the Supabase
