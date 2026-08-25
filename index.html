@@ -1647,7 +1647,19 @@
      INTO the neighboring cell, not the whole page). min-width:0 lets it actually shrink all the way down to
      whatever room its own cell genuinely has, in every view/edit-mode combination, not just the wider
      edit-mode column width this was originally verified against. */
-  select.zoneSelect{-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%236b7a8d"><path d="M5.5 7.5l4.5 5 4.5-5z"/></svg>');background-repeat:no-repeat;background-position:right 3px center;background-size:9px;padding-right:14px!important;min-width:0;max-width:100%!important;}
+  /* FOUND AND FIXED A REAL, CONFIRMED BUG (per screenshot: HSK schedule "Assignment:"/"Floor/zone:" dropdowns
+     look like a different, smaller font than the plain-text "Other…" values sitting right next to them in the
+     same column). ROOT CAUSE, confirmed directly: this rule never set font-family (or the shorthand font) at
+     all — and unlike ordinary text elements, form controls (select/button/input) do NOT inherit the page's own
+     font-family from the body by default in any browser; without an explicit override they fall back to each
+     browser/OS's own native UI font. The sibling "Other…" value (floorSelect()'s own COLLAPSED-DISPLAY state)
+     is a plain <span>/<a>, which DOES inherit the page's Calibri/Segoe UI/Arial font normally — so, even with
+     both explicitly set to font-size:10px, a real <select> (native OS font) and a plain span (page font) never
+     actually matched, exactly producing the reported visual size/font mismatch. Every other dropdown in this
+     app already avoids this exact trap via its own explicit font:inherit (see .sfield's own rule) — this class
+     was the one place that got missed. Fixed the same way, so this <select> now genuinely uses the identical
+     font as its own "Other…" sibling state, matching every other dropdown in the app. */
+  select.zoneSelect{font:inherit;-webkit-appearance:none;-moz-appearance:none;appearance:none;background-color:#fff;background-image:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="%236b7a8d"><path d="M5.5 7.5l4.5 5 4.5-5z"/></svg>');background-repeat:no-repeat;background-position:right 3px center;background-size:9px;padding-right:14px!important;min-width:0;max-width:100%!important;}
   /* FOUND AND FIXED A REAL, CONFIRMED GAP this round (per repeated feedback: "make all placeholder values
      throughout the app grey (eg mm/dd/yyyy), NOT FIXED"). CONFIRMED the earlier round's own fix (a plain
      input::placeholder/textarea::placeholder rule) was correct as far as it went, but incomplete: this app has
@@ -2128,7 +2140,7 @@
   <div class="mrow" style="justify-content:flex-end;margin-top:8px"><button onclick="closeShift()">Cancel</button><button class="brand" onclick="saveShift()">Save</button></div>
 </div></div>
 <script>
-const APP_VERSION="1.8";
+const APP_VERSION="1.9";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 /* ---------- IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
 function uiAlert(msg){return uiDialog(msg,["OK"]).then(()=>{});}
@@ -3322,6 +3334,23 @@ let _pullingConfigNow=false;
 const UNDO_TRACKED_KEYS=["hotel_cfg","hotel_assign","hotel_demand","hotel_actual","hotel_actuald","hotel_actuald_autosrc","hotel_leaves","hotel_leaverequests"];
 let UNDO_STACK=[],REDO_STACK=[];const UNDO_MAX=50;
 let _undoApplying=false,_undoBatchTimer=null,_undoBatchPre=null;
+// ADDED (per direct report: "when I go live after app being closed for a while the undo and redo buttons
+// flicker"). ROOT CAUSE, confirmed by tracing save()'s own undo-capture block below: it only ever checked
+// `!_undoApplying` — a guard that correctly prevents an undo/redo RESTORE from re-triggering itself, but was
+// never extended to cover the OTHER place this app calls save() many times in a row for reasons that have
+// nothing to do with a real local edit: pullAll() (a reconnect/live-sync pull), which calls save() separately
+// for ASSIGN, DEMAND, LEAVE_REQUESTS, CHECKINS, and CFG as each table's data streams in from Supabase — each
+// separated by a real `await` (a genuine network round-trip), giving the undo-batch's own deferred
+// setTimeout(0) commit plenty of time to fire BETWEEN them. The result: reconnecting after being closed a
+// while (exactly when the most catch-up data needs pulling) produced several SEPARATE undo-batch commits in
+// quick succession — each one clearing REDO_STACK and calling _refreshUndoRedoButtons() — visibly flickering
+// the Undo/Redo buttons on-screen, AND, more seriously, silently polluting the user's own real undo history
+// with entries representing "what a background sync just changed," not anything they actually did — clicking
+// Undo right after a reconnect could revert a teammate's synced change instead of the user's own last edit.
+// _syncApplying mirrors _undoApplying's own exact pattern (set true for the full duration data is being
+// applied, checked in save()'s undo-capture condition) so a live pull is never mistaken for a trackable local
+// action, while every genuine local edit (including one made mid-sync) is completely unaffected.
+let _syncApplying=false;
 // FOUND AND FIXED A CRITICAL, CONFIRMED BUG this round (per direct feedback: "have to click or press ctlr+Z
 // twice to undo"). ROOT CAUSE, confirmed via direct step-by-step tracing of the actual mutation order: every
 // real mutator in this app (setCell(), and dozens of others) MUTATES the live in-memory state FIRST, then calls
@@ -3486,7 +3515,7 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
   // real data to localStorage/Supabase) fails to complete. If anything unexpected still goes wrong here in the
   // future, it's caught, logged to the console for diagnosis, and save() proceeds to return normally regardless.
   try{
-    if(!_undoApplying&&UNDO_TRACKED_KEYS.includes(k)){
+    if(!_undoApplying&&!_syncApplying&&UNDO_TRACKED_KEYS.includes(k)){
       // CHANGED this round — see _lastSettledSnapshot's own comment above for the full root-cause writeup. The
       // first save() of a new batch now uses _lastSettledSnapshot (the state as of the end of the PREVIOUS
       // batch — genuinely "before" this one) instead of a fresh _undoSnapshot() call here (which, by this point,
@@ -4429,6 +4458,19 @@ function seedOutsourcedWeek(){ // stamp the constant Thu-Sun pattern (OFF Mon-We
   try{const wk=weekKey(WEEK_START);ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
     let _anyChange=false;
     (CFG.HSK.staff||[]).forEach(s=>{ if(s.type!=="OUT"||String(s.role).indexOf("Outsourced")!==0)return;
+      // FOUND AND FIXED A REAL, CONFIRMED BUG (per direct report: "deleted Alesha (outsourced) but she still
+      // shows in sched both for this week and future weeks"). ROOT CAUSE: this function — which runs
+      // automatically on EVERY render of the HSK schedule (see render()'s own call to it) — never checked
+      // employed status at all before auto-stamping a blank row with the standard Thu-Sun pattern. The instant
+      // a removed outsourced-crew member's row was blank for ANY week (which is true for every future week by
+      // definition, since those haven't been stamped yet), this function silently refilled it right back in on
+      // the very next render — completely independent of, and undoing, the "no longer employed" state that
+      // removeStaffRow() had just set. This is why removal appeared to have zero effect specifically for
+      // outsourced-crew staff: every other role simply stays blank once removed (no auto-seed exists for them),
+      // but this one role type was being actively, repeatedly re-populated behind the scenes. Skipping anyone
+      // with employed===false here (the same convention already used everywhere else in this app) closes this
+      // permanently — a removed crew member's row is never auto-stamped again, for any current or future week.
+      if(s.employed===false)return;
       if(!outsourcedCrewEnabled(s.role))return; // crew toggled off — leave blank, do not auto-fill
       const row=ASSIGN.HSK[wk][s.n]; const hasAny=row&&Object.keys(row).length;
       const LEGACY={"9:AM":"09:00-17:00","11AM":"11:00-19:00","10am-5pm":"10:00-17:00","10am-6pm":"10:00-18:00"};
@@ -5253,6 +5295,28 @@ function render(){
     g.querySelectorAll(".cellbtn").forEach(b=>{
       const td=b.closest("td");if(!td)return;
       if(decodeURIComponent(b.dataset.nm)===_focusedCell.nm||+b.dataset.day===_focusedCell.day)td.classList.add("focusRowCol");
+    });
+    // FOUND AND FIXED A REAL, CONFIRMED INCONSISTENCY (per direct report: "in the demand table and roster the
+    // highlight for cell being selected goes across entire table including leftmost column, which is what I
+    // want, but in schedule leftmost staff column doesn't get selected"). ROOT CAUSE, confirmed by comparing
+    // this function directly against the demand/roster tables' own equivalent (initTableRowColFocus(), a few
+    // hundred lines below): that shared version tags EVERY <td> in the focused ROW purely by its POSITION
+    // (rIdx===_focused.row) — genuinely including whichever column happens to be first, with no assumption
+    // about that column's own content. This schedule-grid version, however, has ALWAYS been a separate,
+    // hand-rolled implementation that only tags a <td> when it directly CONTAINS a matching .cellbtn — and the
+    // leading name column (<td class="name"> — the person's name, type badge, and Floor/zone or Assignment
+    // dropdown) has never contained a .cellbtn at all, so it was structurally impossible for this loop to ever
+    // reach it, regardless of which day/person was focused. Not a regression from any recent change — a
+    // long-standing gap between two independent implementations of what was supposed to be the same feature.
+    // FIX: separately walks each row that contains a .cellbtn matching the focused NAME (every day-cell in a
+    // person's own row shares that same name, so any one match identifies the whole row) and tags that row's
+    // own td.name too — bringing this into line with the demand/roster tables' own "the whole row, including
+    // the leading column" behavior, with no change to the day-column-matching logic above.
+    g.querySelectorAll("tbody tr").forEach(tr=>{
+      const anyBtn=tr.querySelector(".cellbtn[data-nm]");if(!anyBtn)return;
+      if(decodeURIComponent(anyBtn.dataset.nm)===_focusedCell.nm){
+        const nameTd=tr.querySelector("td.name");if(nameTd)nameTd.classList.add("focusRowCol");
+      }
     });
   }
   // NEW this round (per explicit request: "make entire schedule cell clickable instead of just the hyphen") —
@@ -7118,6 +7182,18 @@ async function importPaycomTimeBetweenShifts(event){
 // current roster person across BOTH departments, plus a "Skip / not on roster" option for names that genuinely
 // aren't anyone currently employed here \u2014 saving a real selection persists it to CFG.paycomNameAliases so this
 // exact Paycom name auto-resolves on every future import, without needing to repeat this reconciliation.
+// ADDED the "Also rename..." checkbox column + adoptPaycomName() below (per the hotel's own direct suggestion:
+// "For the verification of the names, the Paycom name can take precedence and possibly an 'alternate' name
+// feature for any mismatches (not required, just a suggestion)"). Deliberately additive to the EXISTING
+// alias-only reconciliation, not a replacement for it: saving a mapping ALWAYS still writes CFG.paycomNameAliases
+// exactly as before (so future imports keep auto-resolving regardless of what follows), and this new checkbox is
+// UNCHECKED by default on every row (matching the hotel's own explicit "not required" framing) \u2014 checking it
+// for a given row does one ADDITIONAL thing: renames that roster person's primary Name to Paycom's own spelling
+// (via the existing, already-proven renameStaffEverywhere() \u2014 correctly carrying every one of that person's own
+// historical ASSIGN/ACTUALD/FLOORS/ACCRUALS/CHECKINS entries forward under the new name, not just the roster row
+// itself) and automatically preserves the OLD roster name as that person's new Alternate name (see the roster's
+// own altName field, right next to Name) \u2014 so nothing about how this person was previously known is lost, it
+// simply moves from being the PRIMARY name to a visible reference alongside the new, Paycom-matching one.
 function openPaycomNameReconciliation(unmatchedSorted){
   return new Promise(resolve=>{
     const bg=document.createElement("div");bg.className="modalbg";bg.id="paycomReconcileModal";bg.style.display="flex";
@@ -7128,12 +7204,13 @@ function openPaycomNameReconciliation(unmatchedSorted){
       // (this app's own established convention for a real identifying/name-style column, matching the roster's
       // own Name column and the coverage heatmap's own Role column) \u2014 but this body cell had no matching
       // override, silently inheriting the app's global CENTER default instead, a genuine header-vs-data mismatch.
-      return `<tr><td class="small" style="text-align:left">${esc(paycomName)}</td><td class="small" style="text-align:center">${count}</td><td><select class="sfield small" id="pcReconcile_${i}">${opts}</select></td></tr>`;
+      return `<tr><td class="small" style="text-align:left">${esc(paycomName)}</td><td class="small" style="text-align:center">${count}</td><td><select class="sfield small" id="pcReconcile_${i}" onchange="document.getElementById('pcAdopt_${i}').disabled=!this.value;if(!this.value)document.getElementById('pcAdopt_${i}').checked=false;">${opts}</select></td><td style="text-align:center"><input type="checkbox" id="pcAdopt_${i}" disabled title="Rename this person's primary Name in the roster to &quot;${esc(paycomName)}&quot; (Paycom's own spelling), keeping their current name as an Alternate name for reference. Only enabled once a person is selected on the left."></td></tr>`;
     }).join("");
-    bg.innerHTML=`<div class="modal" style="max-width:640px;width:96%">
+    bg.innerHTML=`<div class="modal" style="max-width:720px;width:96%">
       <h2>Reconcile unmatched Paycom names</h2>
       <div class="small" style="margin-bottom:8px">These names in the Paycom file didn't match anyone on the current roster \u2014 likely a spelling/nickname difference (e.g. legal name vs. the name used in this app). Map each one to the correct person, or Skip if they're genuinely not on the roster. Saved mappings apply automatically to every future import.</div>
-      <div class="tblwrap" style="overflow:auto;max-height:50vh;border-radius:8px"><table><tr><th style="text-align:left">Paycom name</th><th># rows</th><th>Maps to</th></tr>${rows}</table></div>
+      <div class="small muted" style="margin-bottom:8px">Optional: check "Rename in roster" for any row to adopt Paycom's own spelling as that person's primary name going forward \u2014 their current name is kept as an Alternate name (Settings \u2192 Staff roster) for reference, nothing is lost. Leave unchecked to keep today's roster name unchanged and just save the mapping.</div>
+      <div class="tblwrap" style="overflow:auto;max-height:50vh;border-radius:8px"><table><tr><th style="text-align:left">Paycom name</th><th># rows</th><th>Maps to</th><th>Rename in roster</th></tr>${rows}</table></div>
       <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closePaycomReconcileModal()">Skip all / Close</button><button class="brand" onclick="applyPaycomReconciliation(${unmatchedSorted.length})">Save mappings</button></div>
     </div>`;
     document.body.appendChild(bg);
@@ -7147,16 +7224,35 @@ function closePaycomReconcileModal(){
   if(window._paycomReconcileResolve)window._paycomReconcileResolve();
   window._paycomReconcileResolve=null;window._paycomReconcileNames=null;
 }
+// Adopts a Paycom name as a roster person's new primary Name \u2014 see openPaycomNameReconciliation()'s own
+// comment for the full feature this supports. Reuses renameStaffEverywhere() unchanged (so every one of this
+// person's own historical schedule/actual-hours/floor/accrual/checkin records correctly moves with them under
+// the new name, exactly like any other in-app rename) and appends the old name to st.altName \u2014 appended rather
+// than overwritten, so a person who's already accumulated one alternate name (e.g. from a PRIOR round of this
+// exact reconciliation) doesn't silently lose it if reconciled again under a second new spelling later.
+function adoptPaycomName(dept,oldName,newName){
+  const D=CFG[dept];if(!D)return;
+  renameStaffEverywhere(dept,oldName,newName);
+  const st=(D.staff||[]).find(x=>x.n===newName);if(!st)return;
+  const existing=(st.altName||"").split(",").map(x=>x.trim()).filter(Boolean);
+  if(!existing.includes(oldName))existing.push(oldName);
+  st.altName=existing.join(", ");
+}
 function applyPaycomReconciliation(count){
   const names=window._paycomReconcileNames||[];
-  let savedCount=0;
+  let savedCount=0,renamedCount=0;
   for(let i=0;i<count;i++){
     const sel=el("pcReconcile_"+i);if(!sel||!sel.value)continue;
     CFG.paycomNameAliases[names[i]]=sel.value;savedCount++;
+    const adoptBox=el("pcAdopt_"+i);
+    if(adoptBox&&adoptBox.checked&&sel.value!==names[i]){
+      const opt=sel.options[sel.selectedIndex];const dept=(opt&&opt.textContent.match(/\(([A-Z]+)\)$/)||[])[1];
+      if(dept)adoptPaycomName(dept,sel.value,names[i]),renamedCount++;
+    }
   }
   save("hotel_cfg",CFG);
   closePaycomReconcileModal();
-  if(savedCount)flashNote("Saved "+savedCount+" name mapping(s) \u2014 future Paycom imports will recognize "+(savedCount===1?"this name":"these names")+" automatically.");
+  if(savedCount)flashNote("Saved "+savedCount+" name mapping(s)"+(renamedCount?"; renamed "+renamedCount+" roster record(s) to Paycom's spelling (old name kept as Alternate name)":"")+" \u2014 future Paycom imports will recognize "+(savedCount===1?"this name":"these names")+" automatically.");
 }
 /* ---------- CHECKS ---------- */
 function availForDate(person,iso){const d=(person.availDates||{});for(const k in d){const a=d[k];if(!a.from)continue;if(iso<a.from||iso>a.to)continue;
@@ -9617,6 +9713,27 @@ async function connect(){
 // checking whether THIS device already holds a real, valid local push subscription that simply never made it
 // to Supabase — and uploads it if so. A device with no local subscription at all (notifications never enabled
 // here) is a fast, harmless no-op.
+// EXTRACTED _upsertPushSubscriptionRow() out of the body below (per direct report, reproduced repeatedly: "I
+// enabled permissions but still get 0 push subscriptions" \u2014 even after multiple Disable\u2192Enable cycles).
+// ROOT CAUSE, confirmed by tracing every path that writes to push_subscriptions: BOTH this function and
+// enableNotifications()'s own upload call the SAME upsert, but a genuine Supabase error here (most commonly an
+// RLS policy silently blocking the INSERT/UPSERT for the anon key, or the table/GRANT simply not existing yet)
+// was only ever passed to console.warn() \u2014 invisible to anyone not actively watching devtools. Toggling
+// Disable/Enable can never fix a server-side RLS/GRANT problem, no matter how many times it's tried, since the
+// client-side subscription creation was never the broken half \u2014 but with the real error hidden, that's
+// indistinguishable from a client-side bug, exactly the reported confusion. This shared helper now returns
+// {ok,error} instead of swallowing, so checkBackgroundPushStatus()'s own new "Retry upload now" button (see
+// that function's own updated comment) can show the RAW Supabase error text directly \u2014 the single fastest
+// way to tell an RLS/permission problem apart from a genuine client-side one.
+async function _upsertPushSubscriptionRow(subJson){
+  try{
+    const{error}=await DB.from("push_subscriptions").upsert({
+      endpoint:subJson.endpoint,subscription:subJson,name:CFG._notifName||null,
+      manager_depts:CFG._notifManagerDepts||[],updated_at:new Date().toISOString()
+    },{onConflict:"endpoint"});
+    return{ok:!error,error:error||null};
+  }catch(e){return{ok:false,error:e};}
+}
 async function maybeSyncExistingPushSubscription(){
   if(!DB)return;
   if(!CFG._notifEnabled)return; // nothing to sync if this device was never actually enabled in the first place
@@ -9626,12 +9743,8 @@ async function maybeSyncExistingPushSubscription(){
     if(!reg||!("pushManager" in reg))return;
     const sub=await reg.pushManager.getSubscription();
     if(!sub)return; // no local subscription exists yet (e.g. this browser/device never supported background push)
-    const subJson=sub.toJSON();
-    const{error}=await DB.from("push_subscriptions").upsert({
-      endpoint:subJson.endpoint,subscription:subJson,name:CFG._notifName||null,
-      manager_depts:CFG._notifManagerDepts||[],updated_at:new Date().toISOString()
-    },{onConflict:"endpoint"});
-    if(error){console.warn("push subscription re-sync failed (non-fatal)",error);return;}
+    const{ok,error}=await _upsertPushSubscriptionRow(sub.toJSON());
+    if(!ok){console.warn("push subscription re-sync failed (non-fatal)",error);return;}
     console.log("Push subscription synced to the newly-connected live project.");
   }catch(e){console.warn("push subscription re-sync skipped",e);}
 }
@@ -9828,6 +9941,17 @@ function _markEverPulled(){try{localStorage.setItem("hotel_everPulled","1");}cat
 async function pullAll(isRetry,computeAwayBadge){
   if(!DB)return;
   if(computeAwayBadge===undefined)computeAwayBadge=true;
+  // See _syncApplying's own comment (near _undoApplying) for the full "Undo/Redo buttons flicker on reconnect"
+  // root cause this closes. Set for this entire pull (every save() call below, through the final render()) so
+  // none of it is ever mistaken for a trackable local edit; always reset via finally, even on an error/early-
+  // return path, so a failed pull can never leave this flag stuck true and silently disable undo tracking for
+  // every real edit afterward.
+  _syncApplying=true;
+  try{
+    return await _pullAllInner(isRetry,computeAwayBadge);
+  }finally{_syncApplying=false;}
+}
+async function _pullAllInner(isRetry,computeAwayBadge){
   // Snapshotted BEFORE any table below is pulled/overwritten — this is "what this device already had" going
   // into this specific sync, the correct baseline for "what changed while I was away" (as opposed to
   // maybeUploadOnConnect()'s OWN, separate snapshot, which serves a different purpose: preserving a genuinely
@@ -14723,7 +14847,6 @@ truncate table public.snapshots;
 <li><b>Ahmylyn Cabrera's note</b> ("TTH class 10-13:30; F 09-12") was re-verified directly against all 4 available FO weeks: every one of her actual working shifts across all 4 weeks starts at 14:00 or later, never conflicting with the claimed class times on any of those days — consistent with the note as coded (a class, not a shift preference).</li>
 <li><b>Jessica Basaliza's note</b> was reverted from a fabricated "Mon/Wed 11-3, Tue/Thu 12-8pm, Fri/Sat 2-10pm" preferred-schedule note (found not to match any of the 4 actual available weeks of data) back to the original "MW off." Direct re-verification: 3 of the 4 available weeks show her off every day; the most recent week shows her working Monday and Wednesday specifically (with times that don't match the fabricated note either) — a genuine, disclosed inconsistency, not fully resolved either way; see Open questions.</li>
 <li><b>Room Attendants' fixed AM default shift</b> (08:00-16:30) is directly confirmed against the source Excel's own "AM-shift RA" section header and its stated shift time. AM Houseman/PM Houseman/PM Turndown RA/Graveyard PA default shifts are inferred from their own role names (a comparably strong, though not identically Excel-cell-verified, signal) — see Auto-fill above for roles that still have no such default at all.</li>
-<li><b>Bare "1" cells for Relievers, resolved per-person from their own history:</b> Daralynn William's own confirmed real-time entries are 93% "15:00-23:30," so her remaining "1" cells are interpreted the same way (majority-inferred, not Excel-confirmed the same direct way as Room Attendants). Every other Reliever with a remaining "1" cell (Teria Naputi, Lorien Stephen, Marian Lacsina, Kayleen Ruda, Ernoleen Welter, Carolina Calilung) has no comparably clean pattern in their own history to infer from. <mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> — those remaining cells are left as-is (displaying as a literal "1," which triggers the existing "HOURS?" flag) rather than guessed at, until each person's actual shift times for those dates can be confirmed.</li>
 <li><b>PM Houseman roster gap (found and fixed):</b> a full roster re-verification found the source HSK Excel's PM-shift Houseman section consistently lists 6 people across all 3 available weeks, not the 3 this app had — John Bryan De Goma (PT), Ernest Chonggum Jr. (FT), and Paul Rivera (OC) were present in every available week directly below the 3 already-tracked names, but had never been added. Now added, with types taken directly from their own Excel labels ("- PT"/"- OC" suffixes, or FT when untagged, matching this app's own existing convention).</li>
 <li><b>Coverage-minimum completeness (found and fixed):</b> a direct audit found 7 roles with NO coverage-minimum entry at all — not merely showing 0/1, but genuinely absent from the Settings → Coverage minimums table entirely, since that table only ever lists roles it has an entry for: FO's Front Desk Supervisor, Interns, Concierge Agent, and Valet; HSK's Relievers (on-call), Outsourced — JJ Global, and Outsourced — J4 Janitorial. All 7 now have an explicit min:0/day placeholder (0, not this app's other min:1 convention, since 0 honestly reflects "not currently enforced" rather than implying a floor that was never actually confirmed) — visible and adjustable in Settings now, whereas before there was no way to even see, let alone set, a minimum for these 7 roles at all.</li>
 </ul>
@@ -14738,6 +14861,7 @@ truncate table public.snapshots;
 
 <p><b>Open questions:</b></p>
 <ul class="small">
+<li><b>Bare "1" cells for Relievers</b> — Daralynn William's own confirmed real-time entries are 93% "15:00-23:30," so her remaining "1" cells are interpreted the same way (majority-inferred, not Excel-confirmed the same direct way as Room Attendants). Every other Reliever with a remaining "1" cell (Teria Naputi, Lorien Stephen, Marian Lacsina, Kayleen Ruda, Ernoleen Welter, Carolina Calilung) has no comparably clean pattern in their own history to infer from. <mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> — those remaining cells are left as-is (displaying as a literal "1," which triggers the existing "HOURS?" flag) rather than guessed at, until each person's actual shift times for those dates can be confirmed.</li>
 <li><mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> — whether Task codes (GC/Laundry/Rooms/Controller/Task Force/Project) should count toward a role's scheduled headcount for coverage/flag purposes, or stay excluded as they are now.</li>
 <li><mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> — the exact Transportation-per-Bell-Attendant and Events-per-Valet ratios.</li>
 <li><mark style="background:#ffe08a"><b>PENDING VERIFICATION</b></mark> — staff sort order within a role (the source Excel appears to use a persistent seniority/hire number, not alphabetical).</li>
@@ -14841,6 +14965,8 @@ truncate table public.snapshots;
 <li>HotLync integration, and a live Paycom/Dayforce API connection — see Integration status above.</li>
 <li>An auto-fill optimizer weighting rolling MULTI-WEEK fairness (e.g. correcting for someone who worked every weekend for the past month, not just this displayed week) and individual shift-time/seniority preferences \u2014 rest-between-shifts, within-week weekend equity, and cost already exist as tiebreakers (see Auto-fill above), but a true multi-week-aware optimizer is a larger, separate addition.</li>
 <li>Multi-select bulk-stamp and Copy-previous-week (see their own sections above) currently only run against the CURRENTLY VIEWED department \u2014 a cross-department bulk action (e.g. stamping the same code for people who happen to work in both FO and HSK) is not built.</li>
+<li>Opera PMS integration for Occupancy/Arrivals/Departures \u2014 the Demand table's own Occupancy/Arrivals/Departures figures are entered by hand each week today; a live connection to Opera (or, as a more realistic first step, an import function for a report already exported out of Opera) could auto-populate these instead of manual entry. Neither Opera's export format nor an API path has been reviewed yet \u2014 a real sample report or API documentation would be the starting point.</li>
+<li>Automated performance evaluation and guest rating data \u2014 Guest rating and Performance score (Settings \u2192 Staff roster, used as two of the eight Auto-fill ranking factors) are manually typed in per person today, blank by default. Pulling these instead from an external performance-review or guest-satisfaction system, if one exists at this hotel, is not yet built \u2014 would need that system's own export/API format reviewed first.</li>
 </ul>
 
 <hr><details><summary style="cursor:pointer"><b>Build conventions</b></summary>
@@ -16112,7 +16238,7 @@ function renderSettings(){
        correct for the Name filter (removing them from being a DIRECT .cfgrow child defeats the narrow-screen
        rule's own selector, which specifically targets ".cfgrow>select.sfield"), plus an explicit max-width so
        they can never grow wider than roughly a third of the available row width even before that breakpoint. -->
-  <div class="cfgrow small"><span>Filter:</span> <label style="max-width:45vw"><select class="sfield small" id="fRole" style="width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onchange="SFILT.role=this.value;renderSettings()"><option value="">All roles</option>${D.roles.map(r=>`<option value="${esc(r)}" ${SFILT.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></label> <label style="max-width:28vw"><select class="sfield small" id="fType" style="width:100%" onchange="SFILT.type=this.value;renderSettings()"><option value="">All types</option>${["FT","PT","OC","INT","OUT"].map(t=>`<option ${SFILT.type===t?"selected":""}>${t}</option>`).join("")}</select></label> <label><input class="sfield small" id="fName" placeholder="Name contains\u2026" value="${esc(SFILT.name||"")}" oninput="SFILT.name=this.value;clearTimeout(window._ft);window._ft=setTimeout(renderSettings,250)"></label> <button onclick="SFILT={role:'',type:'',name:''};renderSettings()">Clear</button> <!-- FOUND AND FIXED A REAL, CONFIRMED REGRESSION this round (per direct feedback: "reset sort for roster
+  <div class="cfgrow small"><span>Filter:</span> <label style="max-width:45vw"><select class="sfield small" id="fRole" style="width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" onchange="SFILT.role=this.value;renderSettings()"><option value="">All roles</option>${D.roles.map(r=>`<option value="${esc(r)}" ${SFILT.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></label> <label style="max-width:28vw"><select class="sfield small" id="fType" style="width:100%" onchange="SFILT.type=this.value;renderSettings()"><option value="">All types</option>${["FT","PT","OC","INT","OUT"].map(t=>`<option value="${t}" ${SFILT.type===t?"selected":""}>${esc(TYPE_LABEL[t]||t)}</option>`).join("")}</select></label> <label><input class="sfield small" id="fName" placeholder="Name contains\u2026" value="${esc(SFILT.name||"")}" oninput="SFILT.name=this.value;clearTimeout(window._ft);window._ft=setTimeout(renderSettings,250)"></label> <button onclick="SFILT={role:'',type:'',name:''};renderSettings()">Clear</button> <!-- FOUND AND FIXED A REAL, CONFIRMED REGRESSION this round (per direct feedback: "reset sort for roster
        button disappeared") — this button previously vanished from the row ENTIRELY the instant no sort was
        active (ROSTER_SORT.key null), rather than just becoming a no-op — so a scheduler who had just reset the
        sort, or who never sorted yet, had no visible affordance at all reminding them this control exists, and
@@ -16300,9 +16426,33 @@ function renderSettings(){
   // second full re-render. The end result: clicking Settings now feels instant, with the grey reference-number
   // hints simply appearing a brief, barely-perceptible moment afterward — a placeholder hint arriving slightly
   // late has zero real cost, unlike the previous synchronous delay blocking the entire tab from appearing at all.
+  // FOUND AND FIXED A REAL, CONFIRMED GAP (per direct request: "add 3rd-party to dropdown for roster so that
+  // if new outsourced worker is added the (3rd-party) after name in schedule can be consistent"). ROOT CAUSE:
+  // TYPE_LABEL already correctly maps the internal "OUT" type code to the display text "3rd-party" — and the
+  // schedule grid's own name column already reads through that SAME map to show "(3rd-party)" next to anyone
+  // typed OUT. But the Type dropdown below (and its twin in the Former staff table, and the roster's own Type
+  // filter dropdown) — the actual place a person's type gets SET — never read through that same map at all:
+  // every option's own visible text was just the bare internal code itself ("OUT"), with no value attribute
+  // either (so the option's own text WAS its value under the hood). A scheduler adding a new outsourced worker
+  // therefore had to already know that the internal code "OUT" is what displays as "(3rd-party)" elsewhere — a
+  // real, avoidable inconsistency. FIX: an explicit value attribute preserves the exact same underlying stored
+  // code as before (so every other place in this app keyed off st.type==="OUT" — rate defaults, Paycom export
+  // type filtering, etc. — is completely unaffected), while the VISIBLE option text now reads through the same
+  // TYPE_LABEL map the schedule itself already uses — so picking "3rd-party" here is now the same, consistent
+  // label a scheduler will later see next to that same person's name on the schedule grid, with zero change to
+  // the underlying data model.
   _rosterRows.forEach(({st,i})=>{
     h+=`<tr>
-    <td><input class="sfield" style="width:170px" data-si="${i}" data-k="n" value="${esc(st.n)}"></td><td><input class="sfield" style="width:110px" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—" title="Required for the Paycom schedule export — must match this hotel’s configured identifier type (EE Code, Badge Number, Clock Sequence Number, or SSN). Blank = excluded and flagged at export time."></td>
+    <td><input class="sfield" style="width:170px" data-si="${i}" data-k="n" value="${esc(st.n)}">
+    <!-- ADDED (per the hotel's own suggestion: "the Paycom name can take precedence and possibly an 'alternate'
+         name feature for any mismatches"). Stacked directly under the main Name input — the same convention
+         already used for Employee ID's own "(Paycom)" sub-label — rather than a new table column, so neither
+         this table's own <colgroup> nor the former-staff table's identical one need to change at all. Purely
+         optional, freeform (a nickname, a maiden name, a legal-name variant, or nothing) — this app never reads
+         it for any lookup/scheduling logic itself; it exists ONLY so a name that differs from what's on file at
+         Paycom stays visibly attached to this person's record for reference, most usefully right after using the
+         reconciliation flow below to adopt Paycom's own spelling as this person's primary Name. -->
+    <input class="sfield small" style="width:170px;margin-top:2px;color:#6b7a8d" data-si="${i}" data-k="altName" value="${esc(st.altName||'')}" placeholder="Alternate name (optional)" title="Optional — a nickname, maiden name, or other spelling this person is also known by. Purely for reference; never used in scheduling/matching logic. Auto-filled with the old name whenever Reconcile unmatched Paycom names is used to rename this person to Paycom's own spelling."></td><td><input class="sfield" style="width:110px" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—" title="Required for the Paycom schedule export — must match this hotel’s configured identifier type (EE Code, Badge Number, Clock Sequence Number, or SSN). Blank = excluded and flagged at export time."></td>
     <!-- NEW this round — a genuine blank "Select role…" option, so a brand-new staff record (added via
          addStaffRow() with role:"" — see that function's own comment for why) can actually DISPLAY as blank
          instead of the select silently falling back to showing whichever option happens to be first in D.roles
@@ -16326,7 +16476,7 @@ function renderSettings(){
          (browsers already show the full selected option text on hover/focus for a <select>, no extra title
          needed). -->
     <td><select class="sfield" style="width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="role">${!st.role?`<option value="" selected>Select role\u2026</option>`:""}${D.roles.map(r=>`<option value="${esc(r)}" ${st.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></td>
-    <td><select class="sfield" style="width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option ${st.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
+    <td><select class="sfield" style="width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option value="${t}" ${st.type===t?"selected":""}>${esc(TYPE_LABEL[t]||t)}</option>`).join("")}</select></td>
     <td><input class="sfield" style="width:64px;color:${(st.rate!=null&&+st.rate!==(DEFAULT_RATE[st.type]||11))?'#1f2d3d':'#9aa5b1'}" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
     <!-- FOUND AND FIXED A REAL, CONFIRMED BUG this round (per direct feedback: "Hire date column in roster
          should remove the bubble to the right with #1 and the white space in column due to that bubble"). The
@@ -16416,9 +16566,10 @@ function renderSettings(){
          for consistency (see that table's own comment for the full reasoning). -->
     <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;margin-top:6px"><table><colgroup><col class="rosterNameC"><col class="rosterEmpIdC"><col class="rolec"><col class="typec"><col class="rateC" style="width:80px"><col class="hireDateC" style="width:130px"><col class="birthdayC" style="width:130px"><col class="guestRatingC" style="width:66px"><col class="perfScoreC" style="width:62px"><col class="priorityOverrideC" style="width:66px"><col class="ptoBalC" style="width:70px"><col class="noteC" style="width:200px"><col class="inactiveSinceC" style="width:140px"><col class="removeC" style="width:34px"></colgroup><tr><th>Name</th><th>Employee ID</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Hire date</th><th>Birthday</th><th>Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span></th><th>Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span></th><th>Priority<br><span class="small muted" style="font-weight:400">override</span></th><th>PTO Bal.</th><th>Note</th><th>Inactive Since</th><th></th></tr>
     ${formerIdx.map(i=>{const st=D.staff[i];return `<tr>
-    <td><input class="sfield" style="width:170px;color:#8a94a0" data-si="${i}" data-k="n" value="${esc(st.n)}"></td><td><input class="sfield" style="width:100px;color:#8a94a0" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—"></td>
+    <td><input class="sfield" style="width:170px;color:#8a94a0" data-si="${i}" data-k="n" value="${esc(st.n)}">
+    <input class="sfield small" style="width:170px;margin-top:2px;color:#8a94a0" data-si="${i}" data-k="altName" value="${esc(st.altName||'')}" placeholder="Alternate name (optional)" title="Optional — a nickname, maiden name, or other spelling this person is also known by. Purely for reference; never used in scheduling/matching logic."></td><td><input class="sfield" style="width:100px;color:#8a94a0" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—"></td>
     <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="role">${D.roles.map(r=>`<option value="${esc(r)}" ${st.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></td>
-    <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option ${st.type===t?"selected":""}>${t}</option>`).join("")}</select></td>
+    <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option value="${t}" ${st.type===t?"selected":""}>${esc(TYPE_LABEL[t]||t)}</option>`).join("")}</select></td>
     <td><input class="sfield" style="width:64px;color:#8a94a0" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
     <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate?esc(st.hireDate):''}"></td>
     
@@ -16478,6 +16629,25 @@ function renderSettings(){
     // (a real, complete "YYYY-MM-DD"), with no separate recombination logic needed at all.
     else if(k==="birthday"){st.birthday=v||undefined;}
     else st[k]=v;
+    // ADDED — Role and Type have always been two fully independent fields with nothing linking them (per direct
+    // report: a new outsourced worker added via the Role dropdown alone can end up with the WRONG Type still
+    // showing, e.g. "FT" — leaving their schedule name-column badge showing "(FT)" instead of "(3rd-party)," a
+    // real, confirmed inconsistency risk, not just cosmetic). It's more consequential than a wrong badge, too:
+    // seedOutsourcedWeek()'s own auto-seed/toggle logic (see that function's own comment) STRICTLY requires
+    // BOTH role.startsWith("Outsourced") AND type==="OUT" to treat someone as part of an outsourced crew — so a
+    // Role-only assignment, with Type left on its default, would also silently exclude that person from the
+    // crew's own "in use?" toggle and auto-seeded weekly pattern entirely. Auto-syncs Type to "3rd-party" the
+    // moment Role is set to either Outsourced role, unless it's already OUT (a harmless no-op then).
+    // Deliberately ONE-DIRECTIONAL: switching Role AWAY from Outsourced never auto-reverts Type back — this app
+    // has no way to know what a person's real Type should become afterward without asking, and guessing wrong
+    // there risks a real rate/classification error, which is worse than just leaving Type for a human to fix.
+    if(k==="role"&&String(v).indexOf("Outsourced")===0&&st.type!=="OUT"){
+      st.type="OUT";
+      const _row=e.target.closest("tr");
+      const _typeSel=_row&&_row.querySelector('[data-si="'+i+'"][data-k="type"]');
+      if(_typeSel)_typeSel.value="OUT";
+      flashNote("Type automatically set to \"3rd-party\" to match the Outsourced role.");
+    }
     save("hotel_cfg",CFG);
     // CHANGED this round (per direct follow-up: "once role is set AND user exits that new staff's row (eg
     // clicks outside any cell in that row) then it should automatically move to join as bottom row of the
@@ -16490,8 +16660,21 @@ function renderSettings(){
     // render only happens once the person genuinely finishes with this row and moves on — see the dedicated
     // "focusout" listener (wired once per renderSettings() call, right after this block) for exactly how "moves
     // on" (leaves this row entirely, e.g. clicks any other row or outside the table) is detected.
+    // CHANGED — tracks by NAME (a stable natural key, matching how ASSIGN/FLOORS/ACCRUALS/CHECKINS already key
+    // everyone throughout this app) instead of the raw staff OBJECT reference. FOUND AND FIXED A REAL,
+    // CONFIRMED BUG (per direct report: "John Neil with role from dropdown set as outsourced is still showing
+    // at top before elsa/supervisors instead of being autosorted"). ROOT CAUSE, confirmed by tracing every path
+    // that can touch CFG[dept].staff: a live Supabase pull/reconcile cycle (see pullAll()'s own CFG.HSK=row.data.
+    // HSK — a genuine WHOLESALE replacement of the entire staff array, not an in-place edit) can happen at any
+    // moment while connected live, including in the gap between picking a Role here and actually leaving the
+    // row. The instant that happens, the object reference queued a moment ago no longer exists anywhere in the
+    // NEW staff array — so the focusout handler's own `.indexOf(st)` lookup below always came back -1 (silently
+    // treating it as "never queued") for anyone unlucky enough to have a background sync land in that exact
+    // window, leaving their row exactly where addStaffRow() first put it (the very top), regardless of Role.
+    // Tracking by name instead is immune to this: even if the object itself gets swapped out from under it, the
+    // freshly re-fetched object at focus-out time still carries the SAME name, so the match still succeeds.
     if(k==="role"&&v){
-      if(!_pendingRoleGroupReposition.includes(st))_pendingRoleGroupReposition.push(st);
+      if(!_pendingRoleGroupReposition.includes(st.n))_pendingRoleGroupReposition.push(st.n);
     }
   }));
   // NEW this round — the "user exits this row" half of the role-change reposition redesign (see this shared
@@ -16512,11 +16695,23 @@ function renderSettings(){
       if(activeRow===oldRow)return; // focus only moved to ANOTHER field within the SAME row — not a real "exit" yet
       const anyField=oldRow.querySelector("[data-si]");if(!anyField)return;
       const i=+anyField.dataset.si;const st=CFG[SETDEPT].staff[i];if(!st)return;
-      const pendingIdx=_pendingRoleGroupReposition.indexOf(st);if(pendingIdx===-1)return; // this row was never queued (an ordinary, already-placed row's edit) — nothing to do
+      // CHANGED — matches by st.n (name) now, not the object itself; see this queue's own push-side comment
+      // above for the full "stale object reference after a live CFG replacement" bug this closes. st itself is
+      // ALREADY safely re-fetched fresh from the CURRENT array by index just above — only this membership CHECK
+      // previously compared it against a possibly-stale reference, which is what's fixed here.
+      const pendingIdx=_pendingRoleGroupReposition.indexOf(st.n);if(pendingIdx===-1)return; // this row was never queued (an ordinary, already-placed row's edit) — nothing to do
       _pendingRoleGroupReposition.splice(pendingIdx,1);
+      const _movedName=st.n;
       moveStaffToEndOfRoleGroup(SETDEPT,st);
       renderSettings();
-      setTimeout(()=>{const newIdx=CFG[SETDEPT].staff.indexOf(st);const nm=document.querySelector('#staffRosterTable input[data-si="'+newIdx+'"][data-k="n"]');if(nm){const row=nm.closest("tr");if(row)row.scrollIntoView({behavior:"smooth",block:"center"});}},60);
+      // CHANGED — re-looks-up the row by NAME (via the same _movedName captured above) instead of re-using
+      // the `st` object reference across this setTimeout's own 60ms gap. Same class of bug as the two fixes
+      // just above (see _pendingRoleGroupReposition's own comment for the full "stale reference after a live
+      // CFG replacement" root cause) — a background Supabase pull landing during this exact 60ms window could
+      // just as easily invalidate `st` here too, silently skipping the scroll-into-view convenience (a minor,
+      // cosmetic miss compared to the other two, but the identical underlying fragility, so fixed the same way
+      // for consistency).
+      setTimeout(()=>{const newIdx=CFG[SETDEPT].staff.findIndex(x=>x.n===_movedName);if(newIdx<0)return;const nm=document.querySelector('#staffRosterTable input[data-si="'+newIdx+'"][data-k="n"]');if(nm){const row=nm.closest("tr");if(row)row.scrollIntoView({behavior:"smooth",block:"center"});}},60);
     },0);
   }));
   // NEW this round — the deferred half of the natural-rank-placeholder performance fix (see this same function's
@@ -16884,7 +17079,36 @@ function addStaffRow(){
   save("hotel_cfg",CFG);renderSettings();
   setTimeout(()=>{const nm=document.querySelector('#staffRosterTable input[data-si="'+_newIdx+'"][data-k="n"]');if(!nm)return;const row=nm.closest("tr");if(row)row.scrollIntoView({behavior:"smooth",block:"center"});nm.focus();nm.select();},60);
 }
-async function removeStaffRow(i){const st=CFG[SETDEPT].staff[i];if(!(await uiConfirm("Mark "+st.n+" as no longer employed?\n\nThey stay in past weeks (history is preserved) and move to \u2018Former staff\u2019. They will not appear on new schedules.")))return;st.employed=false;st.inactiveSince=weekKey(new Date());save("hotel_cfg",CFG);renderSettings();}
+// FOUND AND FIXED A REAL, CONFIRMED GAP this round (per direct report: "deleted Alesha (outsourced) but she
+// still shows in sched both for this week and future weeks" — see seedOutsourcedWeek()'s own separate fix for
+// the OTHER, compounding half of this exact bug). ROOT CAUSE: this action has always correctly flipped
+// st.employed to false, but never actually touched any ASSIGN data that already existed for the CURRENT or
+// FUTURE week at the moment of removal — the schedule grid's own display filter deliberately keeps showing a
+// former staff member if their row for the WEEK BEING VIEWED has any value at all (by design, so past-week
+// history is never hidden) — but combined with pre-existing current/future data (e.g. an outsourced-crew
+// member already auto-stamped several weeks ahead), that same fallback silently contradicted this exact
+// dialog's own promise ("They will not appear on new schedules") for anyone removed with shifts already
+// scheduled ahead. FIX: clears (blanks, via the SAME {} convention setCell()'s own per-day clearing already
+// uses — never a hard delete of the week's row, keeping this consistent with how a blank assignment is
+// represented everywhere else in this app) this person's own row for every week keyed on or after the REAL
+// current week — every PAST week is completely untouched, preserving genuine history exactly as promised —
+// and pushes each affected week to the shared live copy too (if connected), so this takes effect immediately
+// on every device, not just this one.
+async function removeStaffRow(i){
+  const st=CFG[SETDEPT].staff[i];
+  if(!(await uiConfirm("Mark "+st.n+" as no longer employed?\n\nThey stay in past weeks (history is preserved) and move to \u2018Former staff\u2019. They will not appear on new schedules.")))return;
+  st.employed=false;st.inactiveSince=weekKey(new Date());
+  const _curWk=weekKey(mondayOfWeekStartThu(new Date()));
+  const _wks=ASSIGN[SETDEPT]||{};
+  const _affectedWks=[];
+  Object.keys(_wks).forEach(wk=>{
+    if(wk>=_curWk&&_wks[wk]&&_wks[wk][st.n]!=null&&Object.keys(_wks[wk][st.n]).length){_wks[wk][st.n]={};_affectedWks.push(wk);}
+  });
+  save("hotel_assign",ASSIGN);
+  save("hotel_cfg",CFG);
+  if(DB)_affectedWks.forEach(wk=>pushWeekAll(SETDEPT,wk));
+  renderSettings();
+}
 function reEmploy(name){const st=CFG[SETDEPT].staff.find(x=>x.n===name);if(st){st.employed=true;delete st.inactiveSince;save("hotel_cfg",CFG);renderSettings();}}
 function saveShifts(){const arr=el("shiftBox").value.split(",").map(x=>x.trim()).filter(Boolean);CFG[SETDEPT].shifts=arr;save("hotel_cfg",CFG);uiAlert("Default shifts saved for "+CFG[SETDEPT].label+".");}
 function connectFromSettings(){if(el("supaUrl"))el("supaUrl").value=el("supaUrl2").value;if(el("supaKey"))el("supaKey").value=el("supaKey2").value;connect();}
@@ -18709,7 +18933,7 @@ function renderNotificationsSettingsBlock(){
     <label class="small" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">Remind me about my own shifts, as:
     <select class="sfield small" id="notifName" style="min-width:220px" autocomplete="off">
       <option value="">(no personal reminders \u2014 manager alerts only)</option>
-      ${opts.map(o=>`<option value="${esc(o.name)}" ${o.name===curName?"selected":""}>${esc(o.name)} (${esc(roleDisplayNameProper(o.role))}, ${esc(CFG[o.dept].label)})</option>`).join("")}
+      ${opts.map(o=>`<option value="${esc(o.name)}" ${o.name===curName?"selected":""}>${esc(o.name)}${o.altName?" (also: "+esc(o.altName)+")":""} (${esc(roleDisplayNameProper(o.role))}, ${esc(CFG[o.dept].label)})</option>`).join("")}
     </select></label>
   </div>
   <!-- NEW this round (per direct request: "modify notification feature of app to send room assignments to hsk
@@ -18883,12 +19107,24 @@ async function checkBackgroundPushStatus(){
     try{
       const subJson=sub.toJSON();
       const{data,error}=await DB.from("push_subscriptions").select("*").eq("endpoint",subJson.endpoint);
+      // CHANGED \u2014 when this exact same select() query itself fails (a real SELECT-side RLS/GRANT problem, not
+      // just an upload-side one), that specific Supabase error text is now shown directly rather than a generic
+      // "Could not check" \u2014 an RLS policy commonly allows one direction (e.g. INSERT for the anon key) while
+      // blocking the other (SELECT), which would otherwise look identical to a network hiccup here.
       if(error){
-        rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(error.message||String(error))}</td></tr>`);
+        rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(error.message||String(error))}${/permission|RLS|policy/i.test(error.message||"")?" \u2014 this specific wording usually means a Row-Level Security policy or missing GRANT is blocking even reading this table with the anon key, not a problem on this device.":""}</td></tr>`);
       }else if(data&&data.length){
         rows.push(`<tr><td>Registered in the shared database?</td><td><b>YES</b> \u2014 this exact device's subscription IS present in push_subscriptions, updated ${esc(data[0].updated_at||"")}. If a real background push still isn't arriving with the app fully closed, the issue is on the SERVER side (the attendance-reminders function itself, or its schedule) \u2014 not this device's own registration.</td></tr>`);
       }else{
-        rows.push(`<tr><td>Registered in the shared database?</td><td><b>NO</b> \u2014 a local subscription exists on this device, but it never reached the shared database. Try Disable then Enable again while connected \u2014 this re-uploads it directly.</td></tr>`);
+        // ADDED the "Retry upload now" button below (per repeated direct report: "I enabled permissions but still
+        // get 0 push subscriptions" \u2014 even across multiple Disable\u2192Enable cycles). See
+        // _upsertPushSubscriptionRow()'s own comment for the full root cause: toggling Disable/Enable can never
+        // fix a genuinely server-side RLS/GRANT problem, since the client-side half was never what was broken \u2014
+        // this button calls the exact same upsert directly from right here and prints the RAW Supabase error text
+        // on failure (e.g. "permission denied for table push_subscriptions", confirming an RLS/GRANT problem
+        // specifically) instead of asking to repeat a client-side toggle that cannot possibly change a
+        // server-side outcome.
+        rows.push(`<tr><td>Registered in the shared database?</td><td><b>NO</b> \u2014 a local subscription exists on this device, but it never reached the shared database. <button class="mini" onclick="retryPushUploadNow()">Retry upload now</button> attempts the exact same upload directly and shows the real server response below \u2014 more useful than repeating Disable/Enable, which cannot fix a server-side (RLS/GRANT) problem if that's the actual cause.</td></tr>`);
       }
     }catch(e){
       rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
@@ -18898,6 +19134,22 @@ async function checkBackgroundPushStatus(){
   }
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway \u2014 it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
+}
+// See checkBackgroundPushStatus()'s own "Retry upload now" button comment for the full root cause this closes.
+// Re-fetches the local subscription fresh (rather than trusting a possibly-stale one from the diagnostic run a
+// moment ago) and calls the shared _upsertPushSubscriptionRow() directly, printing the RAW Supabase error text
+// on failure \u2014 the single fastest way to confirm (or rule out) an RLS/GRANT problem specifically, since no
+// amount of client-side Disable/Enable can ever change a server-side policy's outcome.
+async function retryPushUploadNow(){
+  if(!DB){uiAlert("Not connected \u2014 connect to the shared live copy first (Settings \u2192 Live sync).");return;}
+  if(!("serviceWorker" in navigator)){uiAlert("Service workers aren't supported in this browser.");return;}
+  const reg=await navigator.serviceWorker.getRegistration();
+  const sub=reg&&reg.pushManager?await reg.pushManager.getSubscription():null;
+  if(!sub){uiAlert("No local push subscription exists on this device to upload \u2014 try Disable then Enable notifications first to create one.");return;}
+  const{ok,error}=await _upsertPushSubscriptionRow(sub.toJSON());
+  if(ok){flashNote("Upload succeeded \u2014 re-checking\u2026");}
+  else{uiAlert("Upload failed \u2014 real server response:\n\n"+(error&&error.message?error.message:String(error))+"\n\nIf this mentions permission, RLS, or policy, the anon key is being blocked from writing to push_subscriptions at the database level \u2014 this needs to be fixed in Supabase (RLS policy or GRANT), not on this device.");}
+  await checkBackgroundPushStatus();
 }
 function diagnoseReminders(){
   const box=el("reminderDiag");if(!box)return;
@@ -18983,7 +19235,13 @@ function diagnoseReminders(){
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:left">Check</th><th style="text-align:left">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">If everything above says a notification SHOULD fire, but nothing appears within ~60 seconds, the issue is in DELIVERY, not detection \u2014 most commonly: this tab/PWA must stay open (even in the background) for local reminders to fire at all (see Readme \u2014 a fully closed app/locked phone needs background push, a separate, server-dependent mechanism); or the OS/browser notification permission for this site was silently blocked outside this app.</div>${_mgrSection}`;
 }
-function allActiveStaffOptions(){const out=[];["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).filter(s=>s.employed!==false).forEach(s=>out.push({dept:dp,name:s.n,role:s.role}));});return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);}
+// CHANGED — now also carries altName (see the roster's own "Alternate name" field, added per the hotel's
+// suggestion of keeping a person's prior/nickname visible once their primary Name is reconciled to Paycom's own
+// spelling). Every existing call site keeps working unchanged (this is a pure additive field on the returned
+// object); the two dropdowns built directly from this list (Notifications' own name picker and the Leave
+// Requests name picker) now show it as a small "(also: X)" suffix so a name that recently changed via
+// reconciliation still reads as recognizable at a glance, without needing to open the roster to check.
+function allActiveStaffOptions(){const out=[];["FO","HSK"].forEach(dp=>{(CFG[dp].staff||[]).filter(s=>s.employed!==false).forEach(s=>out.push({dept:dp,name:s.n,role:s.role,altName:s.altName||""}));});return out.sort((a,b)=>a.name<b.name?-1:a.name>b.name?1:0);}
 function pendingReqFor(dept,name,iso){return Object.values(LEAVE_REQUESTS).find(r=>r.status==="pending"&&r.dept===dept&&r.name===name&&iso>=r.from&&iso<=r.to)||null;}
 // NEW this round (per explicit questions: "should leave requests that have fully passed be moved into a
 // collapsible section?" + "for leave that has already passed, approve/deny/revoke should no longer be
@@ -19145,7 +19403,7 @@ function renderLeaveTab(){
          narrow enough to trigger the breakpoint but still feels cramped) to width:clamp(140px,25vw,220px) — a
          genuinely width-INDEPENDENT, continuously-scaling size that's never fixed-wide regardless of viewport,
          removing any dependency on hitting one specific breakpoint at all. -->
-    <select class="sfield small" id="lrName" autocomplete="off" style="width:clamp(140px,25vw,220px);min-width:0" onchange="onLeaveNameChange(this)"><option value="">${_selectNamePlaceholder}</option>${allActiveStaffOptions().map(o=>`<option value="${esc(o.name)}" data-dept="${o.dept}">${esc(o.name)} (${esc(roleDisplayNameProper(o.role))})</option>`).join("")}</select>
+    <select class="sfield small" id="lrName" autocomplete="off" style="width:clamp(140px,25vw,220px);min-width:0" onchange="onLeaveNameChange(this)"><option value="">${_selectNamePlaceholder}</option>${allActiveStaffOptions().map(o=>`<option value="${esc(o.name)}" data-dept="${o.dept}">${esc(o.name)}${o.altName?" (also: "+esc(o.altName)+")":""} (${esc(roleDisplayNameProper(o.role))})</option>`).join("")}</select>
     <!-- CHANGED this round (per direct question: "if no type input in request, should it default to R-Off?"):
          confirmed the PREVIOUS markup had no blank placeholder here at all \u2014 meaning "R-OFF" (the first entry in
          leaveRequestCodes) was ALREADY being silently pre-selected by the browser's own default select behavior,
