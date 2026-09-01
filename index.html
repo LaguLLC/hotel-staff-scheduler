@@ -230,7 +230,19 @@
      (exactly what the classic header's own #authBtn would say) is preserved as this element's title attribute (see
      syncAppModeAuthBadge()) — never lost, just not force-fit into the always-visible text anymore. Max-width lowered
      to match the new, much shorter content. */
-  #appModeAuthBadge{font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:22vw;}
+    /* FIXED "header is one line, enter PIN for FO and the arrows/badge wrap to a second line, go back to view-only
+     and it's one line again". Root cause: this badge's own width was purely content-driven (no min-width at all) —
+     the view-only text ("🔒" alone) is genuinely narrower than an unlocked one ("🔓 FO", or "🔓 FO,HSK" for partial
+     access spanning both depts), so #appHeaderSubRow's own total width literally changes by a few px depending on
+     auth state alone — on a phone whose viewport happens to sit right at the one-line/two-line threshold, THAT
+     small, auth-driven width change is exactly what tips the row over into wrapping (or back), even though nothing
+     about the viewport itself changed. Reserving a min-width sized to comfortably fit the LONGEST realistic string
+     ("🔓 FO,HSK") makes this badge's own footprint constant regardless of which auth state it's currently showing,
+     so the header's one-line/two-line state now depends only on genuine viewport width, never on whether the user
+     happens to be locked, unlocked for one dept, or unlocked for both. Text-align:center added so the shorter
+     view-only glyph sits centered in that reserved space instead of hugging the left edge with visible dead space
+     to its right. */
+  #appModeAuthBadge{font-size:11px;padding:2px 7px;border-radius:10px;background:rgba(255,255,255,.16);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:22vw;min-width:58px;text-align:center;box-sizing:border-box;}
     /* See #appHeaderSubRow's own comment for the "fit on one line" reasoning this directly serves: at a genuinely
      narrow width, even the already-shortened single-date label (see appWeekLabel's own JS-side comment) is dropped
      entirely, leaving only the arrows (still fully functional — day-by-day column headers in the table below already
@@ -372,13 +384,21 @@
      touch-action:none on the actual interactive cells — this is the correct, standard mechanism for a custom drag
      gesture to take precedence over native scrolling from the very first touch, and is the only approach that
      reliably works across real devices (a JS preventDefault() call alone is not sufficient, confirmed above).
-     DISCLOSED TRADEOFF: scrolling by placing a finger directly ON a schedule cell and swiping no longer works, on
-     either axis — this is what makes the custom long-press-drag possible at all, not an accidental side effect. Two
-     other ways to scroll remain fully native/unaffected, since neither is a .mobCell: the sticky name column (first
-     column, plain text, no touch-action override) for vertical scrolling, and the header row (day names) for
-     horizontal scrolling through the week — both were already genuinely reachable spots to place a finger on this
-     same table before this change, not newly added. */
-  #mobScheduleTable td.mobCell{position:relative;cursor:pointer;min-width:56px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:none;}
+     FIXED "hard to scroll right or left because of hold+drag blocking zoom and scroll" — the DISCLOSED TRADEOFF
+     directly above (scrolling/pinch-zoom on a cell no longer working at all, on any axis) was real but went further
+     than actually necessary, and is now closed on both fronts without giving up the long-press-drag gesture itself:
+     (1) Pan/scroll: touch-action:none only ever needed to win the race against native scroll DURING the up-to-450ms
+     window before a long-press is confirmed (see LONG_PRESS_MS) — mobileCellPointerMove() now manually drives
+     #mobScheduleTblWrap's own scrollLeft/scrollTop directly from the raw touch delta for exactly that pre-confirm
+     window (see that function's own comment), so a genuine swipe still scrolls the table — just via this app's own
+     JS instead of the browser's native compositor scroll — with zero behavior change once a long-press actually
+     fires and drag-to-extend takes over, as before. (2) Pinch-zoom: switched from touch-action:none (which blocks
+     EVERY native gesture, including 2-finger pinch-zoom) to touch-action:pinch-zoom — per spec this still blocks
+     native single-finger pan (still required, so this app's own JS above keeps deciding what a single finger does)
+     while explicitly re-allowing the browser's own native 2-finger pinch-zoom, which was never actually needed to
+     be disabled in the first place (only single-finger movement ever conflicted with long-press-drag). Scrolling by
+     the sticky name column/header row (described below) still works unchanged and is no longer the only option. */
+  #mobScheduleTable td.mobCell{position:relative;cursor:pointer;min-width:56px;-webkit-touch-callout:none;-webkit-user-select:none;user-select:none;touch-action:pinch-zoom;}
     /* The one deliberate mobile-specific adaptation of a desktop marker (see cellVisualMarkers()'s own call site
      comment, in renderMobileScheduleView(), for the full "why a dot instead of desktop's full REQ. LEAVE text label"
      reasoning: this table's compact row height has no room for a second text line). Sits bottom-right, deliberately
@@ -435,6 +455,24 @@
      using it, present or future. */
   table.autoTable{table-layout:auto;}
   table.autoTable td,table.autoTable th{white-space:normal;overflow-wrap:break-word;}
+    /* FIXED "Diagnostics table still has a column that gets too narrow, causing vertical height" — wasn't this
+     fixed as a global setting? It WAS, but only halfway: the fix above (table-layout:auto + normal wrapping) is
+     correct for letting a table's columns size to their own natural content, but applying overflow-wrap:break-word
+     to EVERY column, indiscriminately, includes the FIRST column too — a short, label-style column (e.g. "Check",
+     holding values like "Notification permission") that should never need to shrink at all, since its own sibling
+     column (the long-text "Result" one) is what actually needs the room to wrap. Confirmed via direct measurement:
+     table-layout:auto's own browser heuristic can still allocate the first column LESS width than its own natural
+     single-line content needs whenever a sibling column's content is disproportionately long — and
+     overflow-wrap:break-word then does exactly what it's told: breaks the label text mid-WORD to fit that too-narrow
+     allocation ("Notificatio"/"n permission"), rather than the table simply reserving that column's own natural
+     width and letting only the intentionally-flexible second column absorb the actual wrapping. Every current
+     autoTable usage in this app follows the same real convention this fixes generally, not just the one reported
+     table: a short, fixed-meaning first column (Check/Name/Date/When) paired with one or more longer, genuinely
+     variable-length columns — so pinning the FIRST column to its own natural nowrap width, while leaving every
+     other column's existing wrap behavior completely unchanged, is the correct general fix for the whole class,
+     not a one-off patch for this single table. Any table whose first column is ALSO expected to wrap (none exist
+     today) would need its own explicit override to opt back out of this. */
+  table.autoTable tr>*:first-child{white-space:nowrap;overflow-wrap:normal;}
     /* CONFIRMED the true, full root cause via direct measurement: #settingsBody table{...} (further below) is scoped by
      ID, giving it HIGHER specificity than the plain class selector above alone — so table-layout: fixed,
      min-width:900px, and (critically) an automatic width:34px + text-align:center forced onto every LAST column
@@ -447,6 +485,13 @@
   #settingsBody table.autoTable{table-layout:auto;min-width:0;}
   #settingsBody table.autoTable td,#settingsBody table.autoTable th{white-space:normal;overflow-wrap:break-word;}
   #settingsBody table.autoTable th:last-child,#settingsBody table.autoTable td:last-child{width:auto;text-align:left;}
+    /* Matches the general table.autoTable tr>*:first-child fix above — re-declared here at the same #settingsBody-scoped
+     specificity as the two rules directly above (which would otherwise still win inside Settings specifically,
+     since an ID-scoped selector always beats a plain class-scoped one regardless of declaration order) — see that
+     rule's own comment for the full "Check column breaks mid-word" root cause this closes for every Settings-hosted
+     diagnostic table (Paycom mapping, PTO ledger, batch-provisioning results, audit log, and both notification
+     diagnostics tables alike). */
+  #settingsBody table.autoTable tr>*:first-child{white-space:nowrap;overflow-wrap:normal;}
     /* td.name allows text to wrap (white-space:normal;overflow-wrap:anywhere) — widened to comfortably fit the
      single longest actual name+type-label combination in the current roster (e.g. "Jada (Abi) Deem-Hinson
      (PT · TRN)") on one line, so row height stays consistent across role sections regardless of which section
@@ -649,6 +694,28 @@
      editor view is roughly a 26/74 split) without needing to read/copy the exact editor-mode pixel ratio at runtime. */
   #grid.hidetotals col.namec{width:20%;}
   #grid.hidetotals col.dayc{width:11.43%;}
+    /* FIXED "in desktop view-only on a narrow screen, schedule columns get too narrow and vertical height increases
+     too much \u2014 should allow scroll in both view and editor mode even if actual schedule assignments are
+     hidden." Root cause: unlike the ordinary editor view (col.dayc/col.namec above use FIXED pixel widths \u2014
+     92px/235px \u2014 which simply overflow the wrapper and correctly trigger its own overflow:auto horizontal
+     scroll on a narrow container, exactly as intended), the percentage widths just above have NO floor at all \u2014
+     on a narrow browser window/split-screen (a real, ordinary case on desktop, independent of the separate
+     Mobile/Desktop VIEW_MODE toggle \u2014 forcing VIEW_MODE to "desktop" only sets a mobile browser's OWN viewport
+     meta width, it does nothing to stop a real desktop window from simply being resized narrower than that), each
+     day column kept shrinking to whatever tiny fraction of the container's actual width 11.43% computed to \u2014
+     with nothing to stop it. A shift's time text (e.g. "07:00\u201315:30") has no room to fit on one line at that
+     point and wraps across 2-3 lines instead, which is exactly what inflated every row's own height \u2014 not a
+     separate bug, but a direct, mechanical consequence of the column-shrinking. FIX: gives the TABLE element
+     itself (not the individual columns \u2014 col elements don't reliably honor min-width in a table-layout:fixed
+     table) a real min-width floor, sized to comfortably fit the widest realistic day-cell content \u2014 matching
+     the SAME editor-mode fixed pixel widths already used above (235+92\u00d77=879px), so the two modes share one
+     visually consistent narrow-screen threshold rather than inventing a second, different one. Above this width,
+     the percentage columns still compute normally and fill the container exactly as before (no regression to the
+     earlier "gray gap on the right" fix); below it, the browser can no longer shrink the table past this floor, so
+     the SAME wrapper overflow:auto that already handles editor mode's fixed-width overflow now engages here too \u2014
+     horizontal scroll, not column-narrowing, is what absorbs a genuinely narrow window in BOTH modes alike. */
+  #grid.hidetotals{min-width:879px;}
+  @media(max-width:820px){ #grid.hidetotals{min-width:598px;} } /* matches editor mode's OWN narrow-screen floor: 150+64\u00d77=598px */
     /* Per direct live-page measurement, not just code review \u2014 confirmed the visible "gray gap on right" persisted
      even after the percentage-colgroup fix just above: in a table-layout:fixed table, giving a body \u003ctd\u003e
      display:none does NOT remove that column's own reserved width from the table's total layout budget \u2014 the
@@ -2089,9 +2156,15 @@
      A nested <details><summary> inside a parent <details> had NO indentation at all relative to its parent's own
      summary — both sat flush against the same left edge, giving no visual signal that one is nested one level deeper
      inside the other, even though the DOM nesting itself was already correct. This app had no existing CSS rule for
-     nested <details> at all. Scoped specifically to #readmeBody (the only place in the app using nested <details>)
-     rather than a global rule, to avoid any unintended effect on collapsible sections elsewhere. */
-  #readmeBody details details{margin-left:18px;margin-top:6px;}
+     nested <details> at all.
+     EXTENDED to #settingsBody: "Diagnostics should be a subpart of Notifications (child, not sibling)". Diagnostics
+     was already correctly nested one level deep inside the Notifications & reminders <details> in the actual DOM
+     (see renderNotificationsSettingsBlock()'s own <details> for Diagnostics) — the ONLY thing missing was this exact
+     same indentation rule, which had been scoped ONLY to #readmeBody on the (now outdated) assumption that Readme
+     was the one place in the app using nested <details> — Settings has since gained its own nested case (Diagnostics
+     inside Notifications & reminders) without this rule ever being extended to cover it, leaving that nesting
+     genuinely correct in the DOM but visually indistinguishable from a plain sibling section. */
+  #readmeBody details details,#settingsBody details details{margin-left:18px;margin-top:6px;}
     /* "line break between visibility and notif bigger than other linebreaks". Every collapsible Settings section uses
      the identical margin:6px 0 — normally, two adjacent sibling <details> elements collapse their touching 6px+6px
      margins down to a single 6px gap (standard CSS margin-collapsing), which is exactly why every OTHER pair (e.g.
@@ -4868,6 +4941,21 @@ function cellVisualMarkers(dept,s,i,cellOT,cellPTCap){
   return {v,cls,mark,title,avState,avLabel,preq,attnState,clockOverdue,bg,fullTitle,colorOverride,showAvailInfo};
 }
 function render(){
+  // FIXED "entering assignment on schedule modal makes page jump left, same with entering PIN — should stay put".
+  // Root cause: el("grid").innerHTML=... (further down) fully replaces the desktop grid table's content on EVERY
+  // render() call — but the grid's own horizontally-AND-vertically-scrollable wrapper (the plain overflow:auto div
+  // #grid itself lives inside — see that div's own markup) had no scroll-position preservation around this rebuild
+  // at all, unlike the roster table/availability modal, which already needed and received this exact same fix for
+  // their own analogous "jumps on re-render" reports (see renderSettings()'s and closeAvail()'s own comments). Any
+  // action that calls render() while the grid is scrolled sideways — committing a cell edit from the shift modal,
+  // or a successful PIN unlock via updateAuth()→render() — silently snapped the grid back to scrollLeft/scrollTop
+  // 0 the instant its innerHTML was replaced, reading exactly like an unwanted "jump left" (and, whenever also
+  // scrolled down, an unwanted jump up too) even though the user never asked to scroll anywhere. Capturing the
+  // wrapper's own scroll position here, at the very top of render() (before anything can change it), and restoring
+  // it via requestAnimationFrame at the very end (after the new content has actually been measured/laid out) closes
+  // this for every call path through render(), with no need to patch each individual caller separately.
+  const _gridWrap=el("grid")?el("grid").parentElement:null;
+  const _gridSx=_gridWrap?_gridWrap.scrollLeft:0,_gridSy=_gridWrap?_gridWrap.scrollTop:0;
   // The fill-handle dot (#fillHandle, appended directly to document.body — see positionFillHandle()'s own
   // comment) is hidden here, in render() itself — the ONE function every view change funnels through — rather
   // than relying solely on clearMultiSelectOnNav() being called by each navigation path before changing
@@ -5717,6 +5805,11 @@ function render(){
   // on ACTIVE user interaction, never on a fresh render, so this explicit call is needed here too, to correctly
   // color every date input the instant this render pass finishes.
   _refreshDateInputColors();
+  // See this function's own top comment for the full "page jump left" fix this closes — restored AFTER the new
+  // grid content has been laid out (requestAnimationFrame, not synchronously), matching the same timing this
+  // codebase's other scroll-preservation fixes already rely on for a freshly-replaced element to have real
+  // dimensions to clamp/scroll against.
+  if(_gridWrap)requestAnimationFrame(()=>{_gridWrap.scrollLeft=_gridSx;_gridWrap.scrollTop=_gridSy;});
 }
 // Directly answers the question: "can the app reliably remove the dot when In and Out are on another line from the
 // est hours?" YES, but only via a real post-render layout measurement — there is no pure- CSS way to conditionally
@@ -9741,16 +9834,65 @@ const SHARED_APP_CFG_KEYS=[
 // per-department settings map) reads as "key: value" pairs instead of raw {"K":V} punctuation, and a boolean reads
 // as "Yes"/"No" instead of "true"/"false". Recursive, so a nested array-of-objects or object-of-arrays (the actual
 // shape behind the reported example) still renders sensibly at every level, not just the top one.
+// FIXED "App-wide settings pop-up not easily understandable to human eyes" for the specific shape that broke
+// down worst: an ARRAY OF OBJECTS (e.g. CFG.autoDenyRules \u2014 a list of {id,label,dept,role,...} rule configs).
+// The previous version recursed into an object exactly like an array \u2014 joining every field with "; ", then
+// joining every RULE with ", " \u2014 producing one indistinguishable wall of "key: value; key: value, key: value;
+// key: value..." text with no visual signal for where one rule ends and the next begins (exactly the reported
+// "autoDenyRules: yours=id: am_ra; label: AM Room...; max: 4, id: hsk_sup; label: HSK..." run-on). Two targeted
+// changes, both purely presentational \u2014 the underlying data/diff logic is unchanged:
+// 1. An array whose elements are THEMSELVES objects (not plain strings/numbers) now renders each element on its
+//    own line, bullet-prefixed \u2014 relies on the existing white-space:pre-wrap already applied to every place
+//    this function's output is ultimately displayed (see showUploadChoiceDialog()'s and
+//    renderAwayChangesBadge()'s own listBlock()/toggleAwayChangesPanel() markup), so a literal "\n" here already
+//    renders as a real line break, not visible escaped text.
+// 2. An object carrying its own human-facing "label" field (every autoDenyRules entry has one) leads with that
+//    label UNLABELED (e.g. "AM Room Attendants") instead of a redundant "label: AM Room Attendants" clause, with
+//    every other field trailing in parentheses \u2014 and the purely-internal "id" field (never meaningful to a
+//    human reading a diff, only used internally to match/update a specific rule) is dropped entirely, for any
+//    object, not just this one shape.
 function humanizeDiffValue(v){
   if(v===null||v===undefined||v==="")return "(not set)";
-  if(Array.isArray(v))return v.length?v.map(humanizeDiffValue).join(", "):"(none)";
+  if(Array.isArray(v)){
+    if(!v.length)return "(none)";
+    if(v.some(x=>x&&typeof x==="object"&&!Array.isArray(x))){
+      return v.map(x=>"\u2022 "+humanizeDiffValue(x)).join("\n");
+    }
+    return v.map(humanizeDiffValue).join(", ");
+  }
   if(typeof v==="boolean")return v?"Yes":"No";
   if(typeof v==="object"){
-    const keys=Object.keys(v);
-    return keys.length?keys.map(k=>`${k}: ${humanizeDiffValue(v[k])}`).join("; "):"(none)";
+    const keys=Object.keys(v).filter(k=>k!=="id");
+    if(!keys.length)return "(none)";
+    const labelKey=keys.includes("label")?"label":null;
+    const restKeys=labelKey?keys.filter(k=>k!==labelKey):keys;
+    const restStr=restKeys.map(k=>`${k}: ${humanizeDiffValue(v[k])}`).join("; ");
+    if(labelKey)return String(v[labelKey])+(restStr?" ("+restStr+")":"");
+    return restStr||"(none)";
   }
   return String(v);
 }
+// Friendlier display names for SHARED_APP_CFG_KEYS' own raw camelCase field names (e.g. "autoDenyEnabledByDept")
+// in the local-vs-live diff popup \u2014 purely cosmetic, falls back to the raw key itself for anything not listed
+// here (e.g. a future setting added to SHARED_APP_CFG_KEYS without a matching entry added here), so a missing
+// label can never hide a real, genuine difference from the popup.
+const APP_WIDE_SETTING_LABELS={
+  autoDenyCountMode:"Auto-deny count mode",autoDenyEnabledByDept:"Auto-deny enabled (by department)",
+  autoDenyRules:"Auto-deny rules",clockInEarlyGraceMinutes:"Clock-in early grace (minutes)",
+  clockInEditOnly:"Clock-in edit-only mode",clockInLateGraceMinutes:"Clock-in late grace (minutes)",
+  clockInLateStartGraceMinutes:"Clock-in late-start grace (minutes)",
+  dontFlagUnderstaffIfRosterShort:"Don't flag understaffed if roster is short",
+  hideChecksForNonManagers:"Hide Checks panel from non-managers",hideForViewers:"Hide Settings & Readme from viewers",
+  hideLeaveTypeReasonFromViewers:"Hide leave type/reason from viewers",hideShiftBidsFromViewers:"Hide shift bidding from viewers",
+  otDisplayMode:"Overtime display mode",overstaffEnabled:"Overstaff flagging enabled",overstaffMargin:"Overstaff margin",
+  paycomAppCodeAlias:"Paycom app-code alias",paycomDeptCode:"Paycom department code",paycomEarnCodeMap:"Paycom earning-code map",
+  paycomEmployeeIdType:"Paycom employee ID type",paycomNameAliases:"Paycom name aliases",
+  sameDayOffCheckDaysByDept:"Same-day-off check days (by department)",sameDayOffNoteScope:"Same-day-off note scope",
+  shiftBandCreditMode:"Shift-band credit mode",taskCodesCombineTime:"Task codes combine with time",
+  unpaidBreakMinutes:"Unpaid break (minutes)",unpaidBreakPer:"Unpaid break per",weekStartDow:"Week start day",
+  accrual:"PTO accrual settings",autoComputeActualFromClock:"Auto-compute actual hours from clock",
+  hideUnavailInfoFromViewers:"Hide availability info from viewers"
+};
 function analyzeCfgChanges(localDepts,liveDepts){
   const changes=[];const conflicts=[];
   const STAFF_FIELDS=["role","type","rate","employed","hireDate","birthday","guestRating","performanceScore","priorityOverride","paycomEmployeeId","note"];
@@ -9810,7 +9952,15 @@ function analyzeCfgChanges(localDepts,liveDepts){
   SHARED_APP_CFG_KEYS.forEach(k=>{
     const l=locAppWide[k],r=liveAppWide[k];
     if(JSON.stringify(l??null)!==JSON.stringify(r??null)){
-      const line=`App-wide setting \u2014 ${k}: yours=${humanizeDiffValue(l??null)}, live=${humanizeDiffValue(r??null)}`;
+      const _label=APP_WIDE_SETTING_LABELS[k]||k;
+      const _lv=humanizeDiffValue(l??null),_rv=humanizeDiffValue(r??null);
+      // A value containing its own line breaks (see humanizeDiffValue()'s own comment \u2014 an array of rule
+      // objects, e.g. autoDenyRules) reads far worse crammed onto one "yours=X, live=Y" line than as its own
+      // clearly-labeled block \u2014 switched to that block form specifically when either side is multi-line, so
+      // every OTHER (single-line) app-wide setting keeps the compact, one-line format unchanged.
+      const line=(_lv.indexOf("\n")!==-1||_rv.indexOf("\n")!==-1)
+        ?`App-wide setting \u2014 ${_label}:\n  Yours:\n    ${_lv.replace(/\n/g,"\n    ")}\n  Live:\n    ${_rv.replace(/\n/g,"\n    ")}`
+        :`App-wide setting \u2014 ${_label}: yours=${_lv}, live=${_rv}`;
       changes.push(line);if(r!==undefined&&r!==null)conflicts.push(line);
     }
   });
@@ -9986,7 +10136,22 @@ async function maybeUploadOnConnect(fromOnlineEvent){
   // ComputeAwayBadge=false — this whole flow (maybeUploadOnConnect) already surfaces every real difference via its
   // own dedicated conflict popup below; the separate "away changes" badge exists specifically for the
   // no-pending-local-edits case, so it would be pure duplicate noise to also compute/show it here.
-  if(!fromOnlineEvent)await pullAll(false,false); // connect() awaits this function directly now; only pull here for the online-event path
+  //
+  // FIXED a real bug: "list of changes when going from local to live is broken, not itemized — schedule changes
+  // specifically weren't showing, only settings changes were." Root cause: this line used to read
+  // `if(!fromOnlineEvent)await pullAll(...)` — skipping the live pull specifically on the fromOnlineEvent===true
+  // path (i.e., exactly the "regained internet while already connected, with pending local edits" reconnect case
+  // the window "online" listener above calls this with). Skipping the pull there meant `liveSnapshot` below got
+  // built from ASSIGN/DEMAND/LEAVE_REQUESTS that were never actually re-fetched — identical to `localSnapshot`
+  // in every schedule/demand/leave cell, since nothing ever overwrote them in between the two snapshots. That
+  // silently zeroed out analyzeUploadChanges()'s own results (comparing local data against itself always finds
+  // zero differences), so the popup's schedule-diff lists rendered empty even when real, unpushed schedule edits
+  // genuinely existed — while the separate roster/settings comparison could still occasionally show *something*,
+  // matching the exact "settings changes show, schedule changes don't" split reported. Both call sites need a
+  // fresh live pull before diffing (the whole point of this snapshot-before/pull/snapshot-after sequence is
+  // comparing local against a GENUINELY CURRENT live copy), so this now always pulls, regardless of which path
+  // called it.
+  await pullAll(false,false);
   const liveSnapshot={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS))}; // the just-pulled live data \u2014 needed if the user picks "discard local changes"
   // Whatever pullAll() just applied (the live roster, if a row existed yet, else still the local one untouched) —
   // used below for the "Go live"/"Cancel" restore actions, which is the historically-correct meaning of "current
@@ -15002,19 +15167,30 @@ async function ensureWeekEditable(){
 // precise) way to detect a real phone browser on Safari/Firefox/anything that doesn't yet expose userAgentData.
 // Deliberately does NOT match "iPad" as a phone — a genuine tablet is better served by the wider Desktop-forced
 // layout, and current iPadOS Safari's own UA string no longer even contains the word "iPad" by default anyway (it
-// reports as a desktop Mac UA, which correctly falls through to check 3 below instead). 3. A coarse (touch, not
-// mouse) primary pointer combined with a narrow viewport — the final fallback once neither signal above is
-// available. A real phone matches both; a touch-capable desktop monitor or a large Android tablet will typically
-// fail the width check and fall through to returning false (→ Desktop default). Returns true (phone), false (not a
-// phone), or null (detection itself failed/unavailable, e.g. An exception) — the caller treats null the same as
-// false, per the explicit "if not possible, default to Desktop" instruction.
+// reports as a desktop Mac UA, which correctly falls through to the final "uncertain → Desktop" default instead).
+// Returns true (phone) or false (not a phone / genuinely uncertain) — never throws, so the caller's own "if not
+// possible, default to Desktop" instruction is honored by this function itself always resolving to false rather
+// than needing a separate null case.
+//
+// FIXED a real false-positive: "autodetect wrong, opened in mobile view on laptop, desktop should be default if
+// uncertain". A third fallback signal used to sit here — `matchMedia("(pointer: coarse)").matches && innerWidth<820`
+// — intended to catch a real phone when neither signal above could. In practice this reliably misfires on an
+// ordinary LAPTOP that merely has a touchscreen digitizer (a genuinely common, non-exotic configuration on many
+// Windows laptops/2-in-1s): `pointer: coarse` reflects the PRIMARY pointer the OS reports, and a touchscreen
+// laptop's primary pointer is frequently reported as coarse even though the actual browser window is being driven
+// by a keyboard/trackpad like any other laptop — combined with any moderately narrow (non-maximized, split-screen,
+// or simply smaller-panel) browser window under 820px, this was enough to wrongly classify a real laptop as a
+// phone. Removed entirely rather than patched with a higher width threshold — no width cutoff can reliably
+// distinguish "narrow laptop window" from "phone" using pointer type alone, and the two signals above already
+// correctly identify every genuine phone browser without it. A device that fails both real checks now correctly
+// falls through to Desktop, exactly matching the explicit "if not possible, default to Desktop" instruction this
+// function was already supposed to honor.
 function _detectLikelyPhone(){
   try{
     if(navigator.userAgentData&&typeof navigator.userAgentData.mobile==="boolean")return navigator.userAgentData.mobile;
     if(/Android.+Mobile|iPhone|iPod|Windows Phone|BlackBerry|Opera Mini|IEMobile/i.test(navigator.userAgent))return true;
-    if(window.matchMedia&&window.matchMedia("(pointer: coarse)").matches&&window.innerWidth<820)return true;
     return false;
-  }catch(e){return null;}
+  }catch(e){return false;}
 }
 let VIEW_MODE="desktop"; // in-memory source of truth for the remainder of this session; overwritten once at boot by _loadViewModeOnBoot() below, always before first render
 function _loadViewModeOnBoot(){
@@ -15217,10 +15393,21 @@ function applyMobileSelectionHighlight(){
 // did not need to change.
 const LONG_PRESS_MS=450;
 let _mobLongPressTimer=null,_mobLongPressFired=false,_mobDragAnchor=null,_mobDownX=0,_mobDownY=0;
+// See mobileCellPointerDown()'s own comment for the "add a second range" feature this supports — a snapshot of
+// whatever MULTISEL.cells already held immediately before the CURRENT long-press gesture started, so the live
+// drag-extend below can repeatedly recompute just THIS gesture's own in-progress range without discarding an
+// earlier, already-completed one.
+let _mobPreDragCells=null;
+// See mobileCellPointerMove()'s own comment for the full "hard to scroll" fix these support — the wrapper's own
+// scroll position at touch-start, captured here so a subsequent move can compute an absolute new scrollLeft/Top
+// directly from total finger displacement (rather than accumulating per-event deltas, which can drift/stutter if
+// an intermediate event is ever missed).
+let _mobScrollStartLeft=0,_mobScrollStartTop=0;
 function mobileCellPointerDown(nmE,day,event){
   _mobLongPressFired=false;_mobDragAnchor=null;
   clearTimeout(_mobLongPressTimer);
   if(event){_mobDownX=event.clientX;_mobDownY=event.clientY;}
+  {const _wrap=el("mobScheduleTblWrap");if(_wrap){_mobScrollStartLeft=_wrap.scrollLeft;_mobScrollStartTop=_wrap.scrollTop;}}
   // "clicking cell doesn't open schedule reliably for some schedule cells... In bottom or upper third of screen";
   // the earlier setPointerCapture fix just below was a real, separate improvement, but NOT the cause of THIS
   // specific bug — confirmed by reproducing this exact failure in a real headless-browser touch simulation,
@@ -15254,11 +15441,16 @@ function mobileCellPointerDown(nmE,day,event){
   _mobLongPressTimer=setTimeout(()=>{
     _mobLongPressFired=true;
     const nm=decodeURIComponent(nmE);
-    // Starting a long-press selection always begins a FRESH selection at exactly this one cell (rather than
-    // toggling from whatever MULTISEL.cells already held) — the clearest, least-surprising behavior for a
-    // press-and-hold gesture, matching how a long-press "start selecting" gesture works in most native apps (e.g.
-    // Text selection): it begins a new selection anchored where you pressed, it doesn't extend an old one.
-    MULTISEL.cells.clear();
+    // FIXED "is it possible to multiselect a range, then press and drag another range to ADD it" — a long-press
+    // used to UNCONDITIONALLY clear MULTISEL.cells before starting, so a second long-press-drag gesture always
+    // replaced whatever range an earlier, already-COMPLETED gesture had selected, with no way to build up more than
+    // one range at a time. Snapshotting whatever is already selected (from an earlier, finished gesture — pointerUp
+    // always ends the PRIOR gesture and clears _mobDragAnchor before a new pointerdown/long-press can begin, so
+    // this is never mid-gesture state) into _mobPreDragCells, then adding this gesture's own starting cell ON TOP
+    // of that snapshot (never clearing it), means a completed first range survives into a second long-press
+    // elsewhere — see mobileCellPointerMove()'s own comment for how the live drag-extend below keeps that earlier
+    // range intact too, not just this starting cell.
+    _mobPreDragCells=new Set(MULTISEL.cells);
     MULTISEL.cells.add(nm+"|"+day);
     MULTISEL.lastCell={nm,day};
     _mobDragAnchor={nm,day}; // NEW — see mobileCellPointerMove()'s own comment for the drag-to-extend this anchors
@@ -15282,8 +15474,21 @@ function mobileCellPointerMove(event){
     // horizontal-scroll swipe into an unwanted selection just because LONG_PRESS_MS happened to elapse mid-swipe (a
     // genuine risk now that a long-press can fire without first tapping "Select multiple" — see this feature's own
     // top-level comment).
-    if(_mobLongPressTimer&&(Math.abs(event.clientX-_mobDownX)>10||Math.abs(event.clientY-_mobDownY)>10)){
+    const dx=event.clientX-_mobDownX,dy=event.clientY-_mobDownY;
+    if(_mobLongPressTimer&&(Math.abs(dx)>10||Math.abs(dy)>10)){
       clearTimeout(_mobLongPressTimer);_mobLongPressTimer=null;
+    }
+    // FIXED "hard to scroll right or left because of hold+drag blocking zoom and scroll" — see td.mobCell's own CSS
+    // comment for the full root cause/fix. touch-action:none on this cell means the browser will NEVER natively
+    // scroll #mobScheduleTblWrap for a touch that started here, regardless of how this function's own JS logic
+    // decides to react — so once a genuine pre-long-press swipe is detected (the same >10px threshold used just
+    // above to cancel the pending timer), this manually drives the wrapper's own scrollLeft/scrollTop directly from
+    // the total finger displacement, reproducing what native scrolling would have done. Once _mobDragAnchor is set
+    // (a long-press actually fired), this branch is never reached again for the rest of that same gesture — the
+    // block below takes over completely, exactly as before this fix.
+    if(_mobLongPressTimer===null&&(Math.abs(dx)>10||Math.abs(dy)>10)){
+      const _wrap=el("mobScheduleTblWrap");
+      if(_wrap){_wrap.scrollLeft=_mobScrollStartLeft-dx;_wrap.scrollTop=_mobScrollStartTop-dy;}
     }
     return;
   }
@@ -15293,14 +15498,22 @@ function mobileCellPointerMove(event){
   if(!td)return;
   const cur={nm:decodeURIComponent(td.dataset.nm),day:+td.dataset.day};
   MULTISEL.lastCell=_mobDragAnchor;
-  MULTISEL.cells.clear();
+  // FIXED "add a second range" (see mobileCellPointerDown()'s own comment for the full feature) — this used to
+  // unconditionally MULTISEL.cells.clear() on every single move event, discarding ANY earlier, already-completed
+  // range every time the current gesture's own in-progress range was recomputed. Restoring the PRE-drag snapshot
+  // first (whatever was already selected before this gesture began — see _mobPreDragCells' own declaration),
+  // rather than an empty Set, means an earlier completed range survives every recompute; toggleCellSelection's own
+  // shift-branch then ADDS this gesture's current anchor\u2192cur rectangle on top of that restored snapshot
+  // (its own logic never clears — see that function's own code), so the two ranges correctly coexist, live, for
+  // the remainder of this drag.
+  MULTISEL.cells=new Set(_mobPreDragCells);
   toggleCellSelection(cur.nm,cur.day,{shift:true});
   applyMobileSelectionHighlight();
   renderMultiSelBar();
 }
 function mobileCellPointerUp(nmE,day){
   clearTimeout(_mobLongPressTimer);
-  _mobDragAnchor=null;
+  _mobDragAnchor=null;_mobPreDragCells=null; // this gesture is fully over — its own snapshot is no longer needed; the NEXT long-press (if any) takes its own fresh one
   if(_mobLongPressFired){_mobLongPressFired=false;return;} // the long-press (and any drag-extend that followed it) already handled this press; the matching pointerup/click should NOT also open the single-cell editor
   const nm=decodeURIComponent(nmE);
   // While a multi-selection is already active (either via long-press above, or the classic checkbox toggle), a
@@ -15315,9 +15528,17 @@ function mobileCellPointerUp(nmE,day){
   }
   mobileOpenEditor(nmE,day);
 }
-function mobileCellPointerCancel(){clearTimeout(_mobLongPressTimer);_mobLongPressFired=false;_mobDragAnchor=null;}
+function mobileCellPointerCancel(){clearTimeout(_mobLongPressTimer);_mobLongPressFired=false;_mobDragAnchor=null;_mobPreDragCells=null;}
 function renderMobileScheduleView(){
   const card=el("mobileScheduleCard");if(!card)return;
+  // See render()'s own top comment for the full "page jump left, entering assignment / PIN should stay put" fix
+  // this mirrors — an EVEN MORE direct case of the same root cause: card.innerHTML=... (further down) doesn't just
+  // replace #mobScheduleTblWrap's own CONTENT, it recreates that wrapper div itself from scratch every single call
+  // (the div with that id is generated fresh, inside this function's own template string) — so its scrollLeft/
+  // scrollTop are guaranteed to reset to 0,0 on every call, with no exception. Capturing/restoring here the same
+  // way closes this for the mobile schedule table too.
+  const _mobWrap0=el("mobScheduleTblWrap");
+  const _mobSx=_mobWrap0?_mobWrap0.scrollLeft:0,_mobSy=_mobWrap0?_mobWrap0.scrollTop:0;
   const dept=CFG[DEPT];
   const _todayIso=todayISO();
   const headCells=DOW.map((dn,i)=>{
@@ -15487,6 +15708,9 @@ function renderMobileScheduleView(){
       ?`<div id="mobScheduleTblWrap"><table id="mobScheduleTable"><colgroup><col style="width:110px">${DOW.map(()=>`<col style="width:56px">`).join("")}</colgroup><thead><tr><th>Staff</th>${headCells}</tr></thead><tbody>${bodyRows.join("")}</tbody></table></div>`
       :'<div class="small muted" style="padding:14px;text-align:center">No staff in this department yet.</div>');
   applyMobileSelectionHighlight();
+  // Restored AFTER the freshly-recreated wrapper has real, laid-out dimensions to clamp/scroll against — see this
+  // function's own top comment for the full fix.
+  {const _mobWrap1=el("mobScheduleTblWrap");if(_mobWrap1)requestAnimationFrame(()=>{_mobWrap1.scrollLeft=_mobSx;_mobWrap1.scrollTop=_mobSy;});}
 }
 async function toggleEdit(){
   // "In view only, FO reason/type padlocked but not HSK leave requests": clicking the "View-only" lock button
@@ -16151,8 +16375,46 @@ function renderReadme(){
 </details>
 </details>
 
+<details style="margin-top:8px"><summary style="cursor:pointer"><b>Settled items</b></summary>
+<ul class="small">
+<li><b>R-OFF vs OFF vs Unavailable:</b> R-OFF means requested time off and is treated the same as Unavailable (excluded from Could-assign/auto-fill). Plain OFF is an ordinary scheduled rest day and stays callable.</li>
+<li><b>Public Area vs A/B/Graveyard-shift PA:</b> "Public Area" in the source Excel was a section-header label; the 4 people under it are Supervisors who oversee those shifts, not Public Area attendants. The real 19-person Public Area team is the A-shift/B-shift/Graveyard-shift PA roles.</li>
+<li><b>Note types:</b> a staff note mixing unavailability ("MW off") with a shift preference ("TTH 12–8pm") is auto-split — "off" mentions become a hard block; a bare time-range mention becomes a soft, non-blocking preference.</li>
+<li><b>Paycom roster/attendance access</b> is restricted by role (department head + one designated second role per department), not a fixed headcount cap — a Paycom admin could grant additional roles access directly within Paycom.</li>
+<li><b>A registered-trademark symbol (®) genuinely appears in real source Excel cell values</b> (e.g. attached to an off-code or a shift time), reading as a stand-in for a circled "R" — an off-code carrying this symbol ("OFF ®"/"OFF®") is treated the same as R-OFF. Attached to a time value, it's stripped and ignored.</li>
+<li><b>Ahmylyn Cabrera's note</b> ("TTH class 10-13:30; F 09-12") is confirmed against all 4 available FO weeks: every one of her actual working shifts starts at 14:00 or later, never conflicting with the stated class times — consistent with the note as coded (a class, not a shift preference).</li>
+<li><b>Jessica Basaliza's note</b> reads "MW off." A "Mon/Wed 11-3, Tue/Thu 12-8pm, Fri/Sat 2-10pm" preferred-schedule reading does not match any of the 4 actual available weeks, so it is not used. 3 of 4 available weeks show her off every day; the most recent week shows her working Monday and Wednesday specifically, with times that don't match that reading either — a genuine, disclosed inconsistency; see Open questions.</li>
+<li><b>Room Attendants' fixed AM default shift</b> (08:00-16:30) is confirmed against the source Excel's own "AM-shift RA" section header. AM Houseman/PM Houseman/PM Turndown RA/Graveyard PA default shifts are inferred from their own role names — see Auto-fill above for roles that still have no such default.</li>
+<li><b>PM Houseman roster:</b> the source HSK Excel's PM-shift Houseman section consistently lists 6 people across all 3 available weeks. All 6, including John Bryan De Goma (PT), Ernest Chonggum Jr. (FT), and Paul Rivera (OC), are on the roster with types taken from their own Excel labels.</li>
+<li><b>Coverage-minimum completeness:</b> 7 roles had no coverage-minimum entry at all — FO's Front Desk Supervisor, Interns, Concierge Agent, and Valet; HSK's Relievers (on-call), Outsourced — JJ Global, and Outsourced — J4 Janitorial. All 7 now have an explicit min:0/day placeholder, visible and adjustable in Settings.</li>
+<li><b>Historical data clean-up conventions (applied to the imported data):</b> bare "1" for an on-call Reliever = "called in" (displays as <b>OC</b>); "1 HU" = a room-count note, not an absence; a note + slash + OFF-family code (e.g. "generose/OFF") = off/leave with the note kept; a code + bare start time (e.g. "MB/8:30AM") is parsed the same way for any future import. 457 graveyard-shift cells reading "10:30-07:00" (a nonsensical ~20.5h shift) are corrected to "22:30-07:00" (a normal 8.5h shift).</li>
+<li><b>"F&amp;B" task code (FO):</b> recognized alongside Task Force/Project, same yellow task-highlight styling as every other task code.</li>
+</ul>
+</details>
+
+<p><b>Open questions</b> <span class="small muted">(not yet confirmed)</span>:</p>
+<ul class="small">
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real shift times for these Relievers' remaining "1" cells: Teria Naputi, Lorien Stephen, Marian Lacsina, Kayleen Ruda, Ernoleen Welter, Carolina Calilung.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Should Task codes (GC/Laundry/Rooms/Controller/Task Force/Project) count toward a role's scheduled headcount, or stay excluded?</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is "BDY" a distinct leave code from the existing "BDH," or an alternate spelling of the same benefit?</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Exact Transportation-per-Bell-Attendant and Events-per-Valet ratios.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Should staff sort within a role by seniority/hire order instead of alphabetically?</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real Hire dates for every staff member (currently blank — no seniority rank can show until entered).</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real pay rates (currently placeholders: FT $12, PT $11, etc.).</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Kelly Jacinto's real role — source data shows her as both a Reliever and an Outsourced (JJ Global) Room Attendant; app currently shows Reliever only.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is "Macson (OJT)" (HSK Relievers, oldest week only) still a current employee? Not added to roster pending confirmation.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Jessica Basaliza's real schedule — mostly shows off, but one recent week shows Mon/Wed shifts; currently noted "MW off."</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is FO's "Concierge Supervisor" role still active? No staff or coverage minimum on file.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Default shift times for roles with no confirmed source (see Auto-fill section above for the full list).</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> A handful of historical cells with no safely-inferable value: single-day entries for Elsa Aguilo and Maria Teresa Ibanez; Rillen Labadnoy's "HM /10:AM" (no end time in source); Blesilda Carlos's "1 HU/PTO"; Magnonia Jacinto's "BTA/1"; and ~12 bare AM/PM times for Kayleen Ruda, Maricel Carbon, Dante Vergara, Ma. Lourdes Gueco, Jahred Etse, Generose dela Cruz, Donna Mojica.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Lydia Antonio shows a corrupted cell ("1900-02-15 00:00:00" — an Excel date-serial artifact, one day/one week) with no recoverable original time.</li>
+<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> ~90 free-text location/task notes (e.g. "3rd Floor," "Window cleaning," "Trainee-Jonas") are kept as free text today — should any become permanent shorthand codes?</li>
+</ul>
+
 <details style="margin-top:8px"><summary style="cursor:pointer"><b>Supabase schema</b></summary>
-<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px">-- Safe to re-run anytime — every statement below is idempotent (IF NOT EXISTS / existence-checked / DROP+CREATE).
+<p class="small" style="background:#eef3fb;border:1px solid #b7c8e6;border-left:4px solid #1b4b8a;border-radius:6px;padding:6px 10px;margin-top:8px">📋 <b>Run this one in the Supabase SQL Editor.</b> The two code blocks further below (CLI setup, index.ts) go elsewhere — each says exactly where, right inside the block itself.</p>
+<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#1b4b8a">-- 📋 Supabase SQL Editor</b>
+-- Safe to re-run anytime — every statement below is idempotent (IF NOT EXISTS / existence-checked / DROP+CREATE).
 create table if not exists public.assignments (
   dept text not null, week text not null, staff text not null,
   days jsonb not null default '{}'::jsonb,
@@ -16190,6 +16452,19 @@ create table if not exists public.push_subscriptions (
 create table if not exists public.notified_events (
   event_key text primary key, notified_at timestamptz not null default now()
 );
+-- FIXED a real, confirmed observability gap: "background push shows subscribed, but I can't tell whether the
+-- server-side function is actually running on schedule at all, since I only get notified while attendance is
+-- genuinely broken." notified_events (above) ONLY ever gets a row when a REAL attendance violation is found AND
+-- pushed — a hotel where every worker clocks in/out correctly every single day would show a permanently-empty
+-- notified_events table forever, which looks IDENTICAL, from this app's own diagnostic tool, to the cron job never
+-- having run at all \u2014 there was no way to tell "ran fine, nothing to report" apart from "never ran." This
+-- single-row heartbeat table is updated by the Edge Function on EVERY invocation, regardless of whether it finds
+-- anything to notify about (see the function's own first line below) \u2014 giving this app's diagnostic tool a
+-- genuine, unambiguous "last confirmed check-in: X minutes ago" signal, independent of whether any real attendance
+-- issue has actually occurred that day.
+create table if not exists public.function_heartbeat (
+  id text primary key, last_run_at timestamptz not null default now()
+);
 -- Shared roster/settings sync — one fixed row (id='depts') holds both departments' shared data as one jsonb blob
 create table if not exists public.app_config (
   id text primary key, data jsonb not null default '{}'::jsonb,
@@ -16197,8 +16472,11 @@ create table if not exists public.app_config (
 );
 
 -- GRANTS: without an explicit GRANT, every query fails with "permission denied for table X" BEFORE RLS is even
--- consulted, regardless of how permissive the policies are. Includes service_role (the background-notifications
--- Edge Function's own key) alongside anon/authenticated — service_role bypasses RLS, but NOT table-level GRANTs,
+-- consulted, regardless of how permissive the policies are. Includes service_role (the attendance-reminders
+-- Edge Function's own key — corrected here to match this deploy guide's own function name everywhere else;
+-- this one line previously called it "background-notifications", a stray naming inconsistency worth closing
+-- since a mismatched name in setup instructions is exactly the kind of thing that causes real deploy confusion)
+-- alongside anon/authenticated — service_role bypasses RLS, but NOT table-level GRANTs,
 -- a separate security layer; a missing grant here is a common cause of push notifications silently never
 -- working ("permission denied for table X" in the Edge Function's own logs). Safe to re-run anytime.
 grant usage on schema public to anon, authenticated, service_role;
@@ -16211,15 +16489,26 @@ grant select, insert, update, delete on public.checkins to anon, authenticated, 
 grant select, insert, update, delete on public.push_subscriptions to anon, authenticated, service_role;
 grant select, insert, update, delete on public.notified_events to anon, authenticated, service_role;
 grant select, insert, update, delete on public.app_config to anon, authenticated, service_role;
+grant select, insert, update, delete on public.function_heartbeat to anon, authenticated, service_role;
 -- covers any future table added to public without its own explicit grant line above
 alter default privileges in schema public grant select, insert, update, delete on tables to anon, authenticated, service_role;
 
--- REALTIME: add each table to the publication, wrapped in existence checks (safe to re-run without 42710 errors)
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='assignments') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.assignments; END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='demand') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.demand; END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='leave_requests') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.leave_requests; END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='checkins') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.checkins; END IF; END $$;
-DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname='supabase_realtime' AND schemaname='public' AND tablename='app_config') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.app_config; END IF; END $$;
+-- REALTIME: add each table to the publication, wrapped in existence checks (safe to re-run without 42710 errors).
+-- Uses a plain single-quoted string body (with doubled '' for each embedded literal quote) for each DO block's own
+-- code, rather than $$ dollar-quoting -- verified byte-for-byte that this app's own rendered/copyable SQL text
+-- never actually contained a stray backslash before any $ (a reported "syntax error at or near "\"" on the DO $$
+-- line traced to some step in an external copy/paste chain mangling literal $ characters before they ever reached
+-- the SQL editor, not a bug in this text itself) -- but since dollar-quoting is the one PostgreSQL construct most
+-- likely to collide with an external tool's own dollar-escaping behavior (some clipboard managers/note apps
+-- auto-escape bare $ for LaTeX/shell safety), removing the $ character from this block entirely closes off that
+-- entire class of failure regardless of its exact external cause. If a syntax error still appears at any $ sign
+-- elsewhere in this SQL, the same external mangling is almost certainly still happening -- try pasting as plain
+-- text (commonly Ctrl+Shift+V) instead of a normal paste.
+DO 'BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=''assignments'') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.assignments; END IF; END';
+DO 'BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=''demand'') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.demand; END IF; END';
+DO 'BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=''leave_requests'') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.leave_requests; END IF; END';
+DO 'BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=''checkins'') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.checkins; END IF; END';
+DO 'BEGIN IF NOT EXISTS (SELECT 1 FROM pg_publication_tables WHERE pubname=''supabase_realtime'' AND schemaname=''public'' AND tablename=''app_config'') THEN ALTER PUBLICATION supabase_realtime ADD TABLE public.app_config; END IF; END';
 
 -- RLS
 alter table public.assignments enable row level security;
@@ -16231,6 +16520,7 @@ alter table public.checkins enable row level security;
 alter table public.push_subscriptions enable row level security;
 alter table public.notified_events enable row level security;
 alter table public.app_config enable row level security;
+alter table public.function_heartbeat enable row level security;
 
 -- POLICIES: drop-if-exists + create = safe to re-run anytime (tighten later once Auth roles are configured)
 drop policy if exists "allow all (anon)" on public.assignments;
@@ -16251,39 +16541,80 @@ drop policy if exists "allow all (anon)" on public.notified_events;
 create policy "allow all (anon)" on public.notified_events for all using (true) with check (true);
 drop policy if exists "allow all (anon)" on public.app_config;
 create policy "allow all (anon)" on public.app_config for all using (true) with check (true);
+drop policy if exists "allow all (anon)" on public.function_heartbeat;
+create policy "allow all (anon)" on public.function_heartbeat for all using (true) with check (true);
 
 -- Forces PostgREST to immediately pick up the tables/policies just created above
 NOTIFY pgrst, 'reload schema';</pre>
-<p class="small muted"><b>Notes:</b> the <code>GRACE_MINUTES</code>/week-start-day values above are hardcoded to this app's own defaults — if Settings → Clock in/out changes the grace window, or Settings changes the workweek start day, update this function to match, or it will silently drift out of sync with what the app itself displays. This function is idempotent and safe to re-run on any schedule; <code>notified_events</code> prevents duplicate pushes for the same issue on the same day.</p>
+<p class="small muted"><b>Notes:</b> <code>getLiveAppWideConfig()</code> reads this hotel's current Settings values (grace periods, etc.) directly from the same <code>app_config</code> table Settings itself keeps in sync — no hardcoded value here can drift out of sync with what the app displays, and no manual edit to this file is ever needed when a Settings value changes. This function is idempotent and safe to re-run on any schedule; <code>notified_events</code> prevents duplicate pushes for the same issue on the same day.</p>
 <p class="small muted"><b>app_config (staff roster/settings sync):</b> for a project already set up from before, running the SQL above once adds this table — it's what makes an added/removed staff member, a coverage-minimum change, or a rules/thresholds edit made on one device actually show up on every other connected device.</p>
 <p class="small muted"><b>Which settings this covers:</b> CFG.FO/CFG.HSK (roster, coverage, rules, shifts) plus a curated set of shared hotel-wide settings (Paycom mapping, Clock in/out rules, auto-deny, overstaff/understaff flags, PTO accrual, etc.). Excluded: anything personal/device-only. The local-vs-live conflict popup lists exactly what differs on reconnect.</p>
 <p class="small muted">"Permission denied for table X" means the GRANT statements weren't run for that table — re-run the SQL. "Could not find the table 'public.X'" means either it doesn't exist yet (run the SQL once) or PostgREST's schema cache hasn't refreshed (the SQL's own trailing NOTIFY forces this). Everything keeps working locally either way — only sync is affected. Persistent errors: reload the schema cache manually (Supabase dashboard → Settings → API), or disconnect/reconnect.</p>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Full background-notification setup</b></summary>
+<p class="small" style="background:#fff6d6;border:1px solid #e0c060;border-left:4px solid #c9891b;border-radius:6px;padding:6px 10px">💻 <b>Run in a terminal, not the SQL Editor</b> — the block itself repeats this as its own first line too.</p>
 <p class="small muted"><b>Step 1 — deploy the function</b> (Supabase CLI, from this hotel's own project):</p>
-<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px">supabase functions new attendance-reminders
+<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#c9891b"># \u26a0\ufe0f TERMINAL / COMMAND LINE ONLY \u2014 do NOT paste into the Supabase SQL Editor</b>
+supabase functions new attendance-reminders
 # paste the index.ts content below into supabase/functions/attendance-reminders/index.ts
 supabase secrets set VAPID_PUBLIC_KEY="BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk"
 supabase secrets set VAPID_PRIVATE_KEY="&lt;generate with: npx web-push generate-vapid-keys&gt;"
 supabase functions deploy attendance-reminders
 # Schedule it to run every 5 minutes (Supabase Dashboard \u2192 Edge Functions \u2192 attendance-reminders \u2192 Cron,
 # or via SQL: select cron.schedule('attendance-reminders','*/5 * * * *',$$select net.http_post(...)$$);)</pre>
+<p class="small muted"><b>Verifying the schedule is genuinely running</b> (a real, previously-confirmed gap): the subscription/registration checks elsewhere on this page only ever confirm THIS device's own subscription reached the database \u2014 none of them can tell you whether the cron schedule above was ever actually created, or whether the function is failing silently. Settings \u2192 Notifications & reminders \u2192 Diagnostics \u2192 Check background push status now includes a "Server-side function actually running on schedule?" row, reading the <code>function_heartbeat</code> table the function itself updates on every single invocation (regardless of whether any real attendance issue exists that day to notify about) \u2014 a stale or missing heartbeat there is the concrete, checkable signal that the cron step above still needs attention, distinct from a hotel simply having clean attendance that day.</p>
+<p class="small" style="background:#eef6ec;border:1px solid #a8d5b0;border-left:4px solid #2c9e5f;border-radius:6px;padding:6px 10px">📄 <b>Paste into the <code>index.ts</code> file</b> created above (a code editor, e.g. VS Code) — not the SQL Editor, not the terminal.</p>
 <p class="small muted"><b>Step 2 — index.ts</b> (reads the same <code>assignments</code>/<code>checkins</code>/<code>push_subscriptions</code> tables this app's client already writes to; mirrors the client-side "missing"/"noshow"/"notout" logic from attendanceStateFor()):</p>
-<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px">import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#2c9e5f">// \u26a0\ufe0f PASTE INTO index.ts \u2014 do NOT paste into the Supabase SQL Editor</b>
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import webpush from "https://esm.sh/web-push@3.6.7";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!; // auto-provided by Supabase, no manual secret needed
 const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY")!;
 const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY")!;
-const GRACE_MINUTES = 15; // matches this app's own default clockInLateGraceMinutes \u2014 adjust to match Settings if changed there
 
 webpush.setVapidDetails("mailto:admin@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
 
+// "Any way to prevent drift in grace period without relying on manual changes?" Traced every actual usage of the
+// GRACE_MINUTES constant that previously sat here: it was declared but never once READ by any logic below \u2014
+// dead code, left over from an earlier draft \u2014 so today, there is no live drift risk for it specifically, since
+// it never influenced any decision this function makes (the "missing"/"notout" pushes below already fire the
+// instant timing.state flips to "during"/"after" with zero grace, deliberately mirroring this app's own
+// attendanceStateFor() 1:1 \u2014 adding a grace delay here would make server and client DISAGREE, the opposite of
+// the goal). Removed the unused constant rather than leave a misleading "keep this in sync" burden for a value
+// that was never actually consulted. That said, the underlying QUESTION is a genuinely good one for anything that
+// COULD matter here in the future \u2014 general fix below: fetches this hotel's live app-wide settings ONCE per
+// invocation, directly from the SAME app_config table this app's own pushConfig()/pullAll() already keep in sync
+// with Settings (see that table's own schema above) \u2014 so any CURRENT or FUTURE constant genuinely needing to
+// track a Settings value (e.g. clockInLateGraceMinutes, weekStartDow) can read it live, right here, with zero
+// manual code edits ever required again, rather than another hardcoded literal silently drifting the next time
+// someone changes that setting in the app itself.
+async function getLiveAppWideConfig(supabase: any): Promise<Record<string, any>> {
+  try {
+    const { data } = await supabase.from("app_config").select("data").eq("id", "depts").maybeSingle();
+    return (data && data.data && data.data.appWide) || {};
+  } catch (_e) {
+    return {}; // a fresh/never-configured project has no app_config row yet \u2014 callers fall back to their own defaults
+  }
+}
+
 Deno.serve(async () => {
   const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
+  const appWide = await getLiveAppWideConfig(supabase); // available to any check below that needs a live Settings value \u2014 e.g. appWide.clockInLateGraceMinutes ?? 30
   const now = new Date();
   const todayIso = now.toISOString().slice(0, 10);
+
+  // FIXED a real observability gap: "background push shows subscribed, but there's no way to confirm the
+  // server-side function is actually running on its schedule at all, since notified_events only ever gets a row
+  // when a genuine attendance violation is found" \u2014 a hotel where everyone clocks in/out correctly every day
+  // would show a permanently-empty notified_events table forever, indistinguishable (from the client's own
+  // diagnostic tool) from the cron job never having been scheduled in the first place. Upserting this single-row
+  // heartbeat FIRST, unconditionally, before any of the real attendance-checking logic below runs (so it updates
+  // even if that logic throws or finds nothing to report), gives checkBackgroundPushStatus() on the client side a
+  // genuine, unambiguous "last confirmed check-in: X minutes ago" signal, independent of whether any real
+  // attendance issue happens to exist that day.
+  await supabase.from("function_heartbeat").upsert({ id: "attendance-reminders", last_run_at: now.toISOString() });
 
   const { data: assignments } = await supabase.from("assignments").select("*");
   const { data: checkins } = await supabase.from("checkins").select("*");
@@ -16302,7 +16633,7 @@ Deno.serve(async () => {
     // Only the CURRENT week's assignment row is relevant \u2014 a stale past week can't be a live attendance issue.
     if (row.week !== todayIso.slice(0, 8) + "01" && !isCurrentWeek(row.week, now)) continue;
     const days = row.days || {};
-    const dayIdx = dayIndexForToday(row.week, now); // 0-6, matching this app's own Thu-start week convention (adjust if CFG.weekStartDow differs)
+    const dayIdx = dayIndexForToday(row.week, now); // 0-6, computed purely as (today \u2212 row.week's own stored start date) \u2014 genuinely independent of CFG.weekStartDow, since that offset is already baked into row.week itself (whichever day it starts on); no separate sync/adjustment is ever needed here regardless of what Settings' own workweek-start-day is currently configured to
     const shiftVal = days[dayIdx];
     if (!shiftVal || !isWorkShift(shiftVal)) continue;
 
@@ -16372,9 +16703,23 @@ function shiftTimingState(v: string, now: Date) {
 }</pre>
 </details>
 
+<details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Step-by-step: fixing "notifications don't arrive once the site is closed"</b></summary>
+<p>Work through these in order — each one rules out a genuinely different, independent failure point; skipping ahead risks fixing the wrong thing.</p>
+<ol>
+<li><b>Is this page being opened as a file (file://), rather than hosted (http/https)?</b> Check the browser's own address bar — if it starts with <code>file:///</code> instead of <code>http://</code> or <code>https://</code>, this is almost certainly the cause, and every step below is blocked by it: Service Workers (and therefore background push) are unsupported on a <code>file://</code> origin in every major browser, with no workaround. Host this file somewhere real — even a simple local static server (e.g. <code>npx serve</code> from this file's own folder, or Python's <code>python -m http.server</code>), or a real host like GitHub Pages — then reopen it via that server's <code>http://</code> or <code>https://</code> address instead. Settings → Notifications & reminders → Diagnostics → Check background push status now surfaces this exact condition directly if it's the cause, rather than silently doing nothing.</li>
+<li><b>Was notification permission actually granted?</b> Settings → Notifications & reminders shows a status pill at the top — "Blocked" means the browser itself denied/revoked permission for this site; re-enable it in the browser's own site settings (commonly the padlock/info icon next to the address bar), then try Enable again.</li>
+<li><b>Is this device actually connected to the shared live copy?</b> Background push requires a live Supabase connection to register — check the header's own sync-status dot, or Settings → Sync & data. A device that's only ever run in local mode has nothing to register against.</li>
+<li><b>Run Check background push status</b> (Settings → Notifications & reminders → Diagnostics). Read every row top to bottom — it's built to isolate exactly which single link in the chain is broken (permission → service worker → local subscription → server-side registration → server-side schedule), rather than a single opaque pass/fail.</li>
+<li><b>Has the server-side attendance-reminders function actually been deployed, with its own cron schedule created?</b> The "Server-side function actually running on schedule?" row (added specifically to close this exact gap) reads a heartbeat the function itself updates every time it runs — a stale or missing heartbeat here means either the function was never deployed, or its Cron schedule (Supabase Dashboard → Edge Functions → attendance-reminders → Cron) was never actually created/enabled, even if the function itself deployed successfully.</li>
+<li><b>If the SQL setup step failed with a syntax error</b> (e.g. "syntax error at or near..."), the SQL as written in this Readme has been verified, byte-for-byte, to contain no such error — see this section's own "REALTIME" comment for the most likely external cause (a copy/paste tool auto-escaping <code>$</code> characters) and its fix (paste as plain text).</li>
+</ol>
+</details>
+
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Before going live (reset test data)</b></summary>
+<p class="small" style="background:#eef3fb;border:1px solid #b7c8e6;border-left:4px solid #1b4b8a;border-radius:6px;padding:6px 10px">📋 <b>Run this in the Supabase SQL Editor</b>, same as the schema above.</p>
 <p><b>Before going live</b> (optional — only if test data was pushed to this Supabase project during development):</p>
-<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px">truncate table public.assignments;
+<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#1b4b8a">-- 📋 Supabase SQL Editor</b>
+truncate table public.assignments;
 truncate table public.demand;
 truncate table public.leave_requests;
 truncate table public.snapshots;
@@ -16382,54 +16727,14 @@ truncate table public.snapshots;
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Batch provisioning real Supabase user accounts</b></summary>
-<p>Direct answers to the 3 questions this feature was built to answer:</p>
-<ol>
-<li><b>Tedious one at a time?</b> Yes, at real headcount (100+ names across both departments) via the Supabase Dashboard alone — this batch tool (Settings → Users &amp; roles → "👥 Batch provision users…," enabled once connected) provisions accounts in bulk instead.</li>
-<li><b>Can it work with no phone/email at all?</b> No — Supabase Auth requires at least one identifier per account: a real email, a real phone number (needs a separate paid SMS provider not set up here), or a placeholder email the hotel's own domain never needs to actually receive mail at. This tool auto-generates that placeholder for any row with no real email supplied — a real address is never required, but some string in the email slot always is; that's a hard Supabase Auth constraint.</li>
-<li><b>Can an Excel file be uploaded to batch-create?</b> Yes — this tool accepts a CSV or .xlsx file (Name, Email, Role, Dept columns; a "Download sample CSV" button provides a ready-to-edit template), reusing this app's own CSV/XLSX parsing already used elsewhere.</li>
-</ol>
-<p><b>The one genuine limitation:</b> Supabase's admin user-creation API (pre-confirmed, no email round-trip) requires the service role key, which must never sit in client-side code. This tool uses the safe self-serve signUp() API instead — the same one "Sign in" already relies on. Consequence: signUp() sends a confirmation email per account by default, and a placeholder email can never receive it.</p>
+<p>Provisioning 100+ accounts one at a time through the Supabase Dashboard alone is genuinely tedious at real headcount — this batch tool (Settings → Users &amp; roles → "👥 Batch provision users…," enabled once connected) creates accounts in bulk instead. It accepts a CSV or .xlsx file (Name, Email, Role, Dept columns; a "Download sample CSV" button provides a ready-to-edit template), reusing this app's own CSV/XLSX parsing already used elsewhere.</p>
+<p>Supabase Auth requires at least one identifier per account — a real email, a real phone number (needs a separate paid SMS provider not set up here), or a placeholder email the hotel's own domain never needs to actually receive mail at. This tool auto-generates that placeholder for any row with no real email supplied, so a real address is never required, though some string in the email slot always is.</p>
+<p><b>One genuine limitation to know going in:</b> Supabase's admin user-creation API (pre-confirmed, no email round-trip) requires the service role key, which must never sit in client-side code. This tool uses the safe self-serve signUp() API instead — the same one "Sign in" already relies on. Consequence: signUp() sends a confirmation email per account by default, and a placeholder email can never receive it.</p>
 <p><mark style="background:#ffe08a"><b>Action required (one-time)</b></mark>: before the first batch, in the Supabase Dashboard go to Authentication → Providers → Email and turn OFF "Confirm email" (not possible from within this app). Once off, every signUp() creates an immediately-usable account.</p>
 <p>Processing is sequential (one account at a time) to avoid tripping Supabase's own rate-limiting. Each row's real role (viewer/scheduler/manager) and department scope (FO/HSK/blank=both) are written into the same <code>user_roles</code> table the existing "Sign in" flow already reads from — a provisioned account can sign in immediately with correctly recognized permissions. Results (success/failure per row) are shown in a table, and a "⬇ Download credentials" button exports a CSV of email + auto-generated temp password pairs — the only time those passwords are ever shown, since this app never stores them afterward.</p>
 <p><b>Schedule-edit and Settings-edit are separate permissions</b> for a Supabase account, matching the 4 separate columns in <code>user_roles</code>: <code>can_edit_fo</code>/<code>can_edit_hsk</code> control the schedule grid (per department or blank=both); <code>can_edit_fo_settings</code>/<code>can_edit_hsk_settings</code> separately control Rules &amp; thresholds, Coverage minimums, Default shifts, and the Staff roster, and are only ever set for role="manager" by this batch tool — a "scheduler" account gets schedule-edit rights without Settings-edit rights. The "Signed in as…" confirmation shown after signing in states both permissions explicitly, since one does not imply the other.</p>
 </details>
 </details>
-
-<details style="margin-top:8px"><summary style="cursor:pointer"><b>Settled items</b></summary>
-<ul class="small">
-<li><b>R-OFF vs OFF vs Unavailable:</b> R-OFF means requested time off and is treated the same as Unavailable (excluded from Could-assign/auto-fill). Plain OFF is an ordinary scheduled rest day and stays callable.</li>
-<li><b>Public Area vs A/B/Graveyard-shift PA:</b> "Public Area" in the source Excel was a section-header label; the 4 people under it are Supervisors who oversee those shifts, not Public Area attendants. The real 19-person Public Area team is the A-shift/B-shift/Graveyard-shift PA roles.</li>
-<li><b>Note types:</b> a staff note mixing unavailability ("MW off") with a shift preference ("TTH 12–8pm") is auto-split — "off" mentions become a hard block; a bare time-range mention becomes a soft, non-blocking preference.</li>
-<li><b>Paycom roster/attendance access</b> is restricted by role (department head + one designated second role per department), not a fixed headcount cap — a Paycom admin could grant additional roles access directly within Paycom.</li>
-<li><b>A registered-trademark symbol (®) genuinely appears in real source Excel cell values</b> (e.g. attached to an off-code or a shift time), reading as a stand-in for a circled "R" — an off-code carrying this symbol ("OFF ®"/"OFF®") is treated the same as R-OFF. Attached to a time value, it's stripped and ignored.</li>
-<li><b>Ahmylyn Cabrera's note</b> ("TTH class 10-13:30; F 09-12") is confirmed against all 4 available FO weeks: every one of her actual working shifts starts at 14:00 or later, never conflicting with the stated class times — consistent with the note as coded (a class, not a shift preference).</li>
-<li><b>Jessica Basaliza's note</b> reads "MW off." A "Mon/Wed 11-3, Tue/Thu 12-8pm, Fri/Sat 2-10pm" preferred-schedule reading does not match any of the 4 actual available weeks, so it is not used. 3 of 4 available weeks show her off every day; the most recent week shows her working Monday and Wednesday specifically, with times that don't match that reading either — a genuine, disclosed inconsistency; see Open questions.</li>
-<li><b>Room Attendants' fixed AM default shift</b> (08:00-16:30) is confirmed against the source Excel's own "AM-shift RA" section header. AM Houseman/PM Houseman/PM Turndown RA/Graveyard PA default shifts are inferred from their own role names — see Auto-fill above for roles that still have no such default.</li>
-<li><b>PM Houseman roster:</b> the source HSK Excel's PM-shift Houseman section consistently lists 6 people across all 3 available weeks. All 6, including John Bryan De Goma (PT), Ernest Chonggum Jr. (FT), and Paul Rivera (OC), are on the roster with types taken from their own Excel labels.</li>
-<li><b>Coverage-minimum completeness:</b> 7 roles had no coverage-minimum entry at all — FO's Front Desk Supervisor, Interns, Concierge Agent, and Valet; HSK's Relievers (on-call), Outsourced — JJ Global, and Outsourced — J4 Janitorial. All 7 now have an explicit min:0/day placeholder, visible and adjustable in Settings.</li>
-</ul>
-</details>
-
-<p><b>Open questions</b> <span class="small muted">(not yet confirmed)</span>:</p>
-<ul class="small">
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real shift times for these Relievers' remaining "1" cells: Teria Naputi, Lorien Stephen, Marian Lacsina, Kayleen Ruda, Ernoleen Welter, Carolina Calilung.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Should Task codes (GC/Laundry/Rooms/Controller/Task Force/Project) count toward a role's scheduled headcount, or stay excluded?</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is "BDY" a distinct leave code from the existing "BDH," or an alternate spelling of the same benefit?</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Exact Transportation-per-Bell-Attendant and Events-per-Valet ratios.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Should staff sort within a role by seniority/hire order instead of alphabetically?</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real Hire dates for every staff member (currently blank — no seniority rank can show until entered).</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Real pay rates (currently placeholders: FT $12, PT $11, etc.).</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Kelly Jacinto's real role — source data shows her as both a Reliever and an Outsourced (JJ Global) Room Attendant; app currently shows Reliever only.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is "Macson (OJT)" (HSK Relievers, oldest week only) still a current employee? Not added to roster pending confirmation.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Jessica Basaliza's real schedule — mostly shows off, but one recent week shows Mon/Wed shifts; currently noted "MW off."</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Is FO's "Concierge Supervisor" role still active? No staff or coverage minimum on file.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Default shift times for roles with no confirmed source (see Auto-fill section above for the full list).</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> A handful of historical cells with no safely-inferable value: single-day entries for Elsa Aguilo and Maria Teresa Ibanez; Rillen Labadnoy's "HM /10:AM" (no end time in source); Blesilda Carlos's "1 HU/PTO"; Magnonia Jacinto's "BTA/1"; and ~12 bare AM/PM times for Kayleen Ruda, Maricel Carbon, Dante Vergara, Ma. Lourdes Gueco, Jahred Etse, Generose dela Cruz, Donna Mojica.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> Lydia Antonio shows a corrupted cell ("1900-02-15 00:00:00" — an Excel date-serial artifact, one day/one week) with no recoverable original time.</li>
-<li><mark style="background:#ffe08a"><b>Pending verification</b></mark> ~90 free-text location/task notes (e.g. "3rd Floor," "Window cleaning," "Trainee-Jonas") are kept as free text today — should any become permanent shorthand codes?</li>
-<li><b>Historical data clean-up conventions (applied to the imported data):</b> bare "1" for an on-call Reliever = "called in" (displays as <b>OC</b>); "1 HU" = a room-count note, not an absence; a note + slash + OFF-family code (e.g. "generose/OFF") = off/leave with the note kept; a code + bare start time (e.g. "MB/8:30AM") is parsed the same way for any future import. 457 graveyard-shift cells reading "10:30-07:00" (a nonsensical ~20.5h shift) are corrected to "22:30-07:00" (a normal 8.5h shift).</li>
-<li><b>"F&amp;B" task code (FO):</b> recognized alongside Task Force/Project, same yellow task-highlight styling as every other task code.</li>
-</ul>
 
 <details><summary style="cursor:pointer"><b>Comparison with current Excel/Paycom workflow</b></summary>
 <ul class="small">
@@ -16574,7 +16879,7 @@ truncate table public.snapshots;
 <li><b>Vertically align text on the same line:</b> any flex row mixing different-height content must set <code>align-items:center</code> explicitly.</li>
 <li><b>A direct-child text input inside <code>.cfgrow</code> gets stretched full-width on narrow screens</b> by this app's own responsive rule — a short field that should not stretch must be wrapped in its own <code>&lt;label&gt;</code>, or given an explicit <code>type="number"/"date"/"time"</code> if it's genuinely one of those (each is exempted from the stretch rule).</li>
 <li><b>A cell value from an external source (Excel) may carry an unrelated annotation character</b> (e.g. a registered-trademark symbol found genuinely embedded in real source data) — any function that classifies or time-parses a raw cell value should strip such annotations through one shared normalizer first.</li>
-<li><b>Nested <code>&lt;details&gt;</code> elements need explicit indentation</b> — no default browser styling distinguishes a nested collapsible section from its parent; this app applies a scoped margin to <code>#readmeBody details details</code>. A <code>&lt;details&gt;</code> nested TWO levels deep must not also carry its own inline <code>margin-left</code> — that compounds on top of the CSS rule's own margin and over-indents relative to every other section.</li>
+<li><b>Nested <code>&lt;details&gt;</code> elements need explicit indentation</b> — no default browser styling distinguishes a nested collapsible section from its parent; this app applies a scoped margin to <code>#readmeBody details details, #settingsBody details details</code> (extend this selector to any future container that also gains a nested-<code>&lt;details&gt;</code> case, rather than leaving a new one unindented). A <code>&lt;details&gt;</code> nested TWO levels deep must not also carry its own inline <code>margin-left</code> — that compounds on top of the CSS rule's own margin and over-indents relative to every other section.</li>
 <li><b>A header control's height/colour should match its closest sibling control performing an equivalent action</b> — e.g. a header "Connect" button should match the height of every other header button, and the colour of Settings' own Connect button for the same action, rather than introducing a third, inconsistent visual treatment.</li>
 <li><b>An "urgency" or "overdue" signal should reuse this app's own existing visual language for that concept</b> (a corner marker, in the one case checked) rather than inventing a new one, even if the new one seems reasonable in isolation.</li>
 <li><b>A historical "lowest observed minimum" scan must correctly detect every genuine staff row</b>, including one with a blank role/type label in an adjacent column — filtering on that column being non-empty silently undercounts real staff and produces an artificially low minimum.</li>
@@ -16615,6 +16920,8 @@ truncate table public.snapshots;
 <li><b>Two CSS rules sharing the exact same selector do NOT simply have the second one "win" wholesale</b> — they cascade property-by-property: the second rule overrides only the properties it redeclares, while any property only the first rule set remains in effect. Before adding a new rule for a selector that may already exist elsewhere in this stylesheet, search for and consolidate into the existing rule rather than appending a second one.</li>
 <li><b>A native HTML <code>table-layout:fixed</code> table with a colgroup does not proportionally redistribute width when a column is later hidden via <code>display:none</code></b> — the fixed layout algorithm locks in column widths once and never recalculates them. If a table's columns can be conditionally hidden and the table should always fill its container, switch that state to <code>table-layout:auto</code> instead.</li>
 <li><b>A CSS selector targeting "the last N cells" of a table row (e.g. <code>:nth-last-child(-n+2)</code>) only reaches exactly those N cells</b> — a related label/header cell sitting before that range is not automatically covered and must be hidden with its own explicit selector referencing its own actual position.</li>
+<li><b>Overflowing-text safeguards</b> — a checklist of the specific patterns that have caused real "text overflows its border" reports in this app, checked BEFORE shipping any new label/row, not only after a report: (1) a flex container (<code>display:flex</code>) holding more than one child, at least one of which is genuinely variable-length text (a sentence, a name, a select with long option text) — MUST also set <code>flex-wrap:wrap</code>, unless every child is guaranteed to always fit on one line at every supported width. A flex row with no wrap has no fallback once its children's combined natural width exceeds the container — the last child (often an input/select) gets pushed straight past the edge, not merely cramped. (2) A <code>&lt;select&gt;</code>/<code>&lt;input&gt;</code> given a hardcoded <code>min-width</code> inside a flex row — the min-width is a hard floor the browser will never shrink below regardless of how little room is actually available; pair any such min-width with either <code>max-width:100%</code> on that same element, or a generous <code>flex-wrap:wrap</code> on its parent (ideally both). (3) <code>white-space:nowrap</code> applied to a span/div whose content is dynamic (a name, a note, a value pulled from data) without a paired <code>overflow:hidden;text-overflow:ellipsis</code> (or a parent that can genuinely grow/scroll) — nowrap alone only prevents wrapping, it does nothing to stop the element from simply extending past its container. (4) A percentage-based <code>&lt;col&gt;</code> width (in a <code>table-layout:fixed</code> table) with no accompanying <code>min-width</code> on the table itself — percentages have no floor on their own; on a narrow enough container they shrink indefinitely, forcing cell content to wrap and inflating row height, rather than the table simply overflowing into its own scrollable wrapper the way a fixed-pixel-width column already would. Give the table a min-width matching a comfortable fixed-width equivalent so a narrow container triggers horizontal scroll, not column-narrowing.</li>
+<li><b>Page-jump-on-re-render safeguards</b> — any function that replaces an element's own <code>innerHTML</code> (or recreates a scrollable wrapper element from scratch inside a template string) resets that element's <code>scrollLeft</code>/<code>scrollTop</code> to 0 as a direct consequence, even when the visible content looks unchanged to the user — this reads exactly like an unwanted "jump" (left, right, or up) whenever the rebuild is triggered by an action that has nothing to do with scrolling (committing a cell edit, a successful PIN unlock, toggling a checkbox). Before shipping any new render path that replaces a scrollable container's content: capture that container's own <code>scrollLeft</code>/<code>scrollTop</code> immediately before the replacement, and restore both via <code>requestAnimationFrame</code> (after layout, not synchronously) immediately after — see <code>render()</code>'s own grid-wrapper fix and <code>renderMobileScheduleView()</code>'s own matching fix (which additionally has to re-query the wrapper by id post-rebuild, since that specific wrapper element is destroyed and recreated, not merely have its content replaced) for the reference pattern. A focused/active element being destroyed by the same innerHTML replacement is a related, second cause of an apparent "jump" (the browser can shift focus to <code>&lt;body&gt;</code>, which may itself scroll) — see <code>renderSettings()</code>'s own <code>_activeId</code> capture/restore for that half of the pattern.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
 }
@@ -17175,11 +17482,11 @@ function _renderSettingsInner(){
        min-width:0 to every flex-child wrapper in this block so the whole section can actually shrink to fit the page
        instead of forcing it wider. -->
   <div class="cfgrow" style="background:#f4f6f8;border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:8px;margin-top:8px;min-width:0;max-width:100%;box-sizing:border-box">
-    <label class="small" style="display:flex;align-items:center;gap:6px;min-width:0;max-width:100%">This hotel's Paycom Employee ID type: <select class="sfield small" onchange="setPaycomEmployeeIdType(this.value)">
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;min-width:0;max-width:100%">This hotel's Paycom Employee ID type: <select class="sfield small" onchange="setPaycomEmployeeIdType(this.value)">
       ${["EE Code","Badge Number","Clock Sequence Number","Social Security Number"].map(t=>`<option ${paycomEmployeeIdType()===t?"selected":""}>${t}</option>`).join("")}
     </select> <span class="muted" style="font-size:11px">(documentation only — whatever is typed into each person's own "Employee ID (Paycom)" roster column is used exactly as entered, regardless of this label)</span></label>
-    <label class="small" style="display:flex;align-items:center;gap:6px">Department Code for ${esc(CFG.FO.label)} (optional): <input class="sfield small" style="width:90px" value="${esc(CFG.paycomDeptCode&&CFG.paycomDeptCode.FO||"")}" onchange="setPaycomDeptCode('FO',this.value)"></label>
-    <label class="small" style="display:flex;align-items:center;gap:6px">Department Code for ${esc(CFG.HSK.label)} (optional): <input class="sfield small" style="width:90px" value="${esc(CFG.paycomDeptCode&&CFG.paycomDeptCode.HSK||"")}" onchange="setPaycomDeptCode('HSK',this.value)"></label>
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Department Code for ${esc(CFG.FO.label)} (optional): <input class="sfield small" style="width:90px" value="${esc(CFG.paycomDeptCode&&CFG.paycomDeptCode.FO||"")}" onchange="setPaycomDeptCode('FO',this.value)"></label>
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Department Code for ${esc(CFG.HSK.label)} (optional): <input class="sfield small" style="width:90px" value="${esc(CFG.paycomDeptCode&&CFG.paycomDeptCode.HSK||"")}" onchange="setPaycomDeptCode('HSK',this.value)"></label>
         <!-- "paycom code table columns are weirdly wide and only scrolls to show this app's code in narrow view, it should
          behave like the autodeny table" — raised multiple times despite several earlier attempts. FIXED by mirroring the
          autodeny table's own proven structure EXACTLY: (1) removed the extra flex-direction:column wrapping <div> this
@@ -17311,7 +17618,7 @@ function _renderSettingsInner(){
          dropdown text elsewhere) \u2014 the full text remains available via a real title attribute (reflecting the
          CURRENTLY selected option), so nothing is silently hidden, only visually truncated when the dropdown itself is
          closed. -->
-    <label class="small" style="display:flex;align-items:center;gap:6px;margin-top:2px;max-width:100%">Show this note when: <select class="sfield small" style="min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sameDayOffNoteScope()==="workerInitiated"?"Worker-initiated only — approving a leave request the worker themselves submitted":"Both — approving a leave request AND manually assigning Off/leave in the grid"}" onchange="setSameDayOffNoteScope(this.value)">
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-top:2px;max-width:100%">Show this note when: <select class="sfield small" style="min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${sameDayOffNoteScope()==="workerInitiated"?"Worker-initiated only — approving a leave request the worker themselves submitted":"Both — approving a leave request AND manually assigning Off/leave in the grid"}" onchange="setSameDayOffNoteScope(this.value)">
       <option value="both" ${sameDayOffNoteScope()==="both"?"selected":""}>Both — approving a leave request AND manually assigning Off/leave in the grid</option>
       <option value="workerInitiated" ${sameDayOffNoteScope()==="workerInitiated"?"selected":""}>Worker-initiated only — approving a leave request the worker themselves submitted</option>
     </select></label>
@@ -17325,9 +17632,9 @@ function _renderSettingsInner(){
        a text input to full width explicitly EXEMPTS type="number"/"date"/"time" inputs — but these 3, despite being
        genuinely numeric (a minute count) and already sized with an explicit width:44px, were never given type="number", so
        they fell into the generic full-width text-input bucket instead of the numeric exemption. -->
-  <label class="small" style="display:flex;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInLateGraceMinutes!=null?CFG.clockInLateGraceMinutes:CLOCKIN_LATE_GRACE_MINUTES_DEFAULT}" onchange="setClockInLateGrace(this.value)"> min after a shift's scheduled end</label>
-  <label class="small" style="display:flex;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInLateStartGraceMinutes!=null?CFG.clockInLateStartGraceMinutes:CLOCKIN_LATE_START_GRACE_MINUTES_DEFAULT}" onchange="setClockInLateStartGrace(this.value)"> min after a shift's scheduled start (running late)</label>
-  <label class="small" style="display:flex;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInEarlyGraceMinutes!=null?CFG.clockInEarlyGraceMinutes:CLOCKIN_EARLY_GRACE_MINUTES_DEFAULT}" onchange="setClockInEarlyGrace(this.value)"> min before a shift's scheduled start (too early)</label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInLateGraceMinutes!=null?CFG.clockInLateGraceMinutes:CLOCKIN_LATE_GRACE_MINUTES_DEFAULT}" onchange="setClockInLateGrace(this.value)"> min after a shift's scheduled end</label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInLateStartGraceMinutes!=null?CFG.clockInLateStartGraceMinutes:CLOCKIN_LATE_START_GRACE_MINUTES_DEFAULT}" onchange="setClockInLateStartGrace(this.value)"> min after a shift's scheduled start (running late)</label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Warn on clock-in more than <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.clockInEarlyGraceMinutes!=null?CFG.clockInEarlyGraceMinutes:CLOCKIN_EARLY_GRACE_MINUTES_DEFAULT}" onchange="setClockInEarlyGrace(this.value)"> min before a shift's scheduled start (too early)</label>
   <hr style="width:100%;border:none;border-top:1px solid var(--line);margin:2px 0">
     <!-- Shortened this label "line break before autocompute actual hours unnecessary, can be in same line as checkbox". The
        removed parenthetical is already covered by the description directly below; restating it here was what pushed the
@@ -17366,7 +17673,7 @@ function _renderSettingsInner(){
   <label class="small" style="display:flex;align-items:center;gap:6px">Unpaid break: <input class="sfield no-spin" type="number" min="0" step="1" style="width:44px" value="${CFG.unpaidBreakMinutes!=null?CFG.unpaidBreakMinutes:BREAK_MINUTES_DEFAULT}" onchange="setBreakMinutes(this.value)"> min per <select class="sfield" onchange="setBreakPer(this.value)"><option value="shift" ${(CFG.unpaidBreakPer||BREAK_PER_DEFAULT)==="shift"?"selected":""}>Shift</option><option value="day" ${(CFG.unpaidBreakPer||BREAK_PER_DEFAULT)==="day"?"selected":""}>Day</option></select></label>
   <label class="small" style="display:flex;align-items:center;gap:6px">Show overtime as: <select class="sfield" onchange="CFG.otDisplayMode=this.value;save('hotel_cfg',CFG);render();"><option value="hours" ${(CFG.otDisplayMode||"hours")==="hours"?"selected":""}>Hours (e.g. 4h OT)</option><option value="dollar" ${CFG.otDisplayMode==="dollar"?"selected":""}>Dollar cost (e.g. $90 OT)</option><option value="percent" ${CFG.otDisplayMode==="percent"?"selected":""}>% of hours worked (e.g. 9% OT)</option><option value="all" ${CFG.otDisplayMode==="all"?"selected":""}>All three</option></select></label>
   <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.taskCodesCombineTime!==false?"checked":""} onchange="setTaskCodesCombineTime(this.checked)"> <span class="small">Allow shifts with assignments (e.g., Task Force, Project) to count towards total hours when start and end times set.</span></label>
-  <label class="small" style="display:flex;align-items:center;gap:6px" title="Start-time only (default): a shift counts toward exactly one band — whichever its own start time falls into — never a neighbor, even if it runs into one. Any overlap: a shift counts toward every band it genuinely overlaps in time, even briefly — but this means one person can satisfy 2+ bands' minimums at once, since the same physical shift is being counted more than one place.">Non-standard shift → coverage: <select class="sfield" style="width:140px" onchange="setShiftBandCreditMode(this.value)"><option value="start" ${(CFG.shiftBandCreditMode||"start")==="start"?"selected":""}>Start time only</option><option value="overlap" ${CFG.shiftBandCreditMode==="overlap"?"selected":""}>Every overlap</option></select></label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px" title="Start-time only (default): a shift counts toward exactly one band — whichever its own start time falls into — never a neighbor, even if it runs into one. Any overlap: a shift counts toward every band it genuinely overlaps in time, even briefly — but this means one person can satisfy 2+ bands' minimums at once, since the same physical shift is being counted more than one place.">Non-standard shift → coverage: <select class="sfield" style="width:140px" onchange="setShiftBandCreditMode(this.value)"><option value="start" ${(CFG.shiftBandCreditMode||"start")==="start"?"selected":""}>Start time only</option><option value="overlap" ${CFG.shiftBandCreditMode==="overlap"?"selected":""}>Every overlap</option></select></label>
   </div>
   </details>
     <!-- PTO accrual settings, see ACCRUAL_RATE_DEFAULT's own comment for the full engine this configures. GLOBAL (both
@@ -17380,8 +17687,8 @@ function _renderSettingsInner(){
   <div class="mrow" style="align-items:center;flex-wrap:wrap">
     ${["FT","PT","OC","INT"].map(t=>`<label class="small" style="display:flex;align-items:center;gap:4px">${t}: <input class="sfield no-spin" type="number" min="0" step="0.001" style="width:70px" value="${accrualRateFor(t)}" onchange="setAccrualRate('${t}',this.value)"></label>`).join("")}
   </div>
-  <label class="small" style="display:flex;align-items:center;gap:6px">Hours deducted per PTO day: <input class="sfield no-spin" type="number" min="0" step="0.5" style="width:56px" value="${accrualHoursPerPtoDay()}" onchange="setAccrualHoursPerPtoDay(this.value)"></label>
-  <label class="small" style="display:flex;align-items:center;gap:6px" title="Year-end carryover: at the first check each new calendar year, any balance above this cap is forfeited (a standard use-it-or-lose-it rule).">Max carryover at year-end: <input class="sfield no-spin" type="number" min="0" step="1" style="width:56px" value="${accrualCarryoverMax()}" onchange="setAccrualCarryoverMax(this.value)"> hours</label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Hours deducted per PTO day: <input class="sfield no-spin" type="number" min="0" step="0.5" style="width:56px" value="${accrualHoursPerPtoDay()}" onchange="setAccrualHoursPerPtoDay(this.value)"></label>
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px" title="Year-end carryover: at the first check each new calendar year, any balance above this cap is forfeited (a standard use-it-or-lose-it rule).">Max carryover at year-end: <input class="sfield no-spin" type="number" min="0" step="1" style="width:56px" value="${accrualCarryoverMax()}" onchange="setAccrualCarryoverMax(this.value)"> hours</label>
   <button onclick="runAccrualCatchupBothDepts()">Recalculate balances now</button>
   <div class="small muted">Balances only ever count forward from when this feature is first used for each person — see the roster's own "PTO Bal." column to view/adjust an individual's real starting balance from your HR records.</div>
   </div>
@@ -17737,7 +18044,7 @@ function _renderSettingsInner(){
       // "dropdown list order should be either broadest to narrowest... Or the reverse" — now genuinely
       // broadest-to-narrowest: unavailable+pending+approved \u2192 pending+approved \u2192 approved-only.
       const _countMode=autoDenyCountModeForDept(SETDEPT);
-      return `<label class="small" style="display:flex;align-items:center;gap:6px">Preview count for date: <input type="date" required class="sfield small" value="${_previewDate}" onchange="CFG._autoDenyPreviewDate=this.value;save('hotel_cfg',CFG);renderSettings();"></label>
+      return `<label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Preview count for date: <input type="date" required class="sfield small" value="${_previewDate}" onchange="CFG._autoDenyPreviewDate=this.value;save('hotel_cfg',CFG);renderSettings();"></label>
       <label class="small" style="display:flex;align-items:center;gap:6px">Count toward cap: <select class="sfield small" onchange="setAutoDenyCountMode('${SETDEPT}',this.value)">
         <option value="unavailable" ${_countMode==="unavailable"?"selected":""}>Unavailable + pending + approved</option>
         <option value="all" ${_countMode==="all"?"selected":""}>Pending + approved (any non-denied request)</option>
@@ -17837,7 +18144,7 @@ function _renderSettingsInner(){
       </select></label>
       ${(_rankSettingsScope&&!roleHasRankOverride(SETDEPT,_rankSettingsScope))?`<span class="muted" style="font-size:11px">Click \u2018Customize for this role\u2026\u2019 above first to set a role-specific mode.</span>`:""}
     </div>
-    <label class="small" style="display:flex;align-items:center;gap:6px">Clopening threshold: <input class="sfield no-spin" style="width:44px" type="number" min="0" step="0.5" value="${clopeningThresholdFor(SETDEPT,_rankSettingsScope||null)}" ${(_rankSettingsScope&&!roleHasRankOverride(SETDEPT,_rankSettingsScope))?"disabled title=\"Click \u2018Customize for this role\u2026\u2019 above first to set a role-specific threshold\"":""} onchange="setClopeningThreshold(this.value)"> hours of rest below which manual entries are blocked (override available) and Auto-fill ranks lower</label>
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Clopening threshold: <input class="sfield no-spin" style="width:44px" type="number" min="0" step="0.5" value="${clopeningThresholdFor(SETDEPT,_rankSettingsScope||null)}" ${(_rankSettingsScope&&!roleHasRankOverride(SETDEPT,_rankSettingsScope))?"disabled title=\"Click \u2018Customize for this role\u2026\u2019 above first to set a role-specific threshold\"":""} onchange="setClopeningThreshold(this.value)"> hours of rest below which manual entries are blocked (override available) and Auto-fill ranks lower</label>
         <!-- "make more concise" \u2014 shortened from "hours of rest below which a shift is BOTH blocked when typed manually
          (override available) AND ranked lower by Auto-fill" to the line just above, preserving both stated behaviors (the
          hard manual block with its override, and the separate Auto-fill ranking effect) in fewer words. -->
@@ -17878,7 +18185,7 @@ function _renderSettingsInner(){
          staffing patterns between departments (e.g. Housekeeping's own higher headcount/turnover vs. A smaller Front
          Office team) can now genuinely tune how many weeks of history "fairness" looks back over independently for each
          one, rather than being forced to share one single number across both. -->
-    <label class="small" style="display:flex;align-items:center;gap:6px">Multi-week fairness (${esc(CFG[SETDEPT].label)} only): look back over the last <input class="sfield no-spin" style="width:44px" type="number" min="1" max="13" step="1" value="${((CFG[SETDEPT].multiWeekFairnessWeeks!=null)?CFG[SETDEPT].multiWeekFairnessWeeks:MULTIWEEK_FAIRNESS_WEEKS_DEFAULT)+1}" onchange="setMultiWeekFairnessTotalWeeks(this.value)"> week(s) <span class="small muted">(includes this week; used by the "fairness" auto-fill ranking factor)</span></label>
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Multi-week fairness (${esc(CFG[SETDEPT].label)} only): look back over the last <input class="sfield no-spin" style="width:44px" type="number" min="1" max="13" step="1" value="${((CFG[SETDEPT].multiWeekFairnessWeeks!=null)?CFG[SETDEPT].multiWeekFairnessWeeks:MULTIWEEK_FAIRNESS_WEEKS_DEFAULT)+1}" onchange="setMultiWeekFairnessTotalWeeks(this.value)"> week(s) <span class="small muted">(includes this week; used by the "fairness" auto-fill ranking factor)</span></label>
         <!-- "make more concise" \u2014 shortened from "Priority order below (1 = checked first when breaking ties among
          otherwise-eligible candidates) — drag the grip handle or use the dropdown to reorder; check "Disregard" to skip a
          factor entirely" to the line just below. -->
@@ -18971,6 +19278,21 @@ async function supaLogin(){
     if(qerr){uiAlert("Signed in, but couldn't read your role: "+qerr.message+"\n\nCheck the user_roles RLS policy.");}
     const r=(rows&&rows[0])||{role:"viewer"};
     SUPA_USER={email:email.trim(),role:r.role||"viewer",fo:!!r.can_edit_fo,hsk:!!r.can_edit_hsk,fos:!!r.can_edit_fo_settings,hsks:!!r.can_edit_hsk_settings,manager:(r.role==="manager")};
+    // FIXED "badge shows locked padlock even when signed into FO and on the FO dept page": logging in here only
+    // ever populated SUPA_USER's own permission flags — it never actually set EDIT/EDIT_DEPT/EDITMEM, so BOTH the
+    // classic header's #authBtn and the app-mode #appModeAuthBadge (which read the identical EDIT/partialEditDepts()
+    // state, not SUPA_USER directly — see syncAppModeAuthBadge()'s own comment) kept showing locked/view-only right
+    // after a successful login, even for an account with real schedule-edit permission, until a SEPARATE, second
+    // click on the lock button (toggleEdit()\u2192unlockDeptForEdit(), which only THEN checks supaCanEdit() and
+    // finally sets EDIT=true) was made \u2014 two actions where a signed-in, already-permitted account should
+    // reasonably expect one. Auto-applies that same grant immediately, for the CURRENTLY-VIEWED department only, if
+    // this account already has real edit permission for it \u2014 genuinely reusing unlockDeptForEdit()'s own
+    // supaCanEdit()-checked grant logic (not a separate implementation), so both badges correctly show unlocked
+    // right after login without requiring that extra click. An account with no edit permission for the current
+    // department (e.g. a viewer, or one scoped only to the OTHER department) is completely unaffected \u2014 it
+    // still starts view-only/partial exactly as before, with the lock button still available to try the other
+    // department or a PIN.
+    if(supaCanEdit(DEPT)){CURRENT_USER={name:SUPA_USER.email,role:SUPA_USER.role};EDIT=true;EDIT_DEPT=DEPT;EDITMEM[DEPT]=CURRENT_USER;}
     // Schedule-edit (can_edit_fo/can_edit_hsk) and Settings-edit (can_edit_fo_settings/can_edit_hsk_settings) are
     // separate permissions (see supaCanEditSettings()'s own comment) — stated as two distinct lines here so a
     // signed-in account can see BOTH at a glance, rather than assuming schedule access implies settings access.
@@ -22018,8 +22340,18 @@ function renderNotificationsSettingsBlock(){
   return `<div class="cfgrow" style="background:#f4f6f8;border-radius:6px;padding:8px 10px;margin-top:8px"><span class="small muted">Shift reminders for a worker, and/or attendance alerts for a manager, on this device. See Readme for full detail and cross-platform notes.</span></div>
   <div class="cfgrow">${statusLine}</div>
   <div class="mrow" style="align-items:center">
-    <label class="small" style="display:flex;align-items:center;gap:6px">Remind me about my own shifts, as:
-    <select class="sfield small" id="notifName" style="min-width:220px" autocomplete="off">
+    <!-- FIXED "settings notif text overflows from border" (part of a full-app overflow sweep — see this label's own
+     sibling below for the matching fix, and the sweep's other fixes elsewhere in this file). ROOT CAUSE: this label
+     is display:flex with NO flex-wrap of its own (unlike its OWN parent .mrow, which does wrap) — so its two
+     children (the "Remind me..." text, and the <select>) were forced onto one single, non-wrapping row. The select
+     also carried a hardcoded min-width:220px it could never shrink below, regardless of available space. On a
+     narrow phone, once the label's own text ate up most of the row, the select's fixed 220px floor had nowhere left
+     to fit and was pushed past the card's own right edge — a genuine horizontal overflow, not just a cramped fit.
+     flex-wrap:wrap lets the select drop to its own new line when needed (matching every other multi-child label in
+     this Settings tab); min-width lowered and max-width:100% added so the select itself can also shrink to fit a
+     genuinely narrow screen rather than overflowing on that line too. -->
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Remind me about my own shifts, as:
+    <select class="sfield small" id="notifName" style="min-width:160px;max-width:100%" autocomplete="off">
       <option value="">(no personal reminders \u2014 manager alerts only)</option>
       ${opts.map(o=>`<option value="${esc(o.name)}" ${o.name===curName?"selected":""}>${esc(o.name)}${o.altName?" (also: "+esc(o.altName)+")":""} (${esc(roleDisplayNameProper(o.role))}, ${esc(CFG[o.dept].label)})</option>`).join("")}
     </select></label>
@@ -22050,7 +22382,11 @@ function renderNotificationsSettingsBlock(){
        (not a single global boolean) — two independent checkboxes below, one per department, so a
        manager/scheduler only gets alerts for the department(s) actually relevant to them. -->
   <div class="mrow" style="align-items:center">
-    <label class="small" style="display:flex;align-items:center;gap:6px">Also alert me as a manager/scheduler if a worker doesn't clock in/out as scheduled, for:
+    <!-- Same "text overflows from border" root cause/fix as the label just above (display:flex with no wrap of its
+     own, this time holding a long sentence PLUS two nested checkbox-labels as children) — flex-wrap:wrap added so
+     the FO/HSK checkboxes can drop to their own line under the sentence on a narrow phone instead of being forced
+     off the right edge. -->
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Also alert me as a manager/scheduler if a worker doesn't clock in/out as scheduled for:
       <label class="small" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" id="notifMgrFO" ${(CFG._notifManagerDepts||[]).includes("FO")?"checked":""}> ${esc(CFG.FO.label)}</label>
       <label class="small" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" id="notifMgrHSK" ${(CFG._notifManagerDepts||[]).includes("HSK")?"checked":""}> ${esc(CFG.HSK.label)}</label>
     </label>
@@ -22059,18 +22395,50 @@ function renderNotificationsSettingsBlock(){
     <button class="brand" onclick="enableNotifications(el('notifName').value,[el('notifMgrFO').checked?'FO':null,el('notifMgrHSK').checked?'HSK':null].filter(Boolean),el('notifRoomAssign').checked)">${enabled?"Update":"Enable"} notifications on this device</button>
     ${enabled?'<button onclick="disableNotifications()">Disable on this device</button>':""}
   </div>
-    <!-- Three separate diagnostic tools, each isolating a DIFFERENT stage of the notification pipeline, so they are grouped
-       together visually (their own labeled row) but kept as distinct buttons rather than merged — merging would lose the
-       ability to tell which specific stage is failing: - Send test: foreground delivery only (bypasses timing/de-dupe
-       logic entirely). - Diagnose reminder: the timing/attendance logic only (why a specific shift did/didn't flag), for
-       the person selected above. - Check background push: whether this device's push subscription reached the shared
-       database — the one thing a foreground test can never confirm, since it never touches the server. -->
-  ${enabled?`<div class="cfgrow" style="margin-top:6px">
-    <span class="small muted" style="flex:0 0 100%">Diagnostics:</span>
+    <!-- Three separate diagnostic tools, each isolating a DIFFERENT stage of the notification pipeline, so they are
+       grouped together but kept as distinct buttons rather than merged — merging would lose the ability to tell
+       which specific stage is failing: - Send test: foreground delivery only (bypasses timing/de-dupe logic
+       entirely). - Diagnose reminder: the timing/attendance logic only (why a specific shift did/didn't flag), for
+       the person selected above. - Check background push: whether this device's push subscription reached the
+       shared database — the one thing a foreground test can never confirm, since it never touches the server.
+       FIXED "notifications diagnostics still too sprawled out" — a single, collapsed-by-default <details> (this
+       app's own standard collapsible convention, used throughout Settings/Readme) now holds all three, rather than
+       always-visible buttons pushing the layout taller on every load. A single always-visible button was
+       deliberately NOT used here (unlike the Update/Disable pair above, which really are one interchangeable
+       action) — these three intentionally stay separate, since collapsing them into one button would re-introduce
+       the exact "which stage is failing" ambiguity this section's own design was built to avoid.
+       FIXED "expand Diagnostics, click Enable/Allow, it collapses itself again — should stay open until manually
+       collapsed": this <details> had no open-state persistence at all (no "open" attribute, no ontoggle) — every
+       call to enableNotifications() ends by calling renderSettings() (see that function's own finally block),
+       which rebuilds this ENTIRE section's innerHTML from scratch, and a freshly-built <details> with no "open"
+       attribute always starts collapsed by default, regardless of whether it was open a moment ago. Fixed with the
+       exact same CFG-backed open/ontoggle pattern this app already uses for the coverage heatmap's own <details>
+       (see renderCoverageHeatmapSummaryBars()'s call site) — CFG._notifDiagOpen is a personal/device-only UI
+       preference (which panel a person likes expanded), already covered by SHARED_APP_CFG_KEYS' own stated
+       exclusion of "which panels are expanded" from sync, so no further change was needed there.
+       ALSO FIXED "diagnostics should be a subpart of Notifications, child not sibling" — reported as still
+       appearing unindented even after the general #settingsBody details details margin rule (see that rule's own
+       comment) was added. This <details> genuinely IS DOM-nested one level inside the outer Notifications &amp;
+       reminders <details> (confirmed directly from this function's own returned template — no unclosed tag sits
+       between them that could break the nesting), so the underlying descendant-selector rule should already apply
+       here — but since that couldn't be visually confirmed in a real browser at the time of this fix, indentation
+       is now ALSO set directly, inline, on this specific element (id="notifDiagDetails"), together with a visible
+       left border \u2014 a redundant, belt-and-suspenders guarantee that doesn't depend on the general rule's own
+       cascade/specificity working out correctly for this one case, on top of (not instead of) that general rule
+       still correctly covering every OTHER nested-details case in the app.
+       ALSO "should 'Diagnose today's reminder' be reminders, plural?": yes — this one button can surface up to 3
+       distinct reminder types for the selected person (upcoming-shift/clock-in/clock-out) plus a room-assignment
+       check, plus a full manager-alert table across every checked department — genuinely plural in scope, not one
+       single reminder; relabeled accordingly (see diagnoseReminders()'s own logic for the full breakdown this
+       button actually computes). -->
+  ${enabled?`<details id="notifDiagDetails" style="margin-top:6px;margin-left:18px;padding-left:10px;border-left:2px solid var(--line);" ${CFG._notifDiagOpen?"open":""} ontoggle="CFG._notifDiagOpen=this.open;save('hotel_cfg',CFG);">
+    <summary class="small muted" style="cursor:pointer">Diagnostics</summary>
+    <div class="cfgrow" style="margin-top:6px">
     <button onclick="sendTestNotification()" title="Fires a notification immediately, bypassing the attendance/timing logic and the once-per-day de-duplication \u2014 confirms whether delivery itself works on this device">\ud83d\udd14 Send test notification</button>
-    <button onclick="diagnoseReminders()" title="Shows exactly what this app currently computes for today\u2019s shift for the person selected above \u2014 use this to see why a specific test did or didn\u2019t fire">\ud83d\udd0d Diagnose today\u2019s reminder</button>
+    <button onclick="diagnoseReminders()" title="Shows exactly what this app currently computes for today\u2019s shift(s) for the person selected above (and any manager-alert departments checked) \u2014 use this to see why a specific test did or didn\u2019t fire">\ud83d\udd0d Diagnose today\u2019s reminders</button>
     <button onclick="checkBackgroundPushStatus()" title="Confirms whether this device\u2019s background push subscription actually reached the shared database \u2014 a foreground test cannot tell you this, since it never touches the server">\ud83d\udce1 Check background push status</button>
-  </div>`:""}
+    </div>
+  </details>`:""}
   <div id="reminderDiag"></div>
     <!-- "still not getting notification" after repeated same-day tests \u2014 added to isolate two, easily-confused failure
        modes that look IDENTICAL from the outside ("nothing appeared") but have completely different causes and fixes: (1)
@@ -22158,7 +22526,27 @@ async function checkBackgroundPushStatus(){
     box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
     return;
   }
-  const reg=await navigator.serviceWorker.getRegistration();
+  // FIXED "nothing happens when I click Check background push status, see console error" \u2014 an UNCAUGHT
+  // "Uncaught (in promise) SecurityError: Failed to get a ServiceWorkerRegistration: The URL protocol of the
+  // current origin ('null') is not supported" was thrown right here and never caught anywhere, silently aborting
+  // this entire function before it ever reached the box.innerHTML= line further down \u2014 exactly matching the
+  // reported "button does nothing, only the console shows anything." ROOT CAUSE: the "serviceWorker" in navigator
+  // check just above only confirms the PROPERTY/interface exists \u2014 it says nothing about whether calling one
+  // of its actual async methods will succeed. navigator.serviceWorker.getRegistration() specifically REJECTS with
+  // this exact SecurityError whenever the page's own origin isn't a secure context eligible for service workers \u2014
+  // most commonly, opening this HTML file directly from disk (a file:// URL, origin "null") rather than serving it
+  // over http/https, which is unsupported for Service Workers/Push by every major browser (see the Readme's own
+  // new "Running this app over file://" note for the full explanation and fix). Wrapping this call so a rejection
+  // is caught and clearly explained here \u2014 rather than crashing the whole diagnostic silently \u2014 is the fix;
+  // it does not change what's ACTUALLY possible on a file:// origin (background push still genuinely cannot work
+  // there), it only makes that limitation visible instead of an unexplained no-op.
+  let reg=null,_regErr=null;
+  try{reg=await navigator.serviceWorker.getRegistration();}catch(e){_regErr=e;}
+  if(_regErr){
+    rows.push(`<tr><td>Service worker registered?</td><td><b>Could not check</b> \u2014 ${esc(_regErr.message||String(_regErr))}${/protocol|secure|SecurityError/i.test(String(_regErr))?" \u2014 this specific wording almost always means this page is being opened directly from disk (a file:// URL) rather than served over http/https. Service Workers (and therefore background push) are unsupported on a file:// origin in every major browser, with no workaround \u2014 the app must be hosted (even a simple local web server, or a real host like GitHub Pages) for this feature to ever work. In-app/foreground reminders (the button above) do NOT require this and continue to work regardless.":""}</td></tr>`);
+    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
+    return;
+  }
   rows.push(`<tr><td>Service worker registered?</td><td>${reg?"Yes":"<b>No</b> \u2014 check that manifest.json/sw.js were actually uploaded to the SAME folder as this app file on your host (see Readme's install guide)."}</td></tr>`);
   let sub=null;
   if(reg&&reg.pushManager){try{sub=await reg.pushManager.getSubscription();}catch(e){}}
@@ -22191,6 +22579,32 @@ async function checkBackgroundPushStatus(){
   }else if(sub&&!DB){
     rows.push(`<tr><td>Registered in the shared database?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync), which will also automatically upload this existing subscription if it hasn't reached the server yet.</td></tr>`);
   }
+  // FIXED a real, confirmed observability gap (see function_heartbeat's own SQL/Edge-Function comments for the
+  // full "notified_events only fills in when a REAL attendance violation happens, so a hotel with clean attendance
+  // looks identical to a never-scheduled cron job" root cause). This is the ONE check on this whole page that can
+  // actually confirm the server-side function is executing on schedule, independent of whether there happens to be
+  // any real attendance issue to report \u2014 every other row above only ever confirms THIS DEVICE's own
+  // subscription reached the database, never that anything server-side ever ran.
+  if(DB){
+    try{
+      const{data:hbRows,error:hbErr}=await DB.from("function_heartbeat").select("*").eq("id","attendance-reminders");
+      const hb=(hbRows&&hbRows[0])||null;
+      if(hbErr){
+        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Could not check</b> \u2014 ${esc(hbErr.message||String(hbErr))}${/permission|RLS|policy/i.test(hbErr.message||"")?" \u2014 likely means function_heartbeat's own GRANT/RLS SQL hasn't been (re-)run yet on this project (see the deploy guide above).":""}</td></tr>`);
+      }else if(!hb){
+        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Never confirmed</b> \u2014 no heartbeat row exists yet. This means either the attendance-reminders Edge Function has never been deployed, or it has never actually been invoked (e.g. no cron schedule set up for it yet) \u2014 see the deploy guide's own "Schedule it to run every 5 minutes" step.</td></tr>`);
+      }else{
+        const _lastRun=new Date(hb.last_run_at);
+        const _ageMin=Math.round((Date.now()-_lastRun.getTime())/60000);
+        const _stale=_ageMin>20; // generous margin over the deploy guide's own 5-minute cron interval
+        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td>${_stale?"<b>Likely NOT running on schedule</b>":"<b>Yes</b>"} \u2014 last confirmed check-in was ${_ageMin<1?"less than a minute ago":_ageMin+" minute(s) ago"} (${esc(_lastRun.toLocaleString())}).${_stale?" A gap this large, if a 5-minute cron schedule was set up, most likely means the cron schedule itself was never actually created/enabled in the Supabase dashboard (Edge Functions \\u2192 attendance-reminders \\u2192 Cron), or the function is failing before reaching this heartbeat line \\u2014 check its own execution logs directly for the real error.":" This is independent of whether any real attendance issue happened to exist \u2014 it confirms the function itself is genuinely executing, which a permanently-empty notified_events table alone could never prove."}</td></tr>`);
+      }
+    }catch(e){
+      rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
+    }
+  }else{
+    rows.push(`<tr><td>Server-side function actually running on schedule?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync).</td></tr>`);
+  }
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway \u2014 it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
 }
@@ -22202,7 +22616,11 @@ async function checkBackgroundPushStatus(){
 async function retryPushUploadNow(){
   if(!DB){uiAlert("Not connected \u2014 connect to the shared live copy first (Settings \u2192 Live sync).");return;}
   if(!("serviceWorker" in navigator)){uiAlert("Service workers aren't supported in this browser.");return;}
-  const reg=await navigator.serviceWorker.getRegistration();
+  // Same fix/root cause as checkBackgroundPushStatus()'s own matching try/catch \u2014 getRegistration() can reject
+  // (e.g. SecurityError on a file:// origin) even when the "serviceWorker" in navigator check above passes, and an
+  // uncaught rejection here would silently abort this whole button's action with nothing shown to the user.
+  let reg=null;
+  try{reg=await navigator.serviceWorker.getRegistration();}catch(e){uiAlert("Could not check for a service worker registration: "+(e.message||String(e))+(/protocol|secure|SecurityError/i.test(String(e))?"\n\nThis usually means this page is being opened directly from disk (a file:// URL) rather than served over http/https \u2014 background push cannot work on a file:// origin in any browser.":""));return;}
   const sub=reg&&reg.pushManager?await reg.pushManager.getSubscription():null;
   if(!sub){uiAlert("No local push subscription exists on this device to upload \u2014 try Disable then Enable notifications first to create one.");return;}
   const{ok,error}=await _upsertPushSubscriptionRow(sub.toJSON());
