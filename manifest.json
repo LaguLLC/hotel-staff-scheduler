@@ -9,13 +9,13 @@
   "background_color": "#f4f6f8",
   "theme_color": "#1b2a4a",
   "icons": [
-    { "src": "favicon-16x16.png", "sizes": "16x16", "type": "image/png" },
-    { "src": "favicon-32x32.png", "sizes": "32x32", "type": "image/png" },
-    { "src": "favicon-48x48.png", "sizes": "48x48", "type": "image/png" },
-    { "src": "apple-touch-icon.png", "sizes": "180x180", "type": "image/png", "purpose": "any" },
-    { "src": "android-chrome-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
-    { "src": "android-chrome-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
-    { "src": "icon-1024x1024.png", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
-    { "src": "maskable-icon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+    { "src": "favicon-16x16.png?v=__ICONV__", "sizes": "16x16", "type": "image/png" },
+    { "src": "favicon-32x32.png?v=__ICONV__", "sizes": "32x32", "type": "image/png" },
+    { "src": "favicon-48x48.png?v=__ICONV__", "sizes": "48x48", "type": "image/png" },
+    { "src": "apple-touch-icon.png?v=__ICONV__", "sizes": "180x180", "type": "image/png", "purpose": "any" },
+    { "src": "android-chrome-192x192.png?v=__ICONV__", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "android-chrome-512x512.png?v=__ICONV__", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "icon-1024x1024.png?v=__ICONV__", "sizes": "1024x1024", "type": "image/png", "purpose": "any" },
+    { "src": "maskable-icon-512x512.png?v=__ICONV__", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
   ]
 }

@@ -46,9 +46,10 @@ self.addEventListener("push", (event) => {
     self.registration.showNotification(payload.title, {
       body: payload.body,
       // Matches this repo's own actual icon filename (android-chrome-192x192.png), not a generic "icon-192.png"
-      // that may not exist under that exact name.
-      icon: "android-chrome-192x192.png",
-      badge: "android-chrome-192x192.png",
+      // that may not exist under that exact name. "?v=__ICONV__" is replaced with the real version number by
+      // the GitHub Actions workflow at deploy time — see VERSION file and .github/workflows/deploy.yml.
+      icon: "android-chrome-192x192.png?v=__ICONV__",
+      badge: "android-chrome-192x192.png?v=__ICONV__",
       tag: payload.tag || undefined,
     })
   );
