@@ -10856,13 +10856,33 @@ async function pullAll(isRetry,computeAwayBadge){
   if(computeAwayBadge===undefined)computeAwayBadge=true;
   // See _syncApplying's own comment (near _undoApplying) for the full "Undo/Redo buttons flicker on reconnect" root
   // cause this closes. Set for this entire pull (every save() call below, through the final render()) so none of it
-  // is ever mistaken for a trackable local edit; always reset via finally, even on an error/early- return path, so
-  // a failed pull can never leave this flag stuck true and silently disable undo tracking for every real edit
-  // afterward.
-  _syncApplying=true;
+  // is ever mistaken for a trackable local edit.
+  //
+  // "redo button still flickers in live mode" — a direct re-report after the earlier per-realtime-handler fix.
+  // Traced a SECOND, separate concurrency gap in this exact mechanism: this function has THREE genuinely
+  // independent trigger points that are all fire-and-forget (never awaited by their own caller) — the "sched"
+  // channel's own reconnect, the "checkins" channel's own SEPARATE, independently-scheduled reconnect (both via
+  // _scheduleRealtimeReconnect(), which its own comment already acknowledges can fire "around the same time" if
+  // both channels happen to drop together — a real, common scenario, e.g. A brief whole-connection drop affects
+  // BOTH channels at once, not just one), and this function's own schema-cache retry timer a few lines below.
+  // Any two of these firing close enough together means two overlapping, concurrent invocations of this same
+  // function are genuinely possible. The PREVIOUS version of this exact line unconditionally set
+  // `_syncApplying=false` in its own finally block — correct for a SINGLE, isolated call, but wrong the instant
+  // two overlap: whichever invocation finishes FIRST clears the flag back to false while the OTHER is still
+  // mid-flight (still awaiting its own network calls) — reopening the exact undo-tracking window this flag
+  // exists to close, for however long the slower call takes to finish. A real, unrelated realtime message
+  // arriving during that reopened window would then be incorrectly captured as a trackable local edit, clearing
+  // REDO_STACK the next time that batch commits — this class of intermittent, connection-instability-dependent
+  // timing is exactly why the symptom kept recurring specifically "in live mode," rather than happening reliably
+  // or predictably. Fixed the same way every OTHER nested user of this flag in this file already correctly
+  // handles re-entrancy: capture the PRIOR value before setting true, restore that CAPTURED value (not a bare
+  // `false`) in finally — so an overlapping outer call's own `true` is never prematurely clobbered by an inner
+  // call finishing first; only the outermost, LAST-to-finish call can ever actually restore the flag to its
+  // true baseline of `false`.
+  const _prevSyncApplying=_syncApplying;_syncApplying=true;
   try{
     return await _pullAllInner(isRetry,computeAwayBadge);
-  }finally{_syncApplying=false;}
+  }finally{_syncApplying=_prevSyncApplying;}
 }
 async function _pullAllInner(isRetry,computeAwayBadge){
   // Snapshotted BEFORE any table below is pulled/overwritten — this is "what this device already had" going into
@@ -19346,13 +19366,13 @@ function _renderSettingsInner(){
   // (initTableRowColFocus()) rather than reusing the schedule grid's own name/day-specific logic, which doesn't
   // apply here.
   initTableRowColFocus("staffRosterTable");
-  // See initLockOverlayScrollForwarding()'s own comment for the full "roster doesn't scroll while locked" root
-  // cause this fixes — bound fresh here every Settings render, matching initTableRowColFocus()'s own identical
-  // convention just above.
+  // See initSettingsScrollBoundaryFix()'s/initLockOverlayScrollForwarding()'s own comments for the full
+  // "trackpad scroll inconsistent/stuck in Settings" root cause these fix — bound fresh here every Settings
+  // render, matching initTableRowColFocus()'s own identical convention just above. Covers EVERY genuinely-
+  // scrollable box in Settings generically (roster, former-staff, audit log, auto-deny table, and any future
+  // one), not a hardcoded list of specific elements.
+  initSettingsScrollBoundaryFix();
   initLockOverlayScrollForwarding();
-  // See initRosterNativeScrollBoundaryFix()'s own comment for the full "trackpad scroll gesture stays stuck on
-  // the roster even after the cursor moves elsewhere" root cause this fixes for the UNLOCKED/native case.
-  initRosterNativeScrollBoundaryFix();
   // \u2014 see _refreshDateInputColors()'s own comment for the full cross-browser root-cause writeup (Firefox has
   // no CSS hook for a native date input's own internal placeholder segments at all). Settings has its own large set
   // of date inputs (Hire date, Birthday, PTO ledger dates, etc.) needing the same initial-color pass every time
@@ -19449,59 +19469,89 @@ function bindTableKeyboardNav(containerEl){
   containerEl.addEventListener("keydown",_tableKeyNavHandler);
   _tableKeyNavBound=true;
 }
-// "roster in settings doesn't scroll when locked (frozen midway) — should be visible just not editable until
-// logged in". Root cause, confirmed via direct DOM/CSS inspection: .lockOverlay (position:absolute;inset:0, see
-// that rule's own comment) sits as a SIBLING of the <fieldset> it locks — never an ANCESTOR of that fieldset's
-// own scrollable descendants (e.g. the staff roster's own #staffRosterTable .tblwrap, deliberately capped at
-// max-height:70vh with its own overflow:auto so a long roster scrolls internally rather than growing the whole
-// page). A mouse-wheel or touch-drag gesture over the locked area lands on the overlay (topmost, z-index:5) —
-// and since a browser routes wheel/touch scrolling to the nearest SCROLLABLE ANCESTOR of whatever element the
-// gesture actually landed on, and the overlay's own ancestor chain does not include the fieldset's own tblwrap (a
-// sibling's descendant, never an ancestor), the gesture either scrolls the outer page instead or does nothing at
-// all — leaving the roster visually stuck after its own first ~70vh of rows, with no way to reach the rest while
-// locked. This manually forwards both wheel and touch-drag scrolling from the overlay to whichever scrollable
-// .tblwrap sits inside its own sibling fieldset, so the roster (and any future lockOverlay-gated section that
-// ever gains its own internally-scrollable content) stays fully visible/scrollable while locked — only actual
-// EDITING stays blocked, exactly as intended; nothing here touches the fieldset[disabled] gating itself. A
-// genuine mouse click or an untouched touch tap is completely unaffected either way (this only ever intervenes
-// once real wheel/drag movement is detected, and only for touch — never for a mouse click, which has no separate
-// "was this a drag" ambiguity to begin with), so the existing "tap to enter your PIN" affordance
-// (onclick="unlockCurrentSettingsDept(event)", already present on every .lockOverlay) keeps working exactly as
-// before for a real tap/click.
+// "trackpad scroll still doesn't work consistently in settings esp in area between roster and upper part of
+// settings" — a direct re-report after the first pass only ever fixed the roster's own two tables specifically.
+// Traced this properly this time: Settings has (at least) FOUR genuinely internally-scrollable boxes today —
+// #staffRosterTable's own wrap, #formerStaffTable's own wrap, #auditBox (Users & roles' own change-log list), and
+// #autoDenyTable's own wrap (Leave request auto-deny) — every one of them a real max-height+overflow:auto box a
+// person's cursor can genuinely be over while trying to scroll the PAGE around it, which is exactly what "the
+// area between roster and upper part of settings" describes (#auditBox and #autoDenyTable both sit in exactly
+// that region). The original fix only ever covered the first two by their own hardcoded element ids — a real,
+// incomplete-coverage bug, not a re-occurrence of the same one. Rebuilt as ONE generic system instead: rather
+// than naming specific elements (which silently misses the next new scrollable box Settings ever gains),
+// initSettingsScrollBoundaryFix() below finds EVERY genuinely-scrollable element within #settingsBody at
+// runtime (scrollHeight>clientHeight — a real, current overflow, not just an inline style string that happens to
+// mention overflow:auto) and applies the identical fix to each, automatically covering any future addition too.
 //
-// Bound fresh every Settings render (see this function's own call site in _renderSettingsInner()) — matching this
-// app's own established "re-bind every render()" convention elsewhere (e.g. initDragSelect(), initTableRowColFocus()
-// itself, just below): #settingsBody's entire innerHTML is replaced wholesale each render, so every .lockOverlay
-// queried here is always a brand-new element with no listener of its own yet — safe to bind unconditionally, with
-// no risk of double-binding a stale handler to an element that no longer exists.
+// The underlying browser behavior being worked around, confirmed directly (not just reasoned about): a
+// continuous two-finger trackpad swipe/momentum-scroll gesture is "target-locked" to whichever element its OWN
+// FIRST wheel tick hit-tested against, and every SUBSEQUENT wheel event from that SAME physical gesture keeps
+// being dispatched to that SAME element — even once the cursor has genuinely moved outside its visual bounds
+// (confirmed via this event's own real-time clientX/clientY, which a WheelEvent always carries, same as any
+// other MouseEvent). Since the OS-level gesture-lock itself can't be prevented, each fix below instead detects
+// the mismatch on every wheel tick it still receives (it keeps receiving them precisely BECAUSE of that same
+// lock) — comparing the event's own clientX/clientY against the relevant element's CURRENT bounding box — and
+// once they've genuinely diverged, takes over and manually redirects that same scroll delta to the page's own
+// scroll position instead of letting the original element keep consuming it. A wheel tick that's still
+// genuinely within bounds is completely unaffected, preserving ordinary scrolling exactly as before.
+function _isGenuinelyScrollable(elx){
+  if(!elx)return false;
+  const cs=getComputedStyle(elx);
+  return (cs.overflowY==="auto"||cs.overflowY==="scroll")&&elx.scrollHeight>elx.clientHeight+1;
+}
+// The UNLOCKED/native case — a genuinely-scrollable box that's directly reachable (not covered by any
+// .lockOverlay), so wheel events land on IT directly; only the "gesture stays stuck past my own bounds" behavior
+// needs handling here.
+function initSettingsScrollBoundaryFix(){
+  const body=el("settingsBody");if(!body)return;
+  body.querySelectorAll("*").forEach(candidate=>{
+    if(!_isGenuinelyScrollable(candidate))return;
+    if(candidate.closest(".lockOverlayWrap")&&candidate.closest(".lockOverlayWrap").querySelector(".lockOverlay"))return; // handled separately below — an overlay physically intercepts these events before they'd ever reach this element directly
+    candidate.addEventListener("wheel",e=>{
+      const r=candidate.getBoundingClientRect();
+      if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return; // ordinary case — cursor genuinely still over this box; let native scrolling handle it exactly as before, completely untouched
+      e.preventDefault();
+      (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
+      (document.scrollingElement||document.documentElement).scrollLeft+=e.deltaX;
+    },{passive:false});
+  });
+}
+// The LOCKED case — .lockOverlay (position:absolute;inset:0, see that rule's own comment) sits as a SIBLING of
+// the <fieldset> it locks — never an ancestor of that fieldset's own scrollable descendants — so it physically
+// intercepts every wheel/touch event before any of them ever reach the real scrollable box underneath at all
+// (an ordinary browser routes wheel/touch to the nearest scrollable ANCESTOR of whatever the gesture actually
+// landed on; the overlay's own ancestor chain doesn't include a sibling's descendant). This manually forwards
+// both wheel and touch-drag scrolling from the overlay to WHICHEVER genuinely-scrollable descendant of its own
+// sibling fieldset the cursor is CURRENTLY over (hit-tested fresh on every event, not just the first one found —
+// a real, previously-incomplete assumption this rebuild also corrects, since a single locked fieldset can
+// contain more than one independent scrollable box, e.g. the shared Grid display/Leave auto-deny/Auto-fill
+// fieldset, which contains #autoDenyTable's own wrap specifically), falling back to the page's own scroll
+// otherwise. Only actual EDITING stays blocked, exactly as intended; nothing here touches the
+// fieldset[disabled] gating itself. A genuine mouse click or an untouched touch tap is completely unaffected
+// either way (this only ever intervenes once real wheel/drag movement is detected, and only for touch — never
+// for a mouse click, which has no separate "was this a drag" ambiguity to begin with), so the existing "tap to
+// enter your PIN" affordance (onclick="unlockCurrentSettingsDept(event)", already present on every
+// .lockOverlay) keeps working exactly as before for a real tap/click.
+//
+// Both this function and initSettingsScrollBoundaryFix() above are bound fresh every Settings render (see their
+// shared call site in _renderSettingsInner()) — matching this app's own established "re-bind every render()"
+// convention elsewhere (e.g. initDragSelect(), initTableRowColFocus()): #settingsBody's entire innerHTML is
+// replaced wholesale each render, so every element queried here is always brand-new with no listener of its own
+// yet — safe to bind unconditionally, with no risk of double-binding a stale handler to an element that no
+// longer exists.
 function initLockOverlayScrollForwarding(){
   document.querySelectorAll(".lockOverlay").forEach(overlay=>{
-    const fieldset=overlay.nextElementSibling;
-    const target=fieldset?fieldset.querySelector(".tblwrap"):null;
-    if(!target)return; // nothing internally scrollable inside this particular locked section — the outer page's own native scroll already reaches everything here as-is
-    // Desktop mouse-wheel forwarding — matches native WheelEvent semantics exactly (deltaY/deltaX added directly
-    // to scrollTop/scrollLeft, the same sign convention every browser already uses internally), so this reads as
-    // completely ordinary scrolling with no perceptible difference from scrolling the tblwrap directly.
-    //
-    // "when it works while hovering over roster, even if I move my mouse outside of roster range, it keeps
-    // scrolling roster instead of settings page" — a genuine, well-documented OS/browser-level trackpad-gesture
-    // behavior (NOT unique to this app's own code — a plain, unmodified overflow:auto div with zero JS exhibits
-    // the identical symptom): a continuous two-finger swipe/momentum-scroll gesture is "target-locked" to
-    // whichever element its OWN first wheel tick hit-tested against, and every SUBSEQUENT wheel event from that
-    // SAME physical gesture keeps being dispatched to that SAME element — even once the cursor has genuinely
-    // moved outside its visual bounds (confirmed via this event's own real-time clientX/clientY, which a
-    // WheelEvent always carries, same as any other MouseEvent). Since the OS-level gesture-lock itself can't be
-    // prevented, this instead detects the mismatch on every wheel tick THIS listener still receives (it keeps
-    // receiving them precisely BECAUSE of that same lock) — comparing the event's own clientX/clientY against
-    // this overlay's own CURRENT bounding box — and once they've genuinely diverged, takes over and manually
-    // redirects that same scroll delta to the page's own scroll position instead of letting the roster keep
-    // consuming it, handing control back the instant a mismatch is detected rather than waiting for the whole
-    // gesture to end. A wheel tick that's still genuinely within bounds is completely unaffected, preserving
-    // ordinary roster-scrolling exactly as before.
+    const fieldset=overlay.nextElementSibling;if(!fieldset)return;
+    const candidates=[...fieldset.querySelectorAll("*")].filter(_isGenuinelyScrollable);
+    if(!candidates.length)return; // nothing internally scrollable inside this particular locked section — the outer page's own native scroll already reaches everything here as-is
+    // Picks whichever candidate the cursor is CURRENTLY over, re-checked fresh on every single event (not cached
+    // once) — correctly handles a locked fieldset with more than one independent scrollable box, and correctly
+    // falls back to "none" (→ page scroll) once the cursor has moved past ALL of them.
+    const _hitTest=(x,y)=>candidates.find(c=>{const r=c.getBoundingClientRect();return x>=r.left&&x<=r.right&&y>=r.top&&y<=r.bottom;})||null;
     overlay.addEventListener("wheel",e=>{
       e.preventDefault();
-      const r=overlay.getBoundingClientRect();
-      if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom){
+      const target=_hitTest(e.clientX,e.clientY);
+      if(!target){
         (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
         (document.scrollingElement||document.documentElement).scrollLeft+=e.deltaX;
         return;
@@ -19518,14 +19568,18 @@ function initLockOverlayScrollForwarding(){
     // captured start value" approach already proven correct for the mobile schedule table's own equivalent
     // touch-driven scroll (see mobileCellPointerMove()'s own comment and matching sign convention:
     // scrollTop=startScrollTop-dy), rather than accumulating many small incremental deltas, which risks drifting
-    // out of sync with the finger's real position over a long drag.
-    let _pid=null,_startX=0,_startY=0,_startScrollTop=0,_startScrollLeft=0,_moved=false;
+    // out of sync with the finger's real position over a long drag. The target itself is resolved ONCE, at
+    // pointerdown (whichever candidate the gesture actually started over) — correct, since a single continuous
+    // drag should keep scrolling the SAME box it started on for its own duration, exactly like the wheel-gesture
+    // lock this whole system is otherwise working around, not re-hit-tested every move.
+    let _pid=null,_startX=0,_startY=0,_startScrollTop=0,_startScrollLeft=0,_moved=false,_dragTarget=null;
     overlay.addEventListener("pointerdown",e=>{
       if(e.pointerType!=="touch"||_pid!==null)return; // one active touch at a time; a mouse click is unaffected either way
-      _pid=e.pointerId;_startX=e.clientX;_startY=e.clientY;_startScrollTop=target.scrollTop;_startScrollLeft=target.scrollLeft;_moved=false;
+      _dragTarget=_hitTest(e.clientX,e.clientY);if(!_dragTarget)return; // touch started outside every known scrollable box — nothing to forward, native page scroll already applies
+      _pid=e.pointerId;_startX=e.clientX;_startY=e.clientY;_startScrollTop=_dragTarget.scrollTop;_startScrollLeft=_dragTarget.scrollLeft;_moved=false;
     });
     overlay.addEventListener("pointermove",e=>{
-      if(e.pointerId!==_pid)return;
+      if(e.pointerId!==_pid||!_dragTarget)return;
       const dx=e.clientX-_startX,dy=e.clientY-_startY;
       // Same >10px "was this actually a drag, not a tap" threshold already used elsewhere in this file (e.g.
       // mobileCellPointerMove()'s own identical check) — below this threshold, nothing here fires at all, so a
@@ -19533,41 +19587,17 @@ function initLockOverlayScrollForwarding(){
       // onclick="unlockCurrentSettingsDept(event)" handler exactly as before. Once past it, preventDefault()
       // suppresses the synthetic click a touchend would otherwise generate after a real drag — without this, a
       // finger-drag-to-scroll gesture would ALSO accidentally trigger the PIN-entry unlock the instant the finger
-      // lifted, which is not what a person scrolling the roster while locked actually intends.
+      // lifted, which is not what a person scrolling while locked actually intends.
       if(!_moved&&(Math.abs(dx)>10||Math.abs(dy)>10))_moved=true;
       if(_moved){
         e.preventDefault();
-        target.scrollTop=_startScrollTop-dy;
-        target.scrollLeft=_startScrollLeft-dx;
+        _dragTarget.scrollTop=_startScrollTop-dy;
+        _dragTarget.scrollLeft=_startScrollLeft-dx;
       }
     },{passive:false});
-    const _endTouch=e=>{if(e.pointerId===_pid){_pid=null;_moved=false;}};
+    const _endTouch=e=>{if(e.pointerId===_pid){_pid=null;_moved=false;_dragTarget=null;}};
     overlay.addEventListener("pointerup",_endTouch);
     overlay.addEventListener("pointercancel",_endTouch);
-  });
-}
-// Same "trackpad gesture stays target-locked past this element's own visual bounds" fix as
-// initLockOverlayScrollForwarding()'s own wheel handler (see that comment for the full root-cause writeup) — but
-// for the roster's own ORDINARY, native overflow:auto scrolling (i.e., while UNLOCKED/editable), which has no
-// custom JS of its own at all today and so has no existing hook to add this check to. A plain native scrollable
-// div exhibits the identical OS-level gesture-locking symptom a custom JS listener would — this isn't specific to
-// the locked-overlay case, so the unlocked/native case needs its own equivalent fix. Scoped to the two roster
-// tables specifically (the only Settings sections with their own internally-scrollable region — see
-// initLockOverlayScrollForwarding()'s own comment on why), bound fresh every Settings render, matching every
-// other per-render listener-binding convention already used throughout this file.
-function initRosterNativeScrollBoundaryFix(){
-  ["staffRosterTable","formerStaffTable"].forEach(tableId=>{
-    const table=el(tableId);if(!table)return;
-    const wrap=table.closest(".tblwrap");if(!wrap)return;
-    wrap.addEventListener("wheel",e=>{
-      const r=wrap.getBoundingClientRect();
-      if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return; // ordinary case — cursor genuinely still over the roster; let native scrolling handle it exactly as before, completely untouched
-      // The browser's own gesture-lock is still targeting this element even though the cursor has genuinely
-      // moved elsewhere — take over and redirect this same scroll delta to the page itself instead.
-      e.preventDefault();
-      (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
-      (document.scrollingElement||document.documentElement).scrollLeft+=e.deltaX;
-    },{passive:false});
   });
 }
 function initTableRowColFocus(tableId){
