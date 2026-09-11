@@ -3909,7 +3909,23 @@ let _assignDirtyStamp={};
 // Same dirty-stamp principle as _assignDirtyStamp just above — see save()'s own comment (the "badge number
 // filled in on roster silently blank at export time" fix) for the full "CFG.FO/CFG.HSK had the identical,
 // never-covered gap" writeup.
-let _cfgDirtyStamp={FO:0,HSK:0};
+//
+// "settings tab set to hide from view only but can view and edit" — a direct, confirmed re-occurrence of this
+// SAME exact race, in a THIRD place this app stores config: CFG.FO/CFG.HSK (department rosters/settings) already
+// had this exact protection (see the FO/HSK keys just below, and pullAll()'s own matching guard on each), but
+// SHARED_APP_CFG_KEYS — the app-WIDE settings object (hideForViewers, hideChecksForNonManagers, and every other
+// hotel-wide toggle) — was never given the same treatment when this fix was first written, despite being
+// exactly as exposed to the identical race: a scheduler checks "Hide Settings & Readme from view-only users,"
+// which saves locally and starts an async push to Supabase — but if a routine reconnect-triggered pull happens
+// to fetch app_config around the same moment, before that push has actually landed, it fetches the STILL-OLD
+// (unchecked) value and silently overwrites the just-made edit, reopening Settings/Readme to every view-only
+// user despite the checkbox still visibly showing checked (it was correctly set locally for a moment, then
+// silently reverted underneath the user without any visible error). Reproduced directly via a targeted timing
+// simulation matching this exact sequence before writing this fix. The "appWide" key below covers the WHOLE
+// SHARED_APP_CFG_KEYS object as one unit (matching FO/HSK's own existing per-department, not per-field,
+// granularity) — a local edit to ANY one shared setting briefly protects every OTHER shared setting's own next
+// incoming pull too, the same deliberate, safe-by-default tradeoff already accepted for FO/HSK above.
+let _cfgDirtyStamp={FO:0,HSK:0,appWide:0};
 function _markAssignDirty(dept,wk,name){_assignDirtyStamp[dept+"|"+wk+"|"+name]=Date.now();}
 // "shift set hours ago, still shows 0 shift punch" — the _assignDirtyStamp fix just above protects a LOCAL edit
 // from being overwritten by a stale pull, but the confirmed reconnect-storm (see subscribe()'s own "console
@@ -4062,7 +4078,7 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
   // self-correcting false-positive (the other department's genuinely newer remote change simply applies on the
   // NEXT pull instead of this one), which is a far smaller cost than the alternative of ever silently destroying
   // a real edit.
-  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;}
+  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.appWide=_now;}
   if(k==="hotel_cfg"&&DB&&!_pullingConfigNow&&typeof pushConfig==="function"){pushConfig();}
   // Undo/redo capture — see this block's own comment above for the full batching design. Skipped entirely while
   // _undoRestore() itself is applying a snapshot (that's an undo/redo action IN PROGRESS, not a new one to track).
@@ -4189,7 +4205,19 @@ let _enteringSettingsFresh=false;
 // since nothing ever told it to hide. FIXED by explicitly calling positionFillHandle() here too — it will now
 // correctly hide itself the instant this function runs, since MULTISEL.lastCell is already null by the time it's
 // called.
-function clearMultiSelectOnNav(){if(MULTISEL.active||MULTISEL.cells.size){MULTISEL.active=false;MULTISEL.cells.clear();MULTISEL.lastCell=null;BULK_SEGS=[{a:"",b:""}];renderMultiSelBar();}try{positionFillHandle();}catch(e){}_focusedCell=null;}
+// "lingering drag select dot... scan everywhere in app for cases that may leave those remnants" — swept every
+// floating/overlay element this app creates outside the normal render() cycle (context menu, away-changes
+// panel, popovers, the floating bulk-stamp toolbar, the fill-handle dot itself) and re-verified each one's own
+// cleanup path directly; #fillHandle's own fix (this function's own positionFillHandle() call) was confirmed
+// still correct in every reproducible scenario tested, including locking the app via the header button while
+// staying on the same schedule tab (updateAuth()'s own render() call reaches positionFillHandle() the same way
+// any other render() does). The one genuine, real gap actually found in this sweep: this function already
+// called applySelectionHighlight() (the DESKTOP grid's own per-cell .selcell highlight) but never its Mobile-
+// view counterpart, applyMobileSelectionHighlight() — a real, if more cosmetic, inconsistency (a stale blue
+// highlight outline could persist on mobile cells after navigating away and back, mirroring the exact class of
+// "selection state cleared but the VISUAL side of it wasn't told" bug this whole function exists to prevent).
+// Added for full parity between the two grid implementations' own selection-highlight paths.
+function clearMultiSelectOnNav(){if(MULTISEL.active||MULTISEL.cells.size){MULTISEL.active=false;MULTISEL.cells.clear();MULTISEL.lastCell=null;BULK_SEGS=[{a:"",b:""}];renderMultiSelBar();}try{positionFillHandle();}catch(e){}try{applyMobileSelectionHighlight();}catch(e){}_focusedCell=null;}
 // "change to dept pages seems to have a delay after clicking" — measured directly (real CPU profiling, not
 // guessing): a single setDept() call was doing TWO full render() passes back to back (confirmed via direct
 // instrumentation: render() ran twice, and the large renderFlags()/Checks-panel computation it triggers ran a
@@ -7223,7 +7251,11 @@ function _refreshPaycomIdTypeNote(){
   if(t==="EE Code"){
     el2.textContent="This export will read each person's \u201cEmployee ID (Paycom)\u201d roster column.";
   }else if(t==="Badge Number"){
-    el2.textContent="This export will read each person's separate \u201cBadge Number (Paycom)\u201d roster column \u2014 a genuinely different value from EE Code, not a reformatted version of it.";
+    // "Export > Paycom schedule import wording confusing" — this previously told a scheduler to look for a
+    // column literally named "Badge Number (Paycom)" — but the roster's own real header reads "Badge No."
+    // (abbreviated), not "Badge Number." A person scanning the roster for an exact text match to what this
+    // message says would never find it. Corrected to match the actual displayed header text exactly.
+    el2.textContent="This export will read each person's separate \u201cBadge No. (Paycom)\u201d roster column \u2014 a genuinely different value from EE Code, not a reformatted version of it.";
   }else{
     el2.textContent="Documentation only for "+t+" \u2014 this app has no separate stored field for it; the export still reads each person's \u201cEmployee ID (Paycom)\u201d roster column, so enter that column's value in whatever format "+t+" actually requires for this hotel's account.";
   }
@@ -7255,9 +7287,18 @@ function paycomExportSetupModal(){
       <div class="small" style="margin-bottom:8px">Date range defaults to the currently displayed week \u2014 change either date to export a custom range instead (e.g. a full pay period, or a single day). Can span multiple weeks.</div>
       <div class="mrow" style="align-items:center;margin-bottom:12px"><label class="small">From <input type="date" required id="pcFrom" class="sfield" value="${defFrom}"></label> <label class="small">To <input type="date" required id="pcTo" class="sfield" value="${defTo}"></label></div>
       <hr style="margin:12px 0">
-      <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px">This hotel's Paycom Employee ID type: <select class="sfield small selCompact" id="pcIdType" onchange="setPaycomEmployeeIdType(this.value);_refreshPaycomIdTypeNote()">
+      <!-- "Export > Paycom schedule import wording confusing" — this label previously read "This hotel's Paycom
+           Employee ID type:", with "Badge Number" as one of the very OPTIONS in that same dropdown — wording
+           that reads as if Badge Number were merely a FORMAT/VARIANT of Employee ID, directly contradicting this
+           app's own, elsewhere-extensively-documented finding that these are two genuinely SEPARATE, real
+           identifiers (confirmed directly against this hotel's own real Paycom export files — see the roster's
+           own Badge No. column and the Readme's Paycom integration section). Reworded to frame this as "which
+           identifier does this EXPORT need to use," matching what the choice actually controls, without
+           implying any one option is a sub-type of another. -->
+      <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px">Identifier this export should use: <select class="sfield small selCompact" id="pcIdType" onchange="setPaycomEmployeeIdType(this.value);_refreshPaycomIdTypeNote()">
         ${["EE Code","Badge Number","Clock Sequence Number","Social Security Number"].map(t=>`<option ${paycomEmployeeIdType()===t?"selected":""}>${t}</option>`).join("")}
       </select></label>
+      <div class="small muted" style="margin-top:-4px;margin-bottom:8px">Whichever identifier this hotel's Paycom account actually expects on its own Schedule Import screen — check with Paycom/the hotel's rep if unsure.</div>
       <div id="pcIdTypeNote" class="small muted" style="margin-top:-4px;margin-bottom:8px"></div>
       <div class="small" style="margin-bottom:4px">Earning Code mapping — map each of this app's own off/leave codes to the real Earning Code configured in this hotel's Paycom instance. Blank = unmapped; that code is skipped at export time and flagged in the summary, never silently guessed. <span id="pcUnmappedCount" class="muted">${PAYCOM_LEAVE_CODES.filter(c=>!(CFG.paycomEarnCodeMap||{})[c]).length} of ${PAYCOM_LEAVE_CODES.length} codes unmapped</span></div>
       <div class="tblwrap" id="paycomEarnCodeTableWrap" style="max-height:220px;overflow:auto;border-radius:6px;max-width:100%;width:100%;min-width:0;margin-bottom:12px"><table id="paycomEarnCodeTable" style="table-layout:fixed;min-width:${_pcTableWidth}px;width:100%">${_pcColgroup}<tr><th style="text-align:center">This app's code</th><th style="text-align:center">Paycom code</th></tr>${_pcRows}</table></div>
@@ -7341,6 +7382,19 @@ function closePaycomConfirmModal(v){
   _removeModalById("paycomConfirmModal");
   if(_paycomConfirmResolve){const r=_paycomConfirmResolve;_paycomConfirmResolve=null;r(v);}
 }
+// Shared, minimal "just show me this HTML in a modal, with one Close button" shell — used by showHistory()/
+// showAudit() specifically for the case where their own normal target element (#historyBox/#auditBox) isn't
+// currently in the DOM (see those functions' own comments for the full "Backup & versions… dead button" fix
+// this exists for). Deliberately simpler than paycomExportConfirmModal() (a single Close button, no Cancel/
+// Continue choice to make) since this is purely a read-only viewer, never a decision point.
+function openGenericViewModal(title,bodyHtml){
+  closeGenericViewModal();
+  const bg=document.createElement("div");bg.className="modalbg";bg.id="genericViewModal";bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:640px;max-height:80vh;overflow:auto"><h2>${esc(title)}</h2><div>${bodyHtml}</div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button class="brand" onclick="closeGenericViewModal()">Close</button></div></div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener("mousedown",e=>{if(e.target===bg)closeGenericViewModal();});
+}
+function closeGenericViewModal(){const m=el("genericViewModal");if(m)m.remove();}
 function paycomExportConfirmModal(bodyHtml){
   return new Promise(res=>{
     _paycomConfirmResolve=res;
@@ -7479,7 +7533,9 @@ async function exportPaycomScheduleImport(){
   // var(--err); Unreadable/Lunch-window categories (a data-quality flag, not a hard exclusion) use var(--warn) —
   // matching this app's own existing semantic color variables rather than inventing new ones.
   const _issuesHtml=[
-    _paycomFlatBlock("Excluded — no "+_idFieldLabel,"var(--err)",missingId,_useBadge?"Enter each person's Badge Number in the roster's own 'Badge Number (Paycom)' column, then re-run.":"Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run."),
+    // Same "matches the actual displayed column header, not a paraphrase of it" fix as _refreshPaycomIdTypeNote()'s
+    // own identical correction just above — the roster's real header reads "Badge No.", not "Badge Number".
+    _paycomFlatBlock("Excluded — no "+_idFieldLabel,"var(--err)",missingId,_useBadge?"Enter each person's Badge Number in the roster's own 'Badge No. (Paycom)' column, then re-run.":"Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run."),
     _paycomFlatBlock("Excluded — forbidden character in "+_idFieldLabel,"var(--err)",badChars),
     unmappedCodes.size?`<div class="small" style="margin-bottom:8px"><b style="color:var(--warn)">Unmapped Earning Code(s)</b>: ${esc([...unmappedCodes].join(", "))} — map in Settings → Paycom schedule export.</div>`:"",
     _paycomGroupedBlock("Unreadable shift value(s)","var(--warn)",unreadable),
@@ -11183,9 +11239,22 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       _pullingConfigNow=true;
       // Each department checked independently against ITS OWN dirty stamp — a local edit to HSK's roster (e.g.
       // typing in a Badge Number) must never block a genuinely newer FO change from applying, and vice versa.
-      if(row.data.FO&&!(_cfgDirtyStamp.FO>=_cfgFetchStartedAt))CFG.FO=row.data.FO;
-      if(row.data.HSK&&!(_cfgDirtyStamp.HSK>=_cfgFetchStartedAt))CFG.HSK=row.data.HSK;
-      if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
+      // "settings tab set to hide from view only but can view and edit" — direct timing simulation (not just
+      // reasoning) proved the dirty-stamp check ABOVE, on its own, has a genuine remaining gap: it only catches a
+      // local edit that happens DURING or AFTER this fetch's own start — it can't catch the equally-real case
+      // where the edit happened BEFORE this fetch started, but that edit's own asynchronous push to Supabase
+      // hadn't actually LANDED yet by the time this fetch's results are being applied here (a real network
+      // round-trip takes genuine time; "fetch started after the edit" does not mean "fetch reflects the edit").
+      // _outstandingPushes (already tracked by every push function via _pushStarted()/_pushSettled(), including
+      // pushConfig() itself) directly answers the question that actually matters here — "is ANY write to
+      // Supabase still unconfirmed RIGHT NOW, at the moment I'm about to trust this read" — rather than
+      // indirectly inferring it from timestamps alone. Combining both checks closes the gap the timestamp check
+      // alone left open, for all three CFG merges below (FO/HSK were already exposed to this same gap, not just
+      // the newly-added appWide check — extended here for consistency rather than leaving a known-identical
+      // weakness in two of three cases).
+      if(row.data.FO&&!(_cfgDirtyStamp.FO>=_cfgFetchStartedAt)&&_outstandingPushes===0)CFG.FO=row.data.FO;
+      if(row.data.HSK&&!(_cfgDirtyStamp.HSK>=_cfgFetchStartedAt)&&_outstandingPushes===0)CFG.HSK=row.data.HSK;
+      if(row.data.appWide&&!(_cfgDirtyStamp.appWide>=_cfgFetchStartedAt)&&_outstandingPushes===0)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
     }
   });
@@ -11415,9 +11484,36 @@ function saveSnapshotQuiet(note){const wk=weekKey(WEEK_START);
   SNAPS[DEPT][wk]=SNAPS[DEPT][wk].slice(0,30);save("hotel_snaps",SNAPS);pushSnap(DEPT,wk);showHistory();}
 async function saveSnapshotWithPrompt(){const note=(await uiPrompt("Label for this version? (optional)",""))||"";if(note==="Cancel")return;
   saveSnapshotQuiet(note);flashNote("Version saved.");}
+// "view version history... don't do anything just close the modal, check if any other dead buttons" — traced
+// directly: this function only ever wrote its output into #historyBox, a real element that genuinely exists,
+// but ONLY inside the Settings page's own rendered HTML (see that element's own markup, further down this
+// file) — it is never present in the DOM at all while viewing the Schedule/Leave Requests/Readme tabs. Since
+// this SAME function is also the one wired to "Backup & versions… → View version history" (reachable from the
+// header on ANY tab, not just Settings), calling it from anywhere other than an already-open Settings page hit
+// `const hb=el("historyBox");if(!hb)return;` — a correct, deliberate defensive guard against a missing element,
+// but one that silently no-ops here with zero visible feedback, exactly matching the reported "does nothing,
+// just closes the modal." FIXED with a genuine fallback: when #historyBox isn't present (i.e., this was invoked
+// from OUTSIDE an already-open Settings page), this now shows the exact same content in its own small,
+// self-contained modal instead of silently doing nothing — reusing paycomExportConfirmModal()'s own established
+// modal-with-Cancel/Continue shell (here with a single "Close" button) rather than inventing a new modal
+// pattern. When #historyBox genuinely IS present (called from within Settings itself, e.g. after Save
+// version/Restore), this keeps writing directly into it exactly as before — no change to that path at all.
 function showHistory(){const wk=weekKey(WEEK_START);const list=((SNAPS[DEPT]||{})[wk])||[];
-  const hb=el("historyBox");if(!hb)return;if(!list.length){hb.innerHTML="<i>No saved versions for this week yet. Click ‘Save version’ to snapshot the current schedule.</i>";return;}
-  hb.innerHTML="<b>Versions (this week):</b><br>"+list.map((s,i)=>`• ${new Date(s.ts).toLocaleString()} ${s.note?"— "+esc(s.note):""} <a href="javascript:void(0)" onclick="restoreSnap(${i});return false">restore</a> · <span class="muted">${Object.keys(s.days).length} staff</span>`).join("<br>");}
+  const _html=list.length?("<b>Versions (this week):</b><br>"+list.map((s,i)=>`• ${new Date(s.ts).toLocaleString()} ${s.note?"— "+esc(s.note):""} <a href="javascript:void(0)" onclick="restoreSnap(${i});closeGenericViewModal();return false">restore</a> · <span class="muted">${Object.keys(s.days).length} staff</span>`).join("<br>")):"<i>No saved versions for this week yet. Click ‘Save version’ to snapshot the current schedule.</i>";
+  // "still don't do anything" — a direct re-report proving the FIRST fix's own premise was incomplete: checking
+  // merely `if(hb)` (does #historyBox exist in the DOM at all) is not the same question as "is Settings actually
+  // the page currently being shown" — #settingsCard is a permanent container this app toggles via
+  // style.display, never removes from the DOM (confirmed directly: #historyBox is still genuinely present,
+  // holding whatever it last showed, even while Settings itself is fully hidden behind display:none) — so the
+  // very first time Settings had EVER been visited this session, `el("historyBox")` would keep returning a real,
+  // truthy element from then on regardless of which tab is actually on-screen right now, silently writing into
+  // an invisible element instead of ever reaching the new modal fallback. Fixed by checking genuine VISIBILITY
+  // (offsetParent!==null — null exactly when an element or an ancestor has display:none, the same check the
+  // browser itself uses for "is this actually rendered"), not mere DOM presence.
+  const hb=el("historyBox");
+  if(hb&&hb.offsetParent!==null){hb.innerHTML=_html;return;}
+  openGenericViewModal("Version history — "+CFG[DEPT].label+", week of "+wk,_html);
+}
 async function restoreSnap(i){const wk=weekKey(WEEK_START);const s=((SNAPS[DEPT]||{})[wk]||[])[i];if(!s)return;
   if(!await uiConfirm("Restore this version? Current schedule for this week will be replaced (a snapshot of the current state is saved first)."))return;
   saveSnapshotQuiet("Before restoring a version"); // Uses the silent, synchronous snapshot (see its own comment) rather than the interactive/async saveSnapshot(), so this backup reliably captures the state before the restore below, not whatever state happened to exist once a label prompt was eventually dismissed.
@@ -21985,27 +22081,12 @@ function downloadBatchUserResultsCSV(){
 // else. Relabeled the first option to make this contrast explicit right at the point of choice, rather than relying
 // on a reader already knowing the difference.
 //
-// Also: "I have access to paycom now, how to test?" — a downloadable sample CSV matching this app's own
-// PAYCOM_COL_ALIASES exactly, so testing can start with a KNOWN-GOOD file shape before ever touching a real Paycom
-// export — confirms the import mechanism itself works correctly, isolated from any question about the real export's
-// actual column layout (which, per this app's own confirmed research, varies per-implementation). Uses 2 names
-// already on the current roster (so at least one genuinely matches) plus one deliberately UNRECOGNIZED name, so the
-// sample also demonstrates the "unmatched name" reporting in one file.
-function downloadPaycomSampleCSV(){
-  const sampleNames=allActiveStaffOptions().slice(0,2).map(o=>o.name);
-  const n1=sampleNames[0]||"Jane Doe",n2=sampleNames[1]||"John Smith";
-  const today=new Date();const d1=weekKey(today);const _y=new Date(today);_y.setDate(_y.getDate()-1);const d2=weekKey(_y);
-  const rows=[
-    ["Employee Name","Date","Hours","Time In","Time Out"],
-    [n1,d1,"8.5","",""],
-    [n1,d2,"","07:02 AM","03:31 PM"],
-    [n2,d1,"7.75","",""],
-    ["Not A Real Staff Name",d1,"8",""," "]
-  ];
-  const csv=rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download="paycom_import_sample.csv";a.click();
-}
+// "Can the download sample paycom csv for testing in the backup and save modal be deleted now?" — removed, along
+// with its own downloadPaycomSampleCSV() function and its "Backup & versions..." menu entry (see backupMenu()'s
+// own comment/option list, right below): now that this hotel's real Paycom account/exports are actually in use
+// and confirmed working (see the Readme's own Paycom integration research), a synthetic sample file for testing
+// the import mechanism in the abstract no longer serves a real, ongoing purpose -- genuine test coverage now
+// comes from this hotel's own real files instead.
 async function backupMenu(){
   // \u2014 "Import actual hours from Paycom (Excel, real export format)" added, alongside the existing generic CSV
   // option, now that a genuine Paycom Time Detail Report export has been examined directly (see
@@ -22031,8 +22112,8 @@ async function backupMenu(){
   // PLACE, just no longer reachable from this specific menu — removing dead code is a separate decision from
   // decluttering a menu, and either function can be re-exposed (here or elsewhere) later with a one-line change if
   // a real need for them resurfaces.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Import full backup (JSON)","Import actual hours from Paycom (Excel)","Import punch times from Paycom (Time Between Shifts)","Import actual hours from Paycom (CSV)","Download sample Paycom CSV (for testing)","Save version now","View version history","View change log"]);
-  if(pick==="Import full backup (JSON)")document.getElementById("imp").click();else if(pick==="Import actual hours from Paycom (Excel)")document.getElementById("impPaycomXlsx").click();else if(pick==="Import punch times from Paycom (Time Between Shifts)")document.getElementById("impPaycomPunches").click();else if(pick==="Import actual hours from Paycom (CSV)")document.getElementById("impPaycom").click();else if(pick==="Download sample Paycom CSV (for testing)")downloadPaycomSampleCSV();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory();else if(pick==="View change log")showAudit();
+  const pick=await uiDialog("Backup & versions:",["Cancel","Import full backup (JSON)","Import actual hours from Paycom (Excel)","Import punch times from Paycom (Time Between Shifts)","Import actual hours from Paycom (CSV)","Save version now","View version history","View change log"]);
+  if(pick==="Import full backup (JSON)")document.getElementById("imp").click();else if(pick==="Import actual hours from Paycom (Excel)")document.getElementById("impPaycomXlsx").click();else if(pick==="Import punch times from Paycom (Time Between Shifts)")document.getElementById("impPaycomPunches").click();else if(pick==="Import actual hours from Paycom (CSV)")document.getElementById("impPaycom").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory();else if(pick==="View change log")showAudit();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" root cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -22833,7 +22914,18 @@ async function removeUser(i){if(!(await uiConfirm("Remove "+USERS[i].name+"?")))
 // completely unwrapped table was also being forced to a 900px minimum width with nothing to scroll or contain it —
 // a real, previously-missed instance of the exact same overflow class already fixed elsewhere. Wrapped in the same
 // .tblwrap pattern (with overflow:auto + max-width:100%) used by every other table in this app.
-function showAudit(){const box=el("auditBox");if(!box)return;const rows=(AUDIT||[]).slice(-200).reverse();box.innerHTML=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px"><table class="autoTable"><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";}
+// Same "Backup & versions… → View change log" fix, same reason, as showHistory() just above — #auditBox only
+// ever exists inside Settings' own rendered HTML, so calling this from the header's Backup & versions… menu
+// (reachable from any tab) silently did nothing. Falls back to the same genericViewModal() when #auditBox isn't
+// present; unchanged when it is (called from within Settings itself).
+function showAudit(){const rows=(AUDIT||[]).slice(-200).reverse();
+  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px"><table class="autoTable"><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
+  // Same "check genuine visibility, not mere DOM presence" fix as showHistory()'s own identical correction —
+  // #auditBox is equally a permanent element inside the never-removed #settingsCard container.
+  const box=el("auditBox");
+  if(box&&box.offsetParent!==null){box.innerHTML=_html;return;}
+  openGenericViewModal("Change log (most recent 200)",_html);
+}
 function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hotel_audit_log.csv";a.click();}
 /* LEAVE RANGES (Settings-managed; stamped to schedule; auto-drop when past) ---------- */
 let LEAVES=load("hotel_leaves",{});
