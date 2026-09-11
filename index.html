@@ -555,6 +555,16 @@
   col.typec{width:70px;}
   col.rosterNameC{width:170px;}
   col.rosterEmpIdC{width:115px;}
+    /* "may be better to just add a column next to employee id in the settings roster for badge number if
+     necessary" — a real, always-visible roster column (paycomBadgeNumber), matching the SAME class-based
+     width-control convention already established for rosterEmpIdC/rolec/typec just above/below (a normal
+     desktop-width default here, then real narrow-screen overrides at the SAME two breakpoints — see those rules'
+     own comments for why plain <col> classes, not id-scoped or inline widths, are what actually lets each
+     breakpoint's override take effect). EE Code and Badge Number are two genuinely different real identifiers
+     for the same person (confirmed directly against this hotel's own real Paycom export files — see the
+     Readme's own Paycom integration section) — not a second display of one — so this sits as its own column
+     immediately after Employee ID, not folded into it. */
+  col.rosterBadgeC{width:100px;}
     /* HARDENED AGAIN "roles types dropdowns for roster STILL too wide in narrow view". Confirmed an additional,
      previously-unaddressed contributing factor: Name (170px) and Employee ID (115px) \u2014 the two columns
      immediately BEFORE Role/Type \u2014 had NO narrow-screen shrinkage of their own at all. On a real phone width
@@ -568,6 +578,7 @@
   @media(max-width:820px){
     col.rosterNameC{width:100px;}
     col.rosterEmpIdC{width:70px;}
+    col.rosterBadgeC{width:65px;}
     col.rolec{width:72px;}
     col.typec{width:38px;}
   }
@@ -584,6 +595,7 @@
   @media(max-width:480px){
     col.rosterNameC{width:80px;}
     col.rosterEmpIdC{width:60px;}
+    col.rosterBadgeC{width:56px;}
     col.rolec{width:64px;}
     col.typec{width:34px;}
   }
@@ -1095,7 +1107,18 @@
      entire area — see the .lockOverlayWrap/.lockOverlay pair below and their use at every conditionally-disabled
      <fieldset> in Settings. */
   .lockOverlayWrap{position:relative;}
-  .lockOverlay{position:absolute;inset:0;z-index:5;cursor:pointer;}
+    /* "roster in settings doesn't scroll when locked (frozen midway) — should be visible just not editable until
+     logged in". touch-action:pinch-zoom (not the browser default touch-action:auto) — same deliberate choice
+     already made for #mobScheduleTable td.mobCell (see that rule's own comment for the full "JS needs full
+     control of single-finger drag, but native 2-finger pinch-zoom should still work" reasoning, which applies
+     identically here): without this, a touch-drag gesture starting on this overlay would race against the
+     browser's own native attempt to scroll/pan SOME ancestor of the overlay — never the actual scrollable content
+     this overlay sits on top of (see initLockOverlayScrollForwarding()'s own comment for the full root-cause
+     writeup) — fighting the manual scroll-forwarding that function now performs. Blocking native single-finger
+     pan here, while still allowing 2-finger pinch-zoom (e.g. to read small roster text on a phone), gives that
+     function's own manual scroll forwarding the same uncontested control the mobile schedule table's own
+     equivalent fix already relies on. */
+  .lockOverlay{position:absolute;inset:0;z-index:5;cursor:pointer;touch-action:pinch-zoom;}
   #demandBody input[type=number]{-moz-appearance:textfield;text-align:center!important}
   #demandBody td{text-align:center!important}
   .cellbtn{display:block;min-height:18px;cursor:pointer;padding:2px;border-radius:4px;}
@@ -1993,6 +2016,17 @@
      container in ANY layout context, while its own overflow:auto still correctly makes the wide table scroll WITHIN
      that bounded box — matching v12.9's behavior, where this was never a problem. */
   .tblwrap{border:1px solid var(--line);max-width:100%;box-sizing:border-box;}
+    /* "something about the scroll behavior in settings is weird" — a genuinely separate, real fix from the two
+     JS-based boundary fixes (see initLockOverlayScrollForwarding()/initRosterNativeScrollBoundaryFix()'s own
+     comments for the "gesture stays stuck past this element" issue those address): this addresses what happens
+     once a scroll gesture reaches the tblwrap's OWN top/bottom edge WHILE the cursor is still genuinely over it
+     — without this, the browser's own DEFAULT scroll-chaining behavior lets scrolling "spill over" into the
+     OUTER page the instant this inner box is fully scrolled, which can feel like the page suddenly, unexpectedly
+     jumping mid-gesture. overscroll-behavior:contain stops that spillover at this box's own edge — reaching the
+     top/bottom simply stops responding here, with no unexpected handoff to the page. Applied generically (every
+     .tblwrap, not just the roster's own), since any internally-scrollable table box in this app benefits from
+     the identical, predictable "stops at my own edge" behavior. */
+  .tblwrap{overscroll-behavior:contain;}
     /* The roster table is forced to min-width:900px (see #settingsBody table's own rule), so on a narrower
      screen this .tblwrap scrolls horizontally, showing a classic (reserved-space) scrollbar on its right edge.
      Classic scrollbars on Windows/desktop Linux commonly measure 15\u201317px wide, wider than the roster's own
@@ -4388,8 +4422,17 @@ function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[d
   // is still classified as "work" or not; a cell re-saved with the SAME value (a no-op) intentionally leaves any
   // existing actual entry untouched, unchanged from before.
   try{if((_oldCellVal!==val)&&ACTUALD[DEPT]&&ACTUALD[DEPT][wk]&&ACTUALD[DEPT][wk][name]&&ACTUALD[DEPT][wk][name][day]!=null){delete ACTUALD[DEPT][wk][name][day];markActualAutoSourced(DEPT,wk,name,day,false);save("hotel_actuald",ACTUALD);}}catch(e){}
-  // Reverse-sync: if a leave code was placed, record it as a one-off availDate for that person+date
-  try{const st=CFG[DEPT].staff.find(x=>x.n===name);if(st){const iso=weekKey(dayDate(day));st.availDates=st.availDates||{};const isLeave=OFF_FAMILY_ALL.includes((val||"").toUpperCase());/* "HU" removed from this list \u2014 VERIFIED it is not a leave/absence code; in the source Excel it always appears attached to a working-day marker (e.g. "1 HU"), used to note a room-count adjustment for that Room Attendant, not an absence. See Readme. */const id="D"+iso+"_"+iso;if(isLeave){st.availDates[id]={from:iso,to:iso,part:false,code:val.toUpperCase(),reason:"from schedule"};save("hotel_cfg",CFG);}else if(st.availDates[id]&&st.availDates[id].reason==="from schedule"){delete st.availDates[id];save("hotel_cfg",CFG);}}}catch(e){}
+  // Reverse-sync: if a leave code was placed, record it as a one-off availDate for that person+date.
+  // autoFromSchedule (a dedicated internal flag) marks this record as auto-created by THIS sync, purely so the
+  // cleanup branch below (else-if) can recognize and remove it again once the cell stops being a leave day \u2014 it
+  // is not, and was never meant to be, a human-facing reason. This record's own `.reason` is deliberately left
+  // UNSET here: availForDate()'s own existing fallback (`a.reason||a.code`) already returns the real leave CODE
+  // (e.g. "PTO") whenever `.reason` is absent \u2014 exactly what should display, since a leave stamped directly onto
+  // the schedule has no separate "reason" of its own beyond the code itself. Previously this set `reason:"from
+  // schedule"` \u2014 an internal bookkeeping tag, not a real reason \u2014 which the exact same fallback then returned
+  // and displayed verbatim (in its own literal lowercase) wherever this availDates record was shown (the schedule
+  // grid, Availability, Leave Requests), rather than the actual leave code.
+  try{const st=CFG[DEPT].staff.find(x=>x.n===name);if(st){const iso=weekKey(dayDate(day));st.availDates=st.availDates||{};const isLeave=OFF_FAMILY_ALL.includes((val||"").toUpperCase());/* "HU" removed from this list \u2014 VERIFIED it is not a leave/absence code; in the source Excel it always appears attached to a working-day marker (e.g. "1 HU"), used to note a room-count adjustment for that Room Attendant, not an absence. See Readme. */const id="D"+iso+"_"+iso;if(isLeave){st.availDates[id]={from:iso,to:iso,part:false,code:val.toUpperCase(),autoFromSchedule:true};save("hotel_cfg",CFG);}else if(st.availDates[id]&&st.availDates[id].autoFromSchedule){delete st.availDates[id];save("hotel_cfg",CFG);}}}catch(e){}
   // "hotel asked to be able to see report of how many times worker called out both before and after shift was
   // assigned. They also want to be able to track on that report whether it was on a day/time they requested leave
   // but were denied". FLAGGING MY OWN INTERPRETATION explicitly, since this request is genuinely ambiguous and no
@@ -6981,7 +7024,15 @@ function submitPaycomSetupModal(){
   const from=bg.querySelector("#pcFrom").value,to=bg.querySelector("#pcTo").value;
   if(!from||!to){uiAlert("Enter both a From and To date.");return;}
   if(to<from){uiAlert("The To date must be on or after the From date.");return;}
-  closePaycomSetupModal({dept,from,to});
+  // Read this SELECT's own live DOM value directly, rather than relying solely on CFG.paycomEmployeeIdType (via
+  // paycomEmployeeIdType()) reflecting it — setPaycomEmployeeIdType() (called on this select's own onchange)
+  // silently no-ops behind an alert if this device currently lacks edit access to any department's Settings (see
+  // _requireGlobalSettingsAccess()'s own comment), which would otherwise leave the dropdown visually showing one
+  // choice while CFG (and therefore this export) silently used a stale, different one underneath. Passing the
+  // read value straight through guarantees this specific export always uses exactly what the dropdown visibly
+  // shows the moment Continue is clicked, regardless of whether that choice also persisted to CFG for next time.
+  const idType=bg.querySelector("#pcIdType").value;
+  closePaycomSetupModal({dept,from,to,idType});
 }
 // Re-renders just the modal's own Earning Code status line (unmapped count) after an in-modal edit, without
 // touching the rest of the modal's own state (date fields, department selection) the way a full re-open would.
@@ -6989,6 +7040,27 @@ function _refreshPaycomSetupUnmappedCount(){
   const el2=document.getElementById("pcUnmappedCount");if(!el2)return;
   const n=PAYCOM_LEAVE_CODES.filter(c=>!(CFG.paycomEarnCodeMap||{})[c]).length;
   el2.textContent=n+" of "+PAYCOM_LEAVE_CODES.length+" codes unmapped";
+}
+// "make it a choice in export > paycom csv modal for whether to use badge or ee code" — EE Code and Badge Number
+// are each backed by their own real, separately-stored roster field (paycomEmployeeId / paycomBadgeNumber — see
+// the roster's own Badge Number column comment for why these are two genuinely different values, confirmed
+// directly against real Paycom export files, not two formats of one), so choosing either one HERE now genuinely
+// determines which stored value this export reads — unlike Clock Sequence Number/Social Security Number, which
+// have no second field in this app at all, and so remain exactly what this dropdown always was for those two: a
+// documentation-only label reused for the post-download "select ___ in Paycom" instructions, while the export
+// itself still reads the same Employee ID (EE Code) field it always has. This note is refreshed on the dropdown's
+// own onchange AND once at initial modal render (see this modal's own innerHTML call site) so it's always accurate
+// to whichever option is currently selected, not just the value present when the modal first opened.
+function _refreshPaycomIdTypeNote(){
+  const el2=document.getElementById("pcIdTypeNote");if(!el2)return;
+  const t=paycomEmployeeIdType();
+  if(t==="EE Code"){
+    el2.textContent="This export will read each person's \u201cEmployee ID (Paycom)\u201d roster column.";
+  }else if(t==="Badge Number"){
+    el2.textContent="This export will read each person's separate \u201cBadge Number (Paycom)\u201d roster column \u2014 a genuinely different value from EE Code, not a reformatted version of it.";
+  }else{
+    el2.textContent="Documentation only for "+t+" \u2014 this app has no separate stored field for it; the export still reads each person's \u201cEmployee ID (Paycom)\u201d roster column, so enter that column's value in whatever format "+t+" actually requires for this hotel's account.";
+  }
 }
 function paycomExportSetupModal(){
   return new Promise(res=>{
@@ -7017,14 +7089,16 @@ function paycomExportSetupModal(){
       <div class="small" style="margin-bottom:8px">Date range defaults to the currently displayed week \u2014 change either date to export a custom range instead (e.g. a full pay period, or a single day). Can span multiple weeks.</div>
       <div class="mrow" style="align-items:center;margin-bottom:12px"><label class="small">From <input type="date" required id="pcFrom" class="sfield" value="${defFrom}"></label> <label class="small">To <input type="date" required id="pcTo" class="sfield" value="${defTo}"></label></div>
       <hr style="margin:12px 0">
-      <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px">This hotel's Paycom Employee ID type: <select class="sfield small selCompact" onchange="setPaycomEmployeeIdType(this.value)">
+      <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin-bottom:8px">This hotel's Paycom Employee ID type: <select class="sfield small selCompact" id="pcIdType" onchange="setPaycomEmployeeIdType(this.value);_refreshPaycomIdTypeNote()">
         ${["EE Code","Badge Number","Clock Sequence Number","Social Security Number"].map(t=>`<option ${paycomEmployeeIdType()===t?"selected":""}>${t}</option>`).join("")}
-      </select> <span class="muted" style="font-size:11px">(documentation only — whatever is typed into each person's own "Employee ID (Paycom)" roster column is used exactly as entered, regardless of this label)</span></label>
+      </select></label>
+      <div id="pcIdTypeNote" class="small muted" style="margin-top:-4px;margin-bottom:8px"></div>
       <div class="small" style="margin-bottom:4px">Earning Code mapping — map each of this app's own off/leave codes to the real Earning Code configured in this hotel's Paycom instance. Blank = unmapped; that code is skipped at export time and flagged in the summary, never silently guessed. <span id="pcUnmappedCount" class="muted">${PAYCOM_LEAVE_CODES.filter(c=>!(CFG.paycomEarnCodeMap||{})[c]).length} of ${PAYCOM_LEAVE_CODES.length} codes unmapped</span></div>
       <div class="tblwrap" id="paycomEarnCodeTableWrap" style="max-height:220px;overflow:auto;border-radius:6px;max-width:100%;width:100%;min-width:0;margin-bottom:12px"><table id="paycomEarnCodeTable" style="table-layout:fixed;min-width:${_pcTableWidth}px;width:100%">${_pcColgroup}<tr><th style="text-align:center">This app's code</th><th style="text-align:center">Paycom code</th></tr>${_pcRows}</table></div>
       <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Continue</button></div>
     </div>`;
     document.body.appendChild(bg);
+    _refreshPaycomIdTypeNote(); // sets the note text for whichever option is selected by default when this modal first opens
     bg.querySelectorAll("button").forEach(b=>b.onclick=()=>b.dataset.c==="ok"?submitPaycomSetupModal():closePaycomSetupModal(null));
     bg.addEventListener("mousedown",e=>{if(e.target===bg)closePaycomSetupModal(null);});
   });
@@ -7121,9 +7195,19 @@ function minToHM(min){min=((min%1440)+1440)%1440;return String(Math.floor(min/60
 async function exportPaycomScheduleImport(){
   const _setup=await paycomExportSetupModal();
   if(!_setup)return;
-  const {dept:_dk,from,to}=_setup;
+  const {dept:_dk,from,to,idType}=_setup;
   const dept=CFG[_dk];
   const earnMap=CFG.paycomEarnCodeMap||{};
+  // Only EE Code and Badge Number have their own genuinely separate, real stored field in this app (see the
+  // roster's own Badge Number column comment) — Clock Sequence Number/Social Security Number remain
+  // documentation-only exactly as this dropdown always was before (no second field exists for either), so this
+  // export still reads the Employee ID/EE Code column for those two, same as always. _idFieldLabel drives every
+  // user-facing message below (missingId/badChars category headings) so they correctly name whichever field is
+  // actually being read for THIS specific export, rather than a hardcoded "Employee ID" that would be misleading
+  // once Badge Number is in use.
+  const _useBadge=(idType==="Badge Number");
+  const _idFieldKey=_useBadge?"paycomBadgeNumber":"paycomEmployeeId";
+  const _idFieldLabel=_useBadge?"Badge Number":"Employee ID";
   // Two mutually-exclusive lunch-anchor modes (Settings → Shift & hours rules): "clock" anchors IL at a fixed
   // clock-time every day (CFG.paycomLunchStart); "afterStart" anchors IL a configurable number of hours after each
   // shift's own start time (CFG.paycomLunchHoursAfterStart), which correctly follows a shift whose start time
@@ -7152,9 +7236,9 @@ async function exportPaycomScheduleImport(){
     _dates.push({wk,dow,dateObj:new Date(d),dateStr:fmtMMDDYYYY(new Date(d))});
   }
   dept.staff.filter(s=>s.employed!==false).forEach(s=>{
-    const eid=(s.paycomEmployeeId||"").trim();
+    const eid=(s[_idFieldKey]||"").trim();
     if(!eid){missingId.push(s.n);return;}
-    if(hasPaycomForbiddenChars(eid)){badChars.push(s.n+" (Employee ID contains a character Paycom's own importer rejects: , ' \" \\\\ ; or $)");return;}
+    if(hasPaycomForbiddenChars(eid)){badChars.push(s.n+" ("+_idFieldLabel+" contains a character Paycom's own importer rejects: , ' \" \\\\ ; or $)");return;}
     _dates.forEach(({wk,dow,dateObj,dateStr})=>{
       const v=cellValFor(_dk,wk,s.n,dow);
       const cls=classify(v);
@@ -7229,8 +7313,8 @@ async function exportPaycomScheduleImport(){
   // var(--err); Unreadable/Lunch-window categories (a data-quality flag, not a hard exclusion) use var(--warn) —
   // matching this app's own existing semantic color variables rather than inventing new ones.
   const _issuesHtml=[
-    _paycomFlatBlock("Excluded — no Employee ID","var(--err)",missingId,"Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run."),
-    _paycomFlatBlock("Excluded — forbidden character in Employee ID","var(--err)",badChars),
+    _paycomFlatBlock("Excluded — no "+_idFieldLabel,"var(--err)",missingId,_useBadge?"Enter each person's Badge Number in the roster's own 'Badge Number (Paycom)' column, then re-run.":"Enter each person's Employee ID in the roster's own 'Employee ID (Paycom)' column, then re-run."),
+    _paycomFlatBlock("Excluded — forbidden character in "+_idFieldLabel,"var(--err)",badChars),
     unmappedCodes.size?`<div class="small" style="margin-bottom:8px"><b style="color:var(--warn)">Unmapped Earning Code(s)</b>: ${esc([...unmappedCodes].join(", "))} — map in Settings → Paycom schedule export.</div>`:"",
     _paycomGroupedBlock("Unreadable shift value(s)","var(--warn)",unreadable),
     _paycomGroupedBlock("Lunch window didn't fit (ID/OD only exported)","var(--warn)",lunchSkipped)
@@ -7258,10 +7342,11 @@ async function exportPaycomScheduleImport(){
     "Downloaded "+rows.length+" row(s): "+dept.label.replace(/_/g,"_")+"_Paycom_Schedule_Import_"+from+"_to_"+to+".csv\n\n"+
     "Next steps in Paycom:\n\n"+
     "1. Go to the Schedule Import screen (Time Management).\n"+
-    "2. Select \u201c"+paycomEmployeeIdType()+"\u201d as the employee identifier — this must match the type this file's Employee Number column actually contains (set in Settings → Paycom schedule export).\n"+
-    "3. Upload the downloaded .csv file.\n"+
+    "2. Select \u201c"+idType+"\u201d as the employee identifier — this must match the type this export's own Employee Number column actually contains (chosen in this export's own setup step).\n"+
+    "3. Upload the downloaded .csv file directly, without opening or editing it first — see the warning below.\n"+
     "4. Click \u201cImport File.\u201d You'll be taken to the Import Center, where you can watch this import's progress and see it once it completes.\n"+
     "5. Once complete, the imported schedule appears in the Schedule Detail tab of each employee's timecard — an audit trail is also recorded on the Audit Detail tab and the Employee Schedule Change Report.\n\n"+
+    "\u26a0 Do not open this file in Excel, Google Sheets, or Numbers before uploading it — even just opening and re-saving it can silently corrupt it: a spreadsheet program auto-detects an Employee ID that looks like a number and strips any leading zero (e.g. \u201c001360\u201d silently becomes \u201c1360\u201d), and reformats the Date column to a different style, dropping its required zero-padding (e.g. \u201c08/27/2026\u201d becomes \u201c8/27/2026\u201d). The file downloaded here is already correctly formatted — upload it exactly as downloaded.\n\n"+
     "If the import is rejected: Paycom's own importer rejects the WHOLE file if any field contains a comma, quote, backslash, semicolon, or dollar sign — double-check any custom Employee ID entered in this app's Settings for those characters."
   );
 }
@@ -9858,6 +9943,29 @@ function reportSyncError(where,error){
   if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
   _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;if(SYNC_ERR)setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");},4000);
 }
+// "upload changes now button keeps appearing and disappearing by itself" in live mode. Root cause: the realtime
+// channel's own subscribe() status handler (below, in _subscribeSchedChannel()) called the SAME shared
+// reportSyncError() every actual push failure already correctly uses — but a realtime channel drop
+// (CHANNEL_ERROR/TIMED_OUT/CLOSED) and an actual push failure are genuinely DIFFERENT conditions. reportSyncError()
+// unconditionally calls setPending(true), which is exactly correct for a real push failure (there IS now a local
+// edit that failed to reach the live database). But a channel drop means only that this device has temporarily
+// stopped RECEIVING other devices' live updates — it says nothing about whether THIS device's own pushes are
+// succeeding (those go through plain DB.from(...).upsert() calls, entirely independent of this realtime
+// subscription). A channel drop is also an ordinary, frequently self-healing event this app's own code already
+// treats as routine (see _statusFlickerTimer's own comment: "a brief wifi blip, a mobile tab getting throttled,
+// a laptop waking from sleep") — meaning setPending(true) could fire repeatedly, correlated with nothing the user
+// actually did, exactly matching "by itself." Worse, clearSyncError() (called back on a successful reconnect)
+// never reset PENDING to false at all — so once set true by a channel blip, it could remain stuck true
+// indefinitely, with no guaranteed path back to false except by coincidence (some unrelated real push happening
+// to succeed afterward). This narrower function reports the SAME sync-error pill/status text a channel drop
+// should still surface (a real, honest "not currently receiving live updates" signal) without implying anything
+// about local-edit safety — PENDING is left completely untouched, since a channel-only issue never establishes
+// that one.
+function reportRealtimeChannelError(where,error){
+  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);
+  if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
+  _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;if(SYNC_ERR)setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");},4000);
+}
 // Now also manually clickable (see setStatus above) — lets a user dismiss a persistent error that can't
 // self-resolve (e.g. A genuinely missing Supabase table/schema issue that requires an admin to fix separately)
 // instead of it being stuck showing forever with no way to acknowledge and move on.
@@ -10079,7 +10187,7 @@ const APP_WIDE_SETTING_LABELS={
 };
 function analyzeCfgChanges(localDepts,liveDepts){
   const changes=[];const conflicts=[];
-  const STAFF_FIELDS=["role","type","rate","employed","hireDate","birthday","guestRating","performanceScore","priorityOverride","paycomEmployeeId","note"];
+  const STAFF_FIELDS=["role","type","rate","employed","hireDate","birthday","guestRating","performanceScore","priorityOverride","paycomEmployeeId","paycomBadgeNumber","note"];
   ["FO","HSK"].forEach(dept=>{
     const loc=localDepts[dept]||{};const live=liveDepts[dept]||{};
     const deptLabel=loc.label||live.label||dept;
@@ -10655,7 +10763,7 @@ function _subscribeSchedChannel(){
     .subscribe((status,err)=>{
       // Surfaces realtime subscription failures (e.g. "demand"/"assignments" table not added to the Supabase
       // realtime publication, or an RLS policy blocking it) instead of silently never receiving live updates
-      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){reportSyncError("realtime subscription ("+status+")",err||{message:"channel closed/errored — other screens will not receive live updates until this reconnects"});_scheduleRealtimeReconnect("sched");}
+      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){reportRealtimeChannelError("realtime subscription ("+status+")",err||{message:"channel closed/errored — other screens will not receive live updates until this reconnects"});_scheduleRealtimeReconnect("sched");}
       else if(status==="SUBSCRIBED"){clearSyncError();_realtimeReconnectAttempts.sched=0;}
     });
 }
@@ -10675,7 +10783,13 @@ function _subscribeCheckinsChannel(){
     .on("postgres_changes",{event:"*",schema:"public",table:"checkins"},payload=>{
       const r=payload.new||payload.old;if(!r)return;
       CHECKINS[r.dept]=CHECKINS[r.dept]||{};CHECKINS[r.dept][r.week]=CHECKINS[r.dept][r.week]||{};
-      CHECKINS[r.dept][r.week][r.staff]=r.days||{};save("hotel_checkins",CHECKINS);
+      // Wraps this save() in _syncApplying, matching the SAME fix already applied to this channel's own sibling
+      // handlers (assignments/demand/leave_requests, above) for the identical reason — a defensive consistency
+      // fix, since "hotel_checkins" is not currently in UNDO_TRACKED_KEYS (so this omission has no currently
+      // visible effect on Undo/Redo), but leaving this one handler as the sole unguarded exception is a real,
+      // latent gap the moment checkins data ever becomes undo-tracked in the future.
+      const _prevSyncApplying=_syncApplying;_syncApplying=true;
+      try{CHECKINS[r.dept][r.week][r.staff]=r.days||{};save("hotel_checkins",CHECKINS);}finally{_syncApplying=_prevSyncApplying;}
       if(r.dept===DEPT&&r.week===weekKey(WEEK_START))render();
     })
     .subscribe((status,err)=>{
@@ -13161,7 +13275,17 @@ function renderMultiSelBar(){
   // strictly-better fix, so it's built as this default but easy to revert if the extra click proves annoying in
   // real use.
   const _pre=(CFG[DEPT].shifts&&CFG[DEPT].shifts.length)?CFG[DEPT].shifts:(DEPT==="FO"?SHIFTS_FO:SHIFTS_HSK);
-  const presetSelect=_pre.length?`<select class="sfield" onchange="if(this.value)bulkStamp(this.value)"><option value="">Shift\u2026</option>${_pre.map(p=>`<option>${esc(p)}</option>`).join("")}</select>`:"";
+  // "when I click off then click preset to assign shift, off deselects automatically but if multiselect the off
+  // remains selected even if shift is assigned" — the single-cell editor's own usePreset() already explicitly
+  // clears SM.offMode/SM.absentMode the instant a real preset is picked (a preset IS a genuine working shift,
+  // never simultaneously an off/absent day). This dropdown had no equivalent: picking a preset here only ever
+  // called bulkStamp(), which never touches _bulkOffMode/_bulkAbsentMode at all — those two flags are also
+  // read directly by offBtn/absentBtn's own inline highlight style and by offSub/absentSub's own visibility
+  // check just below, so leaving them true after a real shift was just stamped left the Off/Absent button
+  // wrongly highlighted and its Type… sub-dropdown wrongly still showing. Resetting both flags here mirrors
+  // usePreset()'s own behavior exactly; bulkStamp()'s own render() call at its end already re-renders this
+  // toolbar, so the button/sub-dropdown correctly reflect the cleared state with no extra render needed here.
+  const presetSelect=_pre.length?`<select class="sfield" onchange="if(this.value){_bulkOffMode=false;_bulkAbsentMode=false;bulkStamp(this.value);}"><option value="">Shift\u2026</option>${_pre.map(p=>`<option>${esc(p)}</option>`).join("")}</select>`:"";
   const offList=["OFF","R-OFF"].concat(codesFor(DEPT).filter(c=>LEAVE_ONLY_CODES.includes(c))); // deliberately excludes ABSENCE_CODES — those get their own separate "Absent" button/dropdown
   // "floating bar text typeface and size make consistent... Make all buttons and input fields have same heights" —
   // removed the special-cased font-size:12px/height:26px this whole toolbar previously used throughout; every
@@ -13207,7 +13331,11 @@ function renderMultiSelBar(){
   // unparseable value already gets, rather than silently miscounting hours for a label with no real time
   // information to compute from.
   const taskList=codesFor(DEPT).filter(c=>TASK_ASSIGN_CODES.includes(c));
-  const taskSelect=`<select class="sfield" onchange="if(this.value==='__other__'){bulkStampOther();this.value='';}else if(this.value)bulkStamp(this.value)"><option value="">Task</option>${taskList.map(c=>`<option>${esc(c)}</option>`).join("")}<option value="__other__">Other\u2026</option></select>`;
+  // Same Off/Absent-state reset as presetSelect just above, and for the identical reason — a task assignment
+  // (regular option or the "Other…" custom label, both via bulkStampOther(), which carries the matching reset
+  // itself since it has exactly one call site: this dropdown's own "Other…" option) is a genuine work assignment,
+  // never simultaneously an off/absent day.
+  const taskSelect=`<select class="sfield" onchange="if(this.value==='__other__'){bulkStampOther();this.value='';}else if(this.value){_bulkOffMode=false;_bulkAbsentMode=false;bulkStamp(this.value);}"><option value="">Task</option>${taskList.map(c=>`<option>${esc(c)}</option>`).join("")}<option value="__other__">Other\u2026</option></select>`;
   body.innerHTML=`<div style="display:flex;flex-wrap:wrap;align-items:center;gap:8px">
     <b>${n} cells selected</b>
     <span class="small muted">Stamp as:</span>
@@ -13304,7 +13432,12 @@ async function _bulkStampCustom(promptText){
   if(!txt||!txt.trim())return;
   bulkStamp(txt.trim());
 }
-async function bulkStampOther(){await _bulkStampCustom("Enter a custom assignment label:");}
+// Off/Absent reset added here specifically (not inside the shared _bulkStampCustom() above, which
+// bulkStampOffOther() below also calls and must NOT get this reset — an Off/Absent "Other…" custom label is
+// still an off/absent-family entry in intent, even though classify() can't recognize the custom text itself; see
+// that function's own comment for the disclosed reasoning). Matches taskSelect's own regular-option reset,
+// applied here too since this is that SAME dropdown's "Other…" path — both represent a genuine task assignment.
+async function bulkStampOther(){_bulkOffMode=false;_bulkAbsentMode=false;await _bulkStampCustom("Enter a custom assignment label:");}
 // "Don't make BDY a new leave code, add an other option to leave that can be typed in don't put BDY as suggestion
 // in placeholder" — the Off dropdown's own "Other\u2026" handler for the bulk-stamp toolbar, matching
 // bulkStampOther()'s own pattern; bulkStamp() itself already correctly classifies whatever bare text is passed to
@@ -16548,6 +16681,8 @@ function renderReadme(){
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Live sync</b></summary>
 <p>Settings holds a Supabase URL + anon key (prefilled by default with this deployment's own project) and a Connect button. Local edits made before connecting trigger a choice — upload, discard, or stay local — rather than silently picking one. A matching "Connect…" button also sits in the header for a device that has never connected before; once connected, it switches to "Disconnect."</p>
 <p><b>Redeploy safety if the connection key is rotated:</b> no local data is ever at risk — every edit saves to this browser first, regardless of connection state. An already-connected device keeps its own saved key, so redeploying doesn't touch it. If that key is later revoked, sync calls fail, surfaced via the "sync error ⚠" header pill, with a "Reconnect with latest info" link to update just the connection (schedule/roster data untouched).</p>
+<p><b>"Upload now" appearing/disappearing on its own, fixed:</b> a real, confirmed asymmetry — a realtime channel drop (CHANNEL_ERROR/TIMED_OUT/CLOSED on the assignments/demand/leave-requests subscription) was sharing the same error-reporting function actual PUSH failures use, which unconditionally marks local changes as pending. A channel drop only means this device has temporarily stopped RECEIVING other devices' live updates — it says nothing about whether this device's OWN edits are reaching the live database (those go through a separate, independent call). Since a brief channel drop is an ordinary, frequently self-healing event (a few seconds of wifi trouble, a backgrounded mobile tab, a laptop waking from sleep — this app's own reconnect logic already treats these as routine), this could mark changes as pending repeatedly, unconnected to anything the user actually did — and had no reliable path back to "not pending," since the function that ran on a successful reconnect never reset that signal at all. Fixed by giving a channel-level drop its own, narrower reporting path — it still surfaces the same honest "not currently receiving live updates" status, but no longer touches the pending-changes signal, which now stays accurate to whether a real edit has actually failed to save.</p>
+<p><b>Redo button flicker — partially addressed, not fully closed:</b> this app's own existing code already wraps every realtime-triggered save for assignments/demand/leave-requests, and the full reconnect-time data pull, so that a remote change is never mistaken for a trackable local edit (which is what previously caused this same flicker in those exact places). A direct re-audit found and fixed one remaining inconsistency (the check-ins realtime channel was missing this same guard, unlike its three sibling channels) — though check-in data does not currently participate in undo/redo tracking, so this alone would not explain a currently-visible flicker; it closes a latent gap for if that ever changes. Despite a thorough trace of every current save-triggering code path in this app (including the one recurring background timer, which does not touch the affected tracking at all), no additional currently-unguarded path was found. If this is still visible after the fixes above, the specific conditions it occurs under (e.g., only while another device is actively editing the same week at the same time, only right after a reconnect, or with no other device connected at all) would help narrow down the exact remaining trigger.</p>
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Export &amp; backup</b></summary>
@@ -16784,143 +16919,335 @@ supabase functions deploy attendance-reminders
 # or via SQL: select cron.schedule('attendance-reminders','*/5 * * * *',$$select net.http_post(...)$$);)</pre>
 <p class="small muted"><b>Verifying the schedule is genuinely running</b> (a real, previously-confirmed gap): the subscription/registration checks elsewhere on this page only ever confirm THIS device's own subscription reached the database \u2014 none of them can tell you whether the cron schedule above was ever actually created, or whether the function is failing silently. Settings \u2192 Notifications & reminders \u2192 Diagnostics \u2192 Check background push status now includes a "Server-side function actually running on schedule?" row, reading the <code>function_heartbeat</code> table the function itself updates on every single invocation (regardless of whether any real attendance issue exists that day to notify about) \u2014 a stale or missing heartbeat there is the concrete, checkable signal that the cron step above still needs attention, distinct from a hotel simply having clean attendance that day.</p>
 <p class="small" style="background:#eef6ec;border:1px solid #a8d5b0;border-left:4px solid #2c9e5f;border-radius:6px;padding:6px 10px">📄 <b>Paste into the <code>index.ts</code> file</b> created above (a code editor, e.g. VS Code) — not the SQL Editor, not the terminal.</p>
-<p class="small muted"><b>Step 2 — index.ts</b> (reads the same <code>assignments</code>/<code>checkins</code>/<code>push_subscriptions</code> tables this app's client already writes to; mirrors the client-side "missing"/"noshow"/"notout" logic from attendanceStateFor()):</p>
+<p class="small muted"><b>Step 2 — index.ts</b> (reads the same <code>assignments</code>/<code>checkins</code>/<code>push_subscriptions</code> tables this app's client already writes to; mirrors the client-side "missing"/"noshow"/"notout"/"upcoming" logic from attendanceStateFor() — including a genuine overnight-shift carryover check mirroring the client's own renderCarryoverBanner(), and a function_heartbeat update on every invocation so the diagnostic below can actually confirm this is running):</p>
 <pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#2c9e5f">// \u26a0\ufe0f PASTE INTO index.ts \u2014 do NOT paste into the Supabase SQL Editor</b>
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import webpush from "https://esm.sh/web-push@3.6.7";
+// ------------------------------------------------------------------------
+// This is the SERVER half of "Notifications &amp; reminders" (see the app's own Readme). The CLIENT half (service
+// worker registration, push subscription, in-app reminders while a tab is open) is already built into the app
+// itself and needs no further setup. This function is what lets a push notification arrive even when the app
+// is fully closed and the phone is locked — it runs on a schedule (see DEPLOY.md for how to schedule it),
+// checks who is scheduled to work right now, cross-references who has actually clocked in (via the app's own
+// Clock in/out feature), and sends a real Web Push notification through each browser's own push service
+// (Google FCM / Apple APNs / Mozilla autopush) for the two things this covers:
+//   1. MANAGER alerts — a genuine apparent no-show (shift ended, no clock-in ever recorded), a shift currently
+//      in progress with no clock-in, or a missed clock-out — sent to every device registered for that specific
+//      department's manager alerts.
+//   2. WORKER reminders — an upcoming shift, or a clock-in/out reminder — sent to whichever single device a
+//      specific worker has registered as "remind me about my own shifts."
+//
+// NOT covered by this function (a genuine, disclosed scope limit, not an oversight): Housekeeping's
+// room/floor assignment reminder. That data (FLOORS, the floor/zone assignment per person per week) is stored
+// ONLY in each browser's own local storage today and is never pushed to Supabase — there is nothing for a
+// server-side function to read for that specific notification. The in-app version of that reminder (while the
+// app/tab is open) is unaffected and keeps working exactly as before.
+//
+// ============================================================================================================
+// VERIFIED against the app's own live client-side source directly (not assumed) before making any change below.
+// Two real fixes and one accuracy correction were found and applied; everything else below was independently
+// confirmed correct and left untouched:
+//
+// FIX 1 — function_heartbeat was never being updated. The app's own diagnostic panel (Settings → Notifications
+// &amp; reminders → Diagnostics → "Check background push status") reads a \`function_heartbeat\` row this function
+// is SUPPOSED to upsert on every single invocation, regardless of whether it finds anything to notify about —
+// that's the ONLY way that diagnostic can distinguish "the cron job never ran" from "it ran fine, nothing to
+// report today." This upload was missing entirely from the previous version of this file — added back as the
+// very first thing this function does, unconditionally.
+//
+// FIX 2 — overnight shifts crossing midnight were only evaluated while "now" was still on the SAME calendar day
+// the shift started. The app's own client goes to real, deliberate lengths to handle this correctly (see
+// attendanceStateFor()'s own \`priorDay\` parameter and renderCarryoverBanner(), a dedicated UI element that
+// re-checks YESTERDAY's own schedule cell specifically for this reason) — a graveyard shift like "22:30-07:00"
+// that's still missing a clock-in at, say, 2:00 AM is checking a cell dated YESTERDAY relative to right now, and
+// the previous version of this function only ever looked at TODAY's own dayIdx cell, meaning any such shift
+// became completely invisible to this function the instant midnight passed, until its normally-scheduled
+// "today" evaluation the FOLLOWING day (by which point the shift is long over). Fixed by adding a genuine
+// "carryover" check that runs every invocation alongside the ordinary "today" check, mirroring the client's own
+// exact model (see checkCarryoverShift() below).
+//
+// ACCURACY FIX — OFF_CODES previously included "OC". Directly confirmed via the app's own classify() function:
+// "OC" is a TASK/ASSIGNMENT code (in TASK_ASSIGN_CODES, classified as "special" — like GC, PROJECT, TASK FORCE),
+// never an off/leave code (LEAVE_ONLY_CODES/ABSENCE_CODES) — a real labeling inaccuracy, though verified to have
+// caused zero behavioral difference today (a bare "OC" cell, with no attached time range, already fails
+// parseShift()'s own required HH:MM-HH:MM pattern match regardless of OFF_CODES membership, so both the old and
+// corrected version return \`null\`/no-attendance-expected for it either way). Removed for correctness going
+// forward, since this same set could plausibly be reused for a different purpose later where the distinction
+// would actually matter.
+//
+// Everything else below was checked directly against the app's own real client-side source and confirmed
+// correct, not assumed: the \`ts\`/\`outTs\` field names for a check-in record (NOT \`inTs\` — that field name
+// doesn't exist in the real, live checkins schema; a prior version of this app's own embedded Readme sample had
+// this exact same mistake, now also corrected there); the weekKey()/mondayOfWeekStartThu() date-math this
+// mirrors byte-for-byte; the CLOCKIN_LATE_GRACE_MINUTES_DEFAULT (30) / CLOCKIN_EARLY_GRACE_MINUTES_DEFAULT (15)
+// defaults; the default weekStartDow (4 = Thursday); the push_subscriptions table's own \`name\`/\`manager_depts\`
+// columns this queries against; and that PAYCOM_PUNCHES (biometric-imported punch data) is local-storage-only
+// and never reaches Supabase at all — meaning the \`checkins\` table (this app's own in-app Clock in/out feature)
+// is genuinely the ONLY attendance signal a server-side function has any way to see, exactly as this file
+// already assumed.
+// ============================================================================================================
 
+import { createClient } from "npm:@supabase/supabase-js@2";
+import webpush from "npm:web-push@3.6.7";
+
+// ---------- Configuration (all read from Edge Function secrets — see DEPLOY.md for how to set these) ----------
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
-const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!; // auto-provided by Supabase, no manual secret needed
-const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY")!;
-const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY")!;
+const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!; // auto-provided by Supabase to every Edge Function — never needs to be set manually
+const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY")!;   // must be the SAME public key already embedded in the app itself (VAPID_PUBLIC_KEY constant)
+const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY")!; // the matching PRIVATE half — never put this in the app's own client-side file
+const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:admin@example.com"; // a real contact email/URL the push services can reach if they need to
+const CRON_SECRET = Deno.env.get("CRON_SECRET") || ""; // optional shared secret — see DEPLOY.md's own note on why this matters
+// This app's own client-side defaults (CLOCKIN_LATE_GRACE_MINUTES_DEFAULT / CLOCKIN_EARLY_GRACE_MINUTES_DEFAULT)
+// are NOT synced to Supabase today (they live only in each browser's local CFG), so this function uses its own
+// configurable copies instead of trying to read a value that genuinely isn't available server-side. Override
+// via Edge Function secrets if this hotel's real values differ from the app's own defaults.
+const GRACE_LATE_END_MIN = Number(Deno.env.get("GRACE_LATE_END_MIN") ?? 30);
+const GRACE_EARLY_MIN = Number(Deno.env.get("GRACE_EARLY_MIN") ?? 15);
+// The app's own weekStartDow setting (default Thursday) is ALSO not synced to Supabase today (it's a top-level
+// CFG field, and only CFG.FO/CFG.HSK are pushed to the app_config table) — override here if this hotel has
+// changed it from the default in Settings.
+const WEEK_START_DOW = Number(Deno.env.get("WEEK_START_DOW") ?? 4); // 0=Sun..6=Sat, default 4=Thu, matching the app's own default
+const TIMEZONE = Deno.env.get("HOTEL_TIMEZONE") || "Pacific/Guam";
 
-webpush.setVapidDetails("mailto:admin@example.com", VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+webpush.setVapidDetails(VAPID_SUBJECT, VAPID_PUBLIC_KEY, VAPID_PRIVATE_KEY);
+const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
 
-// "Any way to prevent drift in grace period without relying on manual changes?" Traced every actual usage of the
-// GRACE_MINUTES constant that previously sat here: it was declared but never once READ by any logic below \u2014
-// dead code, left over from an earlier draft \u2014 so today, there is no live drift risk for it specifically, since
-// it never influenced any decision this function makes (the "missing"/"notout" pushes below already fire the
-// instant timing.state flips to "during"/"after" with zero grace, deliberately mirroring this app's own
-// attendanceStateFor() 1:1 \u2014 adding a grace delay here would make server and client DISAGREE, the opposite of
-// the goal). Removed the unused constant rather than leave a misleading "keep this in sync" burden for a value
-// that was never actually consulted. That said, the underlying QUESTION is a genuinely good one for anything that
-// COULD matter here in the future \u2014 general fix below: fetches this hotel's live app-wide settings ONCE per
-// invocation, directly from the SAME app_config table this app's own pushConfig()/pullAll() already keep in sync
-// with Settings (see that table's own schema above) \u2014 so any CURRENT or FUTURE constant genuinely needing to
-// track a Settings value (e.g. clockInLateGraceMinutes, weekStartDow) can read it live, right here, with zero
-// manual code edits ever required again, rather than another hardcoded literal silently drifting the next time
-// someone changes that setting in the app itself.
-async function getLiveAppWideConfig(supabase: any): Promise<Record<string, any>> {
+// Confirmed directly against classify() in the app's own client source: this is the real, complete set of
+// codes that make a schedule cell an off/leave/absence day (OFF, R-OFF, LEAVE_ONLY_CODES, ABSENCE_CODES) — "OC"
+// deliberately excluded (see the file-level comment above for why: it's a TASK code, not an off/leave one).
+const OFF_CODES = new Set(["OFF","R-OFF","PTO","LOA","LWOP","FMLA","E-LEAVE","BDH","AB","NCNS","CALLOUT"]);
+
+// ---------- Small, self-contained date/time helpers (mirroring the app's own client-side logic) ----------
+function nowInTZ(): Date {
+  // A genuine, correct way to get "now" as a Date whose getters reflect the target timezone's local wall-clock
+  // time, using the Intl API (no external timezone-database dependency needed).
+  const s = new Date().toLocaleString("en-US", { timeZone: TIMEZONE });
+  return new Date(s);
+}
+function ymd(d: Date): string {
+  return d.getFullYear() + "-" + String(d.getMonth()+1).padStart(2,"0") + "-" + String(d.getDate()).padStart(2,"0");
+}
+function weekStartFor(d: Date): Date {
+  const x = new Date(d); const dow = x.getDay();
+  const diff = (dow - WEEK_START_DOW + 7) % 7;
+  x.setDate(x.getDate() - diff); x.setHours(0,0,0,0);
+  return x;
+}
+// Parses the leading "HH:MM-HH:MM" of a shift cell value (ignoring any trailing "/CODE" tag, e.g.
+// "08:00-16:30/GC") — returns null for anything that isn't a real, timed shift (off-codes, blank, a bare task
+// code, an unreadable value), exactly matching classify()==="work" in the app itself for this specific shape.
+// endMin is bumped past 1440 for a genuine overnight/graveyard shift (end &lt;= start) — this is what lets the
+// ORDINARY "today" check below correctly recognize a shift as still "during" for the portion of the evening
+// before midnight; the SEPARATE carryover check further down is what covers the portion AFTER midnight (see
+// checkCarryoverShift()'s own comment for why these need to be two different code paths, not one).
+function parseShift(raw: string | null | undefined): { startMin: number; endMin: number } | null {
+  if (!raw) return null;
+  const codePart = raw.split("/")[0].trim().toUpperCase();
+  if (OFF_CODES.has(codePart)) return null;
+  const m = raw.match(/^(\\d{1,2}):(\\d{2})\\s*-\\s*(\\d{1,2}):(\\d{2})/);
+  if (!m) return null;
+  const startMin = (+m[1]) * 60 + (+m[2]);
+  let endMin = (+m[3]) * 60 + (+m[4]);
+  if (endMin &lt;= startMin) endMin += 24 * 60; // overnight/graveyard shift — end time is technically "next day"
+  return { startMin, endMin };
+}
+
+type FlaggedPerson = { name: string; condition: "noshow" | "missing" | "notout" | "upcoming"; detail: string; week: string; dayIdx: number };
+type DayCell = { assignByStaff: Map&lt;string, any&gt;; checkinByStaff: Map&lt;string, any&gt; };
+
+// Shared fetch for one (dept, week) pair's assignments + checkins, keyed by staff name — used for BOTH the
+// current week (always) and, when needed, the previous week (only for the carryover check when today happens
+// to be day-index 0 of its own week, meaning "yesterday" belongs to the week before). Extracted into its own
+// function specifically so the carryover check (below) can reuse it without duplicating this query shape.
+async function fetchWeekData(dept: "FO" | "HSK", week: string): Promise&lt;DayCell&gt; {
+  const { data: assignRows, error: aErr } = await supabase
+    .from("assignments").select("staff, days").eq("dept", dept).eq("week", week);
+  if (aErr) console.error("assignments query failed", dept, week, aErr);
+  const { data: checkinRows, error: cErr } = await supabase
+    .from("checkins").select("staff, days").eq("dept", dept).eq("week", week);
+  if (cErr) console.error("checkins query failed", dept, week, cErr);
+  return {
+    assignByStaff: new Map((assignRows ?? []).map((r: any) =&gt; [r.staff, r.days ?? {}])),
+    checkinByStaff: new Map((checkinRows ?? []).map((r: any) =&gt; [r.staff, r.days ?? {}])),
+  };
+}
+
+// The ORDINARY, same-day check — a shift scheduled for TODAY's own dayIdx cell. Returns one flag at most (a
+// person can only be in one of these states at a time for a given shift).
+function checkOrdinaryShift(name: string, shiftVal: string, nowMin: number, ci: any, week: string, dayIdx: number): FlaggedPerson | null {
+  const shift = parseShift(shiftVal);
+  if (!shift) return null;
+  const hasIn = !!ci?.ts, hasOut = !!ci?.outTs;
+  if (!hasIn) {
+    if (nowMin &gt;= shift.startMin &amp;&amp; nowMin &lt; shift.endMin) return { name, condition: "missing", detail: shiftVal, week, dayIdx };
+    if (nowMin &gt;= shift.endMin + GRACE_LATE_END_MIN) return { name, condition: "noshow", detail: shiftVal, week, dayIdx };
+    if (nowMin &lt; shift.startMin &amp;&amp; shift.startMin - nowMin &lt;= GRACE_EARLY_MIN) return { name, condition: "upcoming", detail: shiftVal, week, dayIdx };
+    return null;
+  }
+  if (!hasOut &amp;&amp; nowMin &gt;= shift.endMin + GRACE_LATE_END_MIN) return { name, condition: "notout", detail: shiftVal, week, dayIdx };
+  return null; // clocked in, shift still genuinely in progress, or fully clocked in+out — nothing to flag
+}
+
+// The CARRYOVER check — a shift scheduled for YESTERDAY's own dayIdx cell that genuinely crossed midnight (a
+// real graveyard/overnight shift), still potentially relevant to TODAY's attendance picture. Mirrors the app's
+// own client-side renderCarryoverBanner()/attendanceStateFor(priorDay=true) design exactly: by construction, a
+// carryover shift already STARTED in the past (yesterday), so only "during" (tail still running right now) or
+// "after" (tail already ended earlier this morning) are possible outcomes here — never "before"/"upcoming",
+// which would make no sense for a shift that's already underway. effEnd re-expresses the shift's own end time
+// (which parseShift() already bumped past 1440 for an overnight shift) back into TODAY's own plain 0–1439
+// minute frame, so it can be compared directly against nowMin the same way the ordinary check does.
+function checkCarryoverShift(name: string, shiftVal: string, nowMin: number, ci: any, week: string, dayIdx: number): FlaggedPerson | null {
+  const shift = parseShift(shiftVal);
+  if (!shift || shift.endMin &lt;= 1440) return null; // not a genuine overnight/wrapped shift — nothing carries into today at all
+  const effEnd = shift.endMin - 1440;
+  const hasIn = !!ci?.ts, hasOut = !!ci?.outTs;
+  if (!hasIn) {
+    if (nowMin &lt; effEnd) return { name, condition: "missing", detail: shiftVal, week, dayIdx };
+    if (nowMin - effEnd &gt;= GRACE_LATE_END_MIN) return { name, condition: "noshow", detail: shiftVal, week, dayIdx };
+    return null;
+  }
+  if (!hasOut &amp;&amp; nowMin - effEnd &gt;= GRACE_LATE_END_MIN) return { name, condition: "notout", detail: shiftVal, week, dayIdx };
+  return null;
+}
+
+async function evaluateDept(dept: "FO" | "HSK"): Promise&lt;FlaggedPerson[]&gt; {
+  const now = nowInTZ();
+  const ws = weekStartFor(now);
+  const week = ymd(ws);
+  const dayIdx = Math.floor((now.getTime() - ws.getTime()) / 86400000);
+  const nowMin = now.getHours() * 60 + now.getMinutes();
+
+  const cur = await fetchWeekData(dept, week);
+  const flagged: FlaggedPerson[] = [];
+
+  // Ordinary, same-day check — every staff member's own TODAY cell.
+  for (const [name, days] of cur.assignByStaff) {
+    const shiftVal = (days as any)?.[dayIdx];
+    if (!shiftVal) continue;
+    const ci = (cur.checkinByStaff.get(name) as any)?.[dayIdx];
+    const f = checkOrdinaryShift(name, shiftVal, nowMin, ci, week, dayIdx);
+    if (f) flagged.push(f);
+  }
+
+  // Carryover check — every staff member's own YESTERDAY cell, specifically for a still-relevant overnight
+  // tail. Always runs (not conditionally), exactly matching the client's own carryover banner always being
+  // (re-)evaluated on every render while viewing the current week's first day. "Yesterday" belongs to either
+  // the SAME week (if today isn't that week's own first day) or the PREVIOUS week (if it is) — computed exactly
+  // the same way the client's own renderCarryoverBanner() does.
+  let yesterdayWeek: string, yesterdayDayIdx: number, yest: DayCell;
+  if (dayIdx === 0) {
+    const prevWs = new Date(ws); prevWs.setDate(prevWs.getDate() - 7);
+    yesterdayWeek = ymd(prevWs);
+    yesterdayDayIdx = 6;
+    yest = await fetchWeekData(dept, yesterdayWeek);
+  } else {
+    yesterdayWeek = week;
+    yesterdayDayIdx = dayIdx - 1;
+    yest = cur; // already fetched above — same week, no extra query needed
+  }
+  for (const [name, days] of yest.assignByStaff) {
+    const shiftVal = (days as any)?.[yesterdayDayIdx];
+    if (!shiftVal) continue;
+    const ci = (yest.checkinByStaff.get(name) as any)?.[yesterdayDayIdx];
+    const f = checkCarryoverShift(name, shiftVal, nowMin, ci, yesterdayWeek, yesterdayDayIdx);
+    if (f) flagged.push(f);
+  }
+
+  return flagged;
+}
+
+async function alreadyNotified(key: string): Promise&lt;boolean&gt; {
+  const { data } = await supabase.from("notified_events").select("event_key").eq("event_key", key).maybeSingle();
+  return !!data;
+}
+async function markNotified(key: string) {
+  await supabase.from("notified_events").upsert({ event_key: key, notified_at: new Date().toISOString() });
+}
+
+async function sendPush(sub: any, title: string, body: string): Promise&lt;boolean&gt; {
   try {
-    const { data } = await supabase.from("app_config").select("data").eq("id", "depts").maybeSingle();
-    return (data && data.data && data.data.appWide) || {};
-  } catch (_e) {
-    return {}; // a fresh/never-configured project has no app_config row yet \u2014 callers fall back to their own defaults
+    await webpush.sendNotification(sub.subscription, JSON.stringify({ title, body }));
+    return true;
+  } catch (e: any) {
+    // 404/410 = the subscription is genuinely gone (browser data cleared, permission revoked, etc.) — clean it
+    // up so this function stops wasting a send attempt on it every single run, going forward.
+    if (e?.statusCode === 404 || e?.statusCode === 410) {
+      await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint);
+    } else {
+      console.error("push send failed for", sub.endpoint, e?.message || e);
+    }
+    return false;
   }
 }
 
-Deno.serve(async () => {
-  const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY);
-  const appWide = await getLiveAppWideConfig(supabase); // available to any check below that needs a live Settings value \u2014 e.g. appWide.clockInLateGraceMinutes ?? 30
-  const now = new Date();
-  const todayIso = now.toISOString().slice(0, 10);
+const CONDITION_TEXT: Record&lt;string, (name: string, dept: string, detail: string) =&gt; { title: string; body: string }&gt; = {
+  noshow: (name, dept) =&gt; ({ title: "No clock-in recorded", body: \`\${name}'s shift has ended with no clock-in (\${dept}).\` }),
+  missing: (name, dept) =&gt; ({ title: "Not clocked in — shift in progress", body: \`\${name}'s shift is currently running with no clock-in recorded (\${dept}).\` }),
+  notout: (name, dept) =&gt; ({ title: "Missing clock-out", body: \`\${name} clocked in but never clocked out (\${dept}).\` }),
+  upcoming: (name, _dept, detail) =&gt; ({ title: "Upcoming shift", body: \`\${name} is scheduled \${detail} today — you can clock in now.\` }),
+};
 
-  // FIXED a real observability gap: "background push shows subscribed, but there's no way to confirm the
-  // server-side function is actually running on its schedule at all, since notified_events only ever gets a row
-  // when a genuine attendance violation is found" \u2014 a hotel where everyone clocks in/out correctly every day
-  // would show a permanently-empty notified_events table forever, indistinguishable (from the client's own
-  // diagnostic tool) from the cron job never having been scheduled in the first place. Upserting this single-row
-  // heartbeat FIRST, unconditionally, before any of the real attendance-checking logic below runs (so it updates
-  // even if that logic throws or finds nothing to report), gives checkBackgroundPushStatus() on the client side a
-  // genuine, unambiguous "last confirmed check-in: X minutes ago" signal, independent of whether any real
+Deno.serve(async (req) =&gt; {
+  // A simple shared-secret check — anyone who knows this function's URL can otherwise trigger it at will. This
+  // is not meant as strong security (this function only ever READS schedule/checkin data and sends
+  // notifications — it can't modify or expose anything sensitive on its own) but it does stop random internet
+  // traffic from needlessly running it outside its own schedule. See DEPLOY.md for how CRON_SECRET is set and
+  // passed by the scheduled job.
+  if (CRON_SECRET) {
+    const provided = req.headers.get("x-cron-secret");
+    if (provided !== CRON_SECRET) {
+      return new Response("Unauthorized", { status: 401 });
+    }
+  }
+
+  // FIX 1 (see this file's own top-of-file comment for the full writeup): upserted FIRST, unconditionally,
+  // before any of the real attendance-checking logic below runs — so it updates even if that logic throws or
+  // finds nothing to report. This is the ONE signal the app's own client-side diagnostic (checkBackgroundPushStatus())
+  // has for confirming this function is genuinely executing on schedule, independent of whether any real
   // attendance issue happens to exist that day.
-  await supabase.from("function_heartbeat").upsert({ id: "attendance-reminders", last_run_at: now.toISOString() });
+  await supabase.from("function_heartbeat").upsert({ id: "attendance-reminders", last_run_at: new Date().toISOString() });
 
-  const { data: assignments } = await supabase.from("assignments").select("*");
-  const { data: checkins } = await supabase.from("checkins").select("*");
-  const { data: subs } = await supabase.from("push_subscriptions").select("*");
-  const { data: notified } = await supabase.from("notified_events").select("event_key");
-  const alreadyNotified = new Set((notified || []).map((n) => n.event_key));
+  const results: any[] = [];
+  for (const dept of ["FO", "HSK"] as const) {
+    const flagged = await evaluateDept(dept);
 
-  const checkinLookup: Record<string, any> = {};
-  for (const c of checkins || []) {
-    checkinLookup[\`\${c.dept}|\${c.week}|\${c.staff}\`] = c.days || {};
-  }
-
-  const toNotify: { name: string; dept: string; kind: "missing" | "notout"; shiftVal: string }[] = [];
-
-  for (const row of assignments || []) {
-    // Only the CURRENT week's assignment row is relevant \u2014 a stale past week can't be a live attendance issue.
-    if (row.week !== todayIso.slice(0, 8) + "01" && !isCurrentWeek(row.week, now)) continue;
-    const days = row.days || {};
-    const dayIdx = dayIndexForToday(row.week, now); // 0-6, computed purely as (today \u2212 row.week's own stored start date) \u2014 genuinely independent of CFG.weekStartDow, since that offset is already baked into row.week itself (whichever day it starts on); no separate sync/adjustment is ever needed here regardless of what Settings' own workweek-start-day is currently configured to
-    const shiftVal = days[dayIdx];
-    if (!shiftVal || !isWorkShift(shiftVal)) continue;
-
-    const ci = checkinLookup[\`\${row.dept}|\${row.week}|\${row.staff}\`]?.[dayIdx];
-    const timing = shiftTimingState(shiftVal, now); // see helper below \u2014 mirrors this app's own shiftTimingState()
-    if (!timing) continue;
-
-    if (!ci?.inTs) {
-      if (timing.state === "during") {
-        toNotify.push({ name: row.staff, dept: row.dept, kind: "missing", shiftVal });
+    // Manager-facing: only the escalated conditions (noshow, missing, notout) — matching the app's own
+    // in-app manager-alert scope exactly (an ordinary "upcoming"/worker-only reminder is never sent to a manager).
+    const managerConditions = flagged.filter((f) =&gt; f.condition !== "upcoming");
+    if (managerConditions.length) {
+      const { data: managerSubs } = await supabase
+        .from("push_subscriptions").select("*").contains("manager_depts", [dept]);
+      for (const f of managerConditions) {
+        const key = \`mgr:\${dept}:\${f.week}:\${f.dayIdx}:\${f.name}:\${f.condition}\`;
+        if (await alreadyNotified(key)) continue;
+        const { title, body } = CONDITION_TEXT[f.condition](f.name, dept, f.detail);
+        let sentAny = false;
+        for (const sub of managerSubs ?? []) { if (await sendPush(sub, title, body)) sentAny = true; }
+        if (sentAny) await markNotified(key);
+        results.push({ dept, ...f, audience: "manager", sent: sentAny });
       }
-      // "late"/"noshow" (grace window elapsed) are intentionally NOT pushed here \u2014 matching this app's own
-      // client-side design, where only the two ESCALATED conditions (in-progress-no-clockin, missed-clockout)
-      // trigger a manager push; the milder "late" case stays a worker-only in-app nudge.
-    } else if (ci.inTs && !ci.outTs && timing.state === "after") {
-      toNotify.push({ name: row.staff, dept: row.dept, kind: "notout", shiftVal });
+    }
+
+    // Worker-facing: "upcoming shift" and the two clock-in-missing states, sent ONLY to the single device (if
+    // any) registered under that exact person's own name.
+    const workerFlags = flagged.filter((f) =&gt; ["upcoming","missing","noshow"].includes(f.condition));
+    for (const f of workerFlags) {
+      const { data: workerSubs } = await supabase.from("push_subscriptions").select("*").eq("name", f.name);
+      if (!workerSubs?.length) continue;
+      const workerCondition = f.condition === "noshow" ? "missing" : f.condition; // a worker never needs "you were a no-show" framing — same underlying reminder as "missing" from their own perspective
+      const key = \`wkr:\${dept}:\${f.week}:\${f.dayIdx}:\${f.name}:\${workerCondition}\`;
+      if (await alreadyNotified(key)) continue;
+      const { title, body } = CONDITION_TEXT[workerCondition](f.name, dept, f.detail);
+      let sentAny = false;
+      for (const sub of workerSubs) { if (await sendPush(sub, title, body)) sentAny = true; }
+      if (sentAny) await markNotified(key);
+      results.push({ dept, ...f, audience: "worker", sent: sentAny });
     }
   }
 
-  let sent = 0;
-  for (const issue of toNotify) {
-    const eventKey = \`\${issue.kind}:\${issue.dept}:\${issue.name}:\${todayIso}:\${issue.shiftVal}\`;
-    if (alreadyNotified.has(eventKey)) continue; // de-duplicated per day, matching maybeLocalNotify()'s own client-side rule
-
-    const title = issue.kind === "missing" ? "Not clocked in \u2014 shift in progress" : "Missing clock-out";
-    const body = issue.kind === "missing"
-      ? \`\${issue.name}'s \${issue.shiftVal} shift is currently running with no clock-in recorded (\${issue.dept}).\`
-      : \`\${issue.name} clocked in but never clocked out (\${issue.dept}).\`;
-
-    const relevantSubs = (subs || []).filter((s) => (s.manager_depts || []).includes(issue.dept));
-    for (const sub of relevantSubs) {
-      try {
-        await webpush.sendNotification(sub.subscription, JSON.stringify({ title, body }));
-        sent++;
-      } catch (e) {
-        if (e.statusCode === 404 || e.statusCode === 410) {
-          await supabase.from("push_subscriptions").delete().eq("endpoint", sub.endpoint); // stale/expired subscription \u2014 clean up
-        }
-      }
-    }
-    await supabase.from("notified_events").insert({ event_key: eventKey });
-  }
-
-  return new Response(JSON.stringify({ checked: (assignments || []).length, sent }), {
+  return new Response(JSON.stringify({ ok: true, checkedAt: new Date().toISOString(), results }, null, 2), {
     headers: { "Content-Type": "application/json" },
   });
 });
-
-// Helpers below intentionally mirror this app's own client-side logic (see shiftTimingState()/ attendanceStateFor()
-// in the main file) so server and client never silently disagree on what counts as "late" vs. "in progress" vs.
-// "already over." Keep both in sync if either is edited. ---
-function isWorkShift(v: string) { return /\d{1,2}:\d{2}/.test(v); } // a real time-window value, not OFF/PTO/etc.
-function isCurrentWeek(wk: string, now: Date) { const d = new Date(wk); const diff = (now.getTime() - d.getTime()) / 86400000; return diff >= 0 && diff < 7; }
-function dayIndexForToday(wk: string, now: Date) { const d = new Date(wk); return Math.floor((now.getTime() - d.getTime()) / 86400000); }
-function shiftTimingState(v: string, now: Date) {
-  const [startStr, endStr] = v.split("-");
-  const [sh, sm] = startStr.split(":").map(Number); const [eh, em] = endStr.split(":").map(Number);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  const startMin = sh * 60 + sm, endMin = eh * 60 + em;
-  if (endMin < startMin) { // overnight shift
-    if (nowMin >= startMin || nowMin < endMin) return { state: "during" };
-    return { state: "after" };
-  }
-  if (nowMin >= startMin && nowMin < endMin) return { state: "during" };
-  if (nowMin >= endMin) return { state: "after" };
-  return { state: "before" };
-}</pre>
+</pre>
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Step-by-step: fixing "notifications don't arrive once the site is closed"</b></summary>
@@ -16976,6 +17303,10 @@ truncate table public.snapshots;
     <li><b>Access/cost:</b> no public self-serve API — a real integration needs a paid commercial agreement (typically several thousand dollars/year, unconfirmed pricing), separate from whatever base modules are already in use. Even with an agreement, Paycom's own exchange mechanism is file-based (scheduled SFTP/CSV or manual export/import), not a live API call.</li>
     <li><b>Auto-push/sync:</b> not possible today without that agreement — Paycom's own exchange mechanism stays file-based (manual export/import), never a live push. A manual, periodic file round-trip covers both directions: the Payroll &amp; Time (CSV) export and the Paycom Schedule Import (CSV) export (see next item) provide the two outbound halves; Import actual hours from Paycom (CSV) provides the inbound half.</li>
     <li><b>Schedule Import CSV (outbound, planned shifts):</b> Export… → "Paycom Schedule Import (CSV)" produces a real, uploadable file for the Schedule Import screen (Time Management) — the feature meant to cut down the hotel's current double entry (Excel/this app, then manually re-typed into Paycom). It matches a real Paycom-supplied template for this account: a header row, and 5-column punch rows (Employee Number, Blank, Date, Time, ID/OD/IL/OL) — rather than the generic Scheduling_Import_Instructions.pdf's (Paycom, May 2021) 13-column, no-header layout. <mark style="background:#ffe08a"><b>Pending verification</b></mark> — the header row directly contradicts that PDF's own "no header record" rule; confirm with Paycom/the hotel's rep whether this import screen actually expects one, or whether row 1 should be stripped before uploading. A leave/off Hours row (Earning Code + Hours columns) was never shown in the template's own sample, so its column layout past Column E is this app's own extrapolation from the 2021 PDF, not directly confirmed.</li>
+    <li><b>Byte-for-byte template alignment, confirmed:</b> the exact template scenario Paycom supplied (Employee ID "001360", a leading-zero value) was run through this app's own live export functions in isolation, end to end — the result is byte-for-byte identical to the supplied template, including the leading zeros, the zero-padded MM/DD/YYYY date, the trailing comma on every row, and the CRLF line endings. Employee ID is stored and read as a plain string everywhere in this path (the roster input is a plain text field, never <code>type="number"</code>; the change handler assigns it with no numeric coercion; the export reads it with only <code>.trim()</code>) — a leading zero, once entered, is never at risk of being silently dropped by this app itself, at any point from typing it into the roster through to the exported file.</li>
+    <li><b>Real, disclosed risk — NOT from this app:</b> if the downloaded CSV is opened and re-saved in Excel, Google Sheets, or Numbers before being uploaded to Paycom, that spreadsheet program will silently reformat it: an Employee ID that looks like a number loses any leading zero (e.g. "001360" → "1360"), and the Date column's zero-padding is dropped (e.g. "08/27/2026" → "8/27/2026") — both confirmed by directly comparing a real exported file against what this app's own source code actually produces for the identical scenario. The export's own post-download instructions now explicitly warn against this and say to upload the file exactly as downloaded, with no intermediate edit.</li>
+    <li><b>Re-verified a second time, at hex-byte level, per a direct follow-up report:</b> the app's own export functions were extracted programmatically (not retyped, to remove any risk of a transcription mismatch) and re-run against Paycom's exact template scenario — the output was confirmed byte-for-byte identical via a raw hex dump, matching the same rigor used to originally flag this concern. This re-confirms the finding above: this app's own roster→export pipeline has zero numeric coercion anywhere (the roster's own Employee ID input is a plain text field, never <code>type="number"</code>; the generic change-handler assigns whatever was typed with no coercion; a DOM input's own <code>.value</code> is always a string regardless of its content; JSON serialization, used for this app's local/live persistence, cannot itself introduce numeric coercion for an already-string value).</li>
+    <li><b>The zero-padding question is resolved: this Paycom account genuinely has TWO different identifier fields with two different formats, and the app's roster uses the correct one.</b> Direct inspection of the raw XML inside 8 real Paycom export files (Time Detail Report, Timecard Search Export, both Punches Outside Allocation reports, Total Hours By Time Range, Time Between Shifts, ZeroHours Summary, Mismatched Earnings — every cell read at its own underlying XML type, not through a spreadsheet program's display) shows: <b>EE Code</b> is a 4-digit value with genuinely NO leading zeros for every one of 107 real employees found (e.g., Elsa Aguilo's EE Code is confirmed "2363" in 3 separate files, including one where it's stored as an explicit XML text/string cell, ruling out any numeric-formatting artifact). <b>Badge Number</b> is a SEPARATE, genuinely different field, consistently 6-digit and zero-padded for 87 of those same employees (e.g., Elsa's colleague Florencia Orino: EE Code "2352", Badge "000026" — two authentically different numbers for the same person, not two representations of one). The supplied Test 6.csv template's own "001360" matches the Badge Number's format (6 digits), not the EE Code's (4 digits, unpadded) — so the template's own padding does NOT mean the currently-configured "EE Code" identifier type should be zero-padded; it reflects Paycom's own real, existing 6-digit Badge Number field's own format, which is a different value for the same person. All 78 of this app's own pre-filled Employee IDs were directly cross-checked against this real data: <b>78 of 78 confirmed correct, zero mismatches, zero evidence of a stripped leading zero anywhere.</b> <mark style="background:#ffe08a"><b>Action still needed from the hotel</b></mark>: confirm directly with Paycom or this hotel's own payroll admin which identifier type the Schedule Import screen is actually configured to accept for this account — if it's EE Code (matching this app's own current Settings default), no change is needed anywhere; if it's actually Badge Number, every stored ID would need to be swapped for its own distinct Badge Number value (verified real Badge Numbers for 87 of 107 known employees, cross-referenced directly from Paycom's own real files, are available on request) — this is a real content decision this app cannot make on its own, since it depends on how Paycom itself is configured for this specific account, not on any data internal to this app.</li>
     <li><b>IL/OL lunch-punch anchor:</b> a real IL/OL punch pair needs a real clock-time, not just the Unpaid-break DURATION this app already tracked (Settings → Shift & hours rules). A single fixed clock-time (e.g. everyone's lunch starts at 12:30) does not generalize to a roster whose shifts start at genuinely different times across the day (e.g. an 8:00 AM shift and a 22:30 shift both drawing lunch from the same fixed clock-time makes no sense for the later shift) — so this is configurable as one of two modes: a fixed clock-time (correct for a roster whose shifts genuinely share one common lunch window), or a configurable number of hours after each person's own shift start (correct for a roster whose shifts start at different times, since the anchor then moves with each individual shift). Left unset in either mode, IL/OL is omitted entirely (ID/OD only), never guessed.</li>
     <li><b>Real Time Detail Report</b> (31,585 rows, one department, Dec 2025–Aug 2026) was examined directly. Real columns: <code>Lastname</code>/<code>Firstname</code>, <code>InPunchTime</code>/<code>OutPunchTime</code> (full timestamps), <code>EarnCode</code>, <code>EarnHours</code> (pre-computed duration). Real <b>.xlsx</b>; can have 2–6 punch-pair rows per person/day (e.g. a lunch-break split). The importer (Settings → Backup &amp; versions… → "Import actual hours from Paycom (Excel)") groups by (person, day), sums EarnHours for blank-EarnCode rows (worked hours), and keeps EarnCode-coded rows (leave/differential) separate. The original CSV importer remains for a simpler, manually-built file.</li>
     <li><b>7 real EarnCode values, each investigated:</b> <code>PTO</code> (exact match); <code>FMA</code> (suggested FMLA match, flagged); <code>BDY</code> (suggested Bereavement Day match, matches existing free-text "BDY" support); <code>HOL</code> (Holiday pay, unmapped); <code>VLP</code> ("Automated Time-Off Punch," unmapped); <code>MLF</code> (meal-differential marker, always 0 hours, not a leave code); <code>CPO</code> (Comp Time Off, unmapped). None auto-applied — every EarnCode is reported with its confidence level for human confirmation.</li>
@@ -17706,7 +18037,21 @@ function _renderSettingsInner(){
   </details>
   <details style="margin:0 0 6px 0" ${settingsSectionOpen('flags')?"open":""} ontoggle="toggleSettingsSection('flags',this.open)"><summary style="cursor:pointer"><b>Flags &amp; thresholds</b></summary>
   <div class="cfgrow" style="background:#f4f6f8;border-radius:6px;padding:8px 10px;display:flex;flex-direction:column;align-items:flex-start;gap:6px;margin-top:8px">
-  <label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.overstaffEnabled!==false?"checked":""} onchange="setOverstaffEnabled(this.checked)"> Flag overstaffed when <input class="sfield" style="width:44px" value="${CFG.overstaffMargin!=null?CFG.overstaffMargin:OVERSTAFF_MARGIN_DEFAULT}" onchange="setOverstaffMargin(this.value)"> or more staff scheduled than needed</label>
+  <!-- "line wrapping for flag overstaffed when [...] or more staff scheduled than needed seems odd". Root cause,
+       verified via a real headless-browser render at a real narrow width (not just re-reading the CSS): this
+       label had NEITHER of the two fixes the exact same "text — input — text" pattern already needed elsewhere
+       in this file (compare "Unpaid break:" just below, which has both) — (1) the narrow-screen blanket rule
+       (".cfgrow input.sfield:not([type=number])...{flex:1 1 100%!important}") was forcing this input to claim
+       the row's ENTIRE width, since it had no type="number" of its own despite its value always being a plain
+       count of staff; (2) with no flex-wrap:wrap of its own, the label fell back to this file's general
+       label:has(>input:not([type=checkbox])){flex-wrap:nowrap} rule, so the 100%-wide input, the checkbox, and
+       both text runs were all forced to fit on one nowrap flex line — which they cannot, producing exactly the
+       awkward multi-way split in the screenshot. Fixed with the SAME two-part pattern already proven correct for
+       "Unpaid break:" (type="number" escapes the forced 100%-width rule entirely; flex-wrap:wrap on the label
+       lets the row reflow normally, keeping the checkbox+text+input glued together and only wrapping the
+       trailing description text to its own line if genuinely needed) — confirmed via the same real-browser
+       render at 380px/900px that this now matches "Unpaid break:"'s own already-correct behavior at both widths. -->
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.overstaffEnabled!==false?"checked":""} onchange="setOverstaffEnabled(this.checked)"> Flag overstaffed when <input class="sfield" type="number" min="0" style="width:44px" value="${CFG.overstaffMargin!=null?CFG.overstaffMargin:OVERSTAFF_MARGIN_DEFAULT}" onchange="setOverstaffMargin(this.value)"> or more staff scheduled than needed</label>
   <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.dontFlagUnderstaffIfRosterShort?"checked":""} onchange="setUnderstaffFloorFlag(this.checked)"> <span class="small">Flag understaffed only if roster has enough active staff to meet the minimum</span></label>
     <!-- Moved here from "Shift & hours rules" — CFG.otDisplayMode doesn't govern any scheduling RULE (it never
        changes a computed hours/coverage number); it only controls how the already-computed overtime figure is
@@ -17788,10 +18133,22 @@ function _renderSettingsInner(){
   </div>
   <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG[SETDEPT].attestationEnabled?"checked":""} onchange="setAttestationEnabled(this.checked)"> <span class="small">Ask a quick question at clock in/out (e.g. a break/safety attestation)</span></label>
   <div class="mrow" style="align-items:center;flex-wrap:wrap;gap:6px">
-    <label class="small" style="display:flex;align-items:center;gap:4px;flex:1 1 260px;min-width:0">Clock-in question: <input class="sfield" style="width:100%" value="${esc(CFG[SETDEPT].attestationQuestionIn||'')}" placeholder="e.g. Are you clocking in for your own scheduled shift?" onchange="setAttestationQuestionIn(this.value)"></label>
+    <!-- "app wide scan for line-wrapping issues" — same underlying bug class as "Flag overstaffed when" (see that
+         label's own comment for the full mechanism), but manifesting differently here: the input's own explicit
+         width:100% escapes the narrow-screen forced-100%-width rule's PRACTICAL effect (it was already 100%), so
+         instead it's the label's own descriptive TEXT ("Clock-in question:") that was breaking mid-phrase
+         ("Clock-in" / "question:") once the label — with no flex-wrap of its own, falling back to this file's
+         nowrap default for a label containing a non-checkbox input — ran out of room for both the text and the
+         input on one line. Confirmed via a real headless-browser render at 380px. Fixed the same way this file's
+         own "Flat model:"/"Scaling model:"/"2-credit rooms" labels already protect their own descriptive text —
+         wrapping it in a <span style="white-space:nowrap"> so it can never fracture mid-phrase — combined with
+         flex-wrap:wrap on the label itself so, if there's genuinely not enough room, the INPUT drops to its own
+         full-width line below the (now atomic, unbreakable) label text, instead of either one splitting apart. -->
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;flex:1 1 260px;min-width:0"><span style="white-space:nowrap">Clock-in question:</span> <input class="sfield" style="width:100%" value="${esc(CFG[SETDEPT].attestationQuestionIn||'')}" placeholder="e.g. Are you clocking in for your own scheduled shift?" onchange="setAttestationQuestionIn(this.value)"></label>
   </div>
   <div class="mrow" style="align-items:center;flex-wrap:wrap;gap:6px">
-    <label class="small" style="display:flex;align-items:center;gap:4px;flex:1 1 260px;min-width:0">Clock-out question: <input class="sfield" style="width:100%" value="${esc(CFG[SETDEPT].attestationQuestionOut||'')}" placeholder="e.g. Did you take your scheduled break today?" onchange="setAttestationQuestionOut(this.value)"></label>
+    <!-- Same fix, same reason, as the Clock-in question label just above. -->
+    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px;flex:1 1 260px;min-width:0"><span style="white-space:nowrap">Clock-out question:</span> <input class="sfield" style="width:100%" value="${esc(CFG[SETDEPT].attestationQuestionOut||'')}" placeholder="e.g. Did you take your scheduled break today?" onchange="setAttestationQuestionOut(this.value)"></label>
   </div>
   </fieldset></div>
   </div>
@@ -17899,6 +18256,25 @@ function _renderSettingsInner(){
     <button style="background:${SETDEPT==='HSK'?'#fff':'transparent'};color:${SETDEPT==='HSK'?'#1b2a4a':'#fff'};border:1px solid rgba(255,255,255,.6);font-weight:${SETDEPT==='HSK'?'700':'400'}" onclick="setSetDept('HSK')">Housekeeping</button>
     ${(_canEditDeptNow&&grantCoversBothDepts())?`<span class="small" style="opacity:.85">(access via a shared, both-departments credential — not scoped to ${esc(D.label)} alone)</span>`:""}</div>
   ${_histBanner}
+  <!-- "Placement of the default shifts seems odd, maybe it should be above rules so rules, grid, leave, autofill
+       collapsible sections are all together?" — moved out from where it previously sat (buried inside the
+       "Rules & thresholds" <details>, immediately after Coverage minimums — a genuinely different KIND of
+       setting from a rules/threshold NUMBER: this is a plain list of shift-time presets used purely as
+       autocomplete suggestions when typing a schedule cell, not a staffing rule or formula at all) to its own,
+       standalone position here, BEFORE "Rules & thresholds" begins. This closes two things at once: (1) it's no
+       longer misplaced inside a section it doesn't conceptually belong to; (2) "Rules & thresholds", "Grid
+       display & hiding", "Leave request auto-deny", and "Auto-fill ranking" — the four TRUE per-department
+       collapsible <details> sections — now run as a genuinely uninterrupted, consecutive group exactly as
+       requested, with nothing (collapsible or not) sitting between "Rules & thresholds" and the one before it.
+       Given its own genuinely-separate <fieldset>/<div class="lockOverlayWrap"> pair here, using the exact SAME
+       two conditions (historical week / lacks edit access) that already gated it in its old position, so moving
+       it changes nothing about who can edit it or when — rather than trying to disturb the existing large shared
+       fieldset further down that still correctly spans Grid display/Leave auto-deny/Auto-fill ranking. -->
+  <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked — click to enter your PIN"></div>':''}
+  <fieldset ${(_histWk||!_canEditDeptNow)?"disabled":""} style="border:none;margin:0;padding:0">
+  <div class="cfgrow"><b>Default shifts</b> ${_histWk?'<span class="small muted">(historical — showing what was in effect this week)</span>':''} <input class="sfield small" style="flex:1 1 260px;max-width:100%;min-width:0" id="shiftBox" value="${esc((D.shifts||[]).join(', '))}" placeholder="e.g. 07:00-15:30, 14:00-22:30"><button onclick="saveShifts()">Save</button> <span class="small">These show as suggestions when entering a shift.</span></div>
+  </fieldset></div>
+  <hr>
     <!-- "should be able to collapse/expand... Lists like roster" — this previously forced the section OPEN unconditionally
        on a past week (CFG._rulesOpen||_histWk), overriding whatever open/closed state a person had actually chosen —
        genuinely a second, separate bug from the .lockOverlay one above (this one had nothing to do with the overlay at
@@ -18004,8 +18380,17 @@ function _renderSettingsInner(){
          PENDING-VERIFICATION span pointed to Readme detail that's still fully there, just no longer duplicated here. -->
     <div class="cfgrow"><b>Front Desk Agents needed — model:</b> <select class="sfield small" onchange="setFdaModel(this.value)"><option value="ratio" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="ratio"?"selected":""}>Ratio (1 agent per N arr/dep)</option><option value="flat" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="flat"?"selected":""}>Flat (+N once threshold crossed)</option><option value="scaling" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="scaling"?"selected":""}>Scaling (multiples of threshold)</option></select></div>
   ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="ratio"?`<div class="mrow"><label class="small">Ratio model: 1 agent per <input class="sfield" style="width:44px" value="${D.rules.fdaArrRatio||FO_FDA_ARR_RATIO_DEFAULT}" onchange="setRule('fdaArrRatio',this.value,${FO_FDA_ARR_RATIO_DEFAULT})"> Arrivals</label><label class="small">+ 1 per <input class="sfield" style="width:44px" value="${D.rules.fdaDepRatio||FO_FDA_DEP_RATIO_DEFAULT}" onchange="setRule('fdaDepRatio',this.value,${FO_FDA_DEP_RATIO_DEFAULT})"> Departures</label></div>`:""}
-  ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="flat"?`<div class="mrow" style="align-items:center"><label class="small" style="display:flex;align-items:center;gap:4px"><span style="white-space:nowrap">Flat model: </span><input class="sfield" style="width:36px" value="${D.rules.fdaArrAgents||FO_FDA_ARR_AGENTS_DEFAULT}" onchange="setRule('fdaArrAgents',this.value,${FO_FDA_ARR_AGENTS_DEFAULT})"> if Arrivals ≥ <input class="sfield" style="width:44px" value="${D.rules.fdaArrThreshold||FO_FDA_ARR_THRESHOLD_DEFAULT}" onchange="setRule('fdaArrThreshold',this.value,${FO_FDA_ARR_THRESHOLD_DEFAULT})"></label><label class="small" style="display:flex;align-items:center;gap:4px"><span style="display:inline-flex;align-items:center;justify-content:center;height:30px;box-sizing:border-box">+</span> <input class="sfield" style="width:36px" value="${D.rules.fdaDepAgents||FO_FDA_DEP_AGENTS_DEFAULT}" onchange="setRule('fdaDepAgents',this.value,${FO_FDA_DEP_AGENTS_DEFAULT})"> if Departures ≥ <input class="sfield" style="width:44px" value="${D.rules.fdaDepThreshold||FO_FDA_DEP_THRESHOLD_DEFAULT}" onchange="setRule('fdaDepThreshold',this.value,${FO_FDA_DEP_THRESHOLD_DEFAULT})"></label></div>`:""}
-  ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="scaling"?`<div class="mrow" style="align-items:center"><label class="small" style="display:flex;align-items:center;gap:4px"><span style="white-space:nowrap">Scaling model: </span><input class="sfield" style="width:36px" value="${D.rules.fdaArrAgents||FO_FDA_ARR_AGENTS_DEFAULT}" onchange="setRule('fdaArrAgents',this.value,${FO_FDA_ARR_AGENTS_DEFAULT})"> per multiple of Arrivals ≥ <input class="sfield" style="width:44px" value="${D.rules.fdaArrThreshold||FO_FDA_ARR_THRESHOLD_DEFAULT}" onchange="setRule('fdaArrThreshold',this.value,${FO_FDA_ARR_THRESHOLD_DEFAULT})"></label><label class="small" style="display:flex;align-items:center;gap:4px"><span style="display:inline-flex;align-items:center;justify-content:center;height:30px;box-sizing:border-box">+</span> <input class="sfield" style="width:36px" value="${D.rules.fdaDepAgents||FO_FDA_DEP_AGENTS_DEFAULT}" onchange="setRule('fdaDepAgents',this.value,${FO_FDA_DEP_AGENTS_DEFAULT})"> per multiple of Departures ≥ <input class="sfield" style="width:44px" value="${D.rules.fdaDepThreshold||FO_FDA_DEP_THRESHOLD_DEFAULT}" onchange="setRule('fdaDepThreshold',this.value,${FO_FDA_DEP_THRESHOLD_DEFAULT})"></label></div>`:""}`}
+  <!-- Same bug class/fix as "Flag overstaffed when" and the Clock-in/out question labels above (see those
+       comments for the full mechanism) — TWO risk factors compounding here: 4 plain-text inputs (none had
+       type="number", so the narrow-screen blanket rule forced every one of them to claim the full row width) AND
+       2 descriptive phrases ("if Arrivals ≥"/"if Departures ≥") with no nowrap protection of their own, free to
+       fracture mid-phrase exactly like "Clock-in question:" did. Confirmed via a real headless-browser render at
+       380px that the ORIGINAL markup broke into "if" / "Arrivals ≥" on separate lines; fixed with the same
+       combined pattern: type="number" on every input, flex-wrap:wrap on both labels, and each descriptive phrase
+       wrapped in its own <span style="white-space:nowrap">. -->
+  ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="flat"?`<div class="mrow" style="align-items:center;flex-wrap:wrap"><label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span style="white-space:nowrap">Flat model: </span><input class="sfield" type="number" style="width:36px" value="${D.rules.fdaArrAgents||FO_FDA_ARR_AGENTS_DEFAULT}" onchange="setRule('fdaArrAgents',this.value,${FO_FDA_ARR_AGENTS_DEFAULT})"> <span style="white-space:nowrap">if Arrivals ≥</span> <input class="sfield" type="number" style="width:44px" value="${D.rules.fdaArrThreshold||FO_FDA_ARR_THRESHOLD_DEFAULT}" onchange="setRule('fdaArrThreshold',this.value,${FO_FDA_ARR_THRESHOLD_DEFAULT})"></label><label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span style="display:inline-flex;align-items:center;justify-content:center;height:30px;box-sizing:border-box">+</span> <input class="sfield" type="number" style="width:36px" value="${D.rules.fdaDepAgents||FO_FDA_DEP_AGENTS_DEFAULT}" onchange="setRule('fdaDepAgents',this.value,${FO_FDA_DEP_AGENTS_DEFAULT})"> <span style="white-space:nowrap">if Departures ≥</span> <input class="sfield" type="number" style="width:44px" value="${D.rules.fdaDepThreshold||FO_FDA_DEP_THRESHOLD_DEFAULT}" onchange="setRule('fdaDepThreshold',this.value,${FO_FDA_DEP_THRESHOLD_DEFAULT})"></label></div>`:""}
+  <!-- Same fix, same reason, as the Flat model row just above. -->
+  ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="scaling"?`<div class="mrow" style="align-items:center;flex-wrap:wrap"><label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span style="white-space:nowrap">Scaling model: </span><input class="sfield" type="number" style="width:36px" value="${D.rules.fdaArrAgents||FO_FDA_ARR_AGENTS_DEFAULT}" onchange="setRule('fdaArrAgents',this.value,${FO_FDA_ARR_AGENTS_DEFAULT})"> <span style="white-space:nowrap">per multiple of Arrivals ≥</span> <input class="sfield" type="number" style="width:44px" value="${D.rules.fdaArrThreshold||FO_FDA_ARR_THRESHOLD_DEFAULT}" onchange="setRule('fdaArrThreshold',this.value,${FO_FDA_ARR_THRESHOLD_DEFAULT})"></label><label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:4px"><span style="display:inline-flex;align-items:center;justify-content:center;height:30px;box-sizing:border-box">+</span> <input class="sfield" type="number" style="width:36px" value="${D.rules.fdaDepAgents||FO_FDA_DEP_AGENTS_DEFAULT}" onchange="setRule('fdaDepAgents',this.value,${FO_FDA_DEP_AGENTS_DEFAULT})"> <span style="white-space:nowrap">per multiple of Departures ≥</span> <input class="sfield" type="number" style="width:44px" value="${D.rules.fdaDepThreshold||FO_FDA_DEP_THRESHOLD_DEFAULT}" onchange="setRule('fdaDepThreshold',this.value,${FO_FDA_DEP_THRESHOLD_DEFAULT})"></label></div>`:""}`}
   </fieldset></div>
   <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked \u2014 click to enter your PIN"></div>':''}
   <fieldset ${(_histWk||!_canEditDeptNow)?"disabled":""} style="border:none;margin:0;padding:0">
@@ -18049,7 +18434,6 @@ function _renderSettingsInner(){
   <hr>
   <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked \u2014 click to enter your PIN"></div>':''}
   <fieldset ${(_histWk||!_canEditDeptNow)?"disabled":""} style="border:none;margin:0;padding:0">
-  <div class="cfgrow"><b>Default shifts</b> ${_histWk?'<span class="small muted">(historical \u2014 showing what was in effect this week)</span>':''} <input class="sfield small" style="flex:1 1 260px;max-width:100%;min-width:0" id="shiftBox" value="${esc((D.shifts||[]).join(', '))}" placeholder="e.g. 07:00-15:30, 14:00-22:30"><button onclick="saveShifts()">Save</button> <span class="small">These show as suggestions when entering a shift.</span></div>
     <!-- "is there a more compact way to show hiding function in settings?" \u2014 the manager-only gate "maybe the hiding
        function can be set in each dept's settings? Or only visible to managers?" and the role-collapse list "are there any
        other roles like HSK Managers that should be collapsed? Should it be in settings which roles collapsed?" were
@@ -18618,7 +19002,7 @@ function _renderSettingsInner(){
        explicit width) — this table's Name column's sticky position depends on left:26px exactly matching the
        checkbox column's real rendered width, which table-layout:auto would leave only as a hint the browser is
        free to recompute from cell content instead. -->
-  <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;max-height:70vh"><table id="staffRosterTable" data-kbnav="1" style="table-layout:fixed"><colgroup><col style="width:26px"><col class="rosterNameC"><col class="rosterEmpIdC"><col class="rolec"><col class="typec"><col class="rateC" style="width:80px"><col class="hireDateC" style="width:145px"><col class="birthdayC" style="width:140px"><col class="guestRatingC" style="width:70px"><col class="perfScoreC" style="width:80px"><col class="priorityOverrideC" style="width:90px"><col class="ptoBalC" style="width:100px"><col class="noteC" style="width:190px"><col class="availC" style="width:260px"><col class="removeC" style="width:40px"></colgroup><!-- "freeze header row of roster table" — wrapping this header row in a real <thead> (matching the ONE other table in this app that already has a frozen header, the schedule grid — see this file's own generic "thead th{position:sticky;top:0}" CSS rule) is all that's needed: that rule already applies automatically to ANY table's <thead>, this table simply never used the tag before, so it never picked up the sticky behavior every other part of this convention already assumed it had. --><thead><tr><!-- "settings roster checkbox in header row is weird, checkbox not centered within column". This <th> already inherits text-align:center from the app's own generic th,td{text-align:center} rule (see that rule's own comment), which correctly centers an ordinary INLINE-level element — but a native checkbox's own browser-default margin box is NOT symmetric (Chromium's own UA stylesheet applies a slightly uneven margin around a checkbox, e.g. 1px more on one side than the other), so even with correct text-align:center on the parent, the checkbox's own visual box still sat a couple pixels off-center within this narrow, fixed 26px column — a small, easy-to-miss offset at a normal column width, but clearly visible at this one's especially narrow width. Explicit margin:0 on the checkbox itself removes that asymmetric default entirely, so text-align:center on the header can now center it exactly, with no residual offset regardless of browser/OS UA-stylesheet differences. --><th style="width:26px"><label class="rosterChk" title="Select/deselect all currently visible rows"><input type="checkbox" ${allVisibleRosterSelected('active')?"checked":""} onchange="setRosterSelMany(window._rosterVisibleNames_active||[],this.checked)"><span class="rosterChkVisual"></span></label></th><!-- "build sortability into roster". Every column with a genuinely sortable, well-defined value (Name/Role/Type/Rate/Hire date/Guest rating/Perf. Score/PTO Bal./Note) is now a clickable header (onclick=setRosterSort(key)) showing a \u25b2/\u25bc arrow on whichever column is currently active (see rosterSortArrow()); clicking the SAME column again flips ascending\u2194descending (see setRosterSort()'s own comment). Availability is left NOT sortable \u2014 it's a free-text, multi-shape summary (specific dates off, recurring weekly off-days, part-day windows, all mixed together — see avSummary()), with no single well-defined "value" a sort could meaningfully order by, unlike every other column here which already has one clear underlying number/date/string. Cursor:pointer + a title on each signals they're clickable. --><th style="cursor:pointer" onclick="setRosterSort('n')" title="Click to sort by Name">Name${rosterSortArrow("n")}</th><th style="cursor:pointer" onclick="setRosterSort('paycomEmployeeId')" title="Required for the Paycom schedule export (Settings \u2192 Paycom schedule export\u2026) \u2014 must match whichever identifier type this hotel\u2019s Paycom instance uses (EE Code, Badge Number, Clock Sequence Number, or SSN). Blank = this person is excluded from the export and flagged. Click to sort.">Employee ID<br><span class="small muted" style="font-weight:400">(Paycom)</span>${rosterSortArrow("paycomEmployeeId")}</th><th style="cursor:pointer" onclick="setRosterSort('role')" title="Click to sort by Role">Role${rosterSortArrow("role")}</th><th style="cursor:pointer" onclick="setRosterSort('type')" title="Click to sort by Type">Type${rosterSortArrow("type")}</th><th style="cursor:pointer" onclick="setRosterSort('rate')" title="Click to sort by Rate">Rate $/h${rosterSortArrow("rate")}</th><th style="cursor:pointer" onclick="setRosterSort('hireDate')" title="Seniority (earliest Hire date = most senior) is used automatically by the Seniority auto-fill ranking factor \u2014 no separate badge is shown in this column. Click to sort by Hire date.">Hire date${rosterSortArrow("hireDate")}</th><!-- "add birthday column to roster and auto stamp birthdays as BDH for each worker" --><th style="cursor:pointer" onclick="setRosterSort('birthday')" title="Used to auto-stamp BDH (Birthday Holiday) onto that person's schedule cell on their actual birthday each year \u2014 see the 'Automatically stamp BDH' checkbox just above the roster. Blank = no birthday recorded, never auto-stamped. Click to sort.">Birthday${rosterSortArrow("birthday")}</th><!-- "columns in roster for performance score and guest rating don't allow input and they should either be dropdown for grade or number input or something so user knows what scale is". Traced the "don't allow input" part: both cells are already plain, functional number inputs (min/max/step already set correctly) \u2014 they're gated by the SAME per-department edit-access fieldset every other roster field already uses (locked until a scheduler enters their PIN), which is the standard, intentional behavior here, not a bug specific to these two. The genuinely actionable part is the scale itself: it previously lived ONLY in a hover tooltip, invisible until a user thought to hover over the header \u2014 now stated directly in the visible header text itself, so the 0\u20135 / 0\u2013100 range is obvious at a glance without needing to discover the tooltip. --><th style="cursor:pointer" onclick="setRosterSort('guestRating')" title="Used by the Guest ratings auto-fill ranking factor. Blank = not yet rated (scores neutral). Click to sort.">Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span>${rosterSortArrow("guestRating")}</th><th style="cursor:pointer" onclick="setRosterSort('performanceScore')" title="Used by the Performance score auto-fill ranking factor. Blank = not yet rated (scores neutral). Click to sort.">Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span>${rosterSortArrow("performanceScore")}</th><!-- "where is the manual override of autofill rankings for each employee" \u2014 a genuine, previously-missing per-PERSON override (distinct from the existing per-ROLE factor-order override in "Auto-fill ranking" Settings above). Blank = no override, the default for everyone \u2014 that person's Auto-fill placement is decided entirely by the normal configured factors, unchanged from before. When set, LOWER number = more preferred (matching this app's own "lower score = more preferred" convention already used by every other ranking factor), and this value wins BEFORE any configured factor is even checked \u2014 see buildRankComparator()'s own comment for the full reasoning on why an override must never be silently out-ranked by, e.g., Seniority or Cost. --><th style="cursor:pointer" onclick="setRosterSort('priorityOverride')" title="Manual Auto-fill priority override \u2014 lower number = more preferred, applied BEFORE any configured ranking factor. This is the OVERALL/default override, applying to every day EXCEPT a day that has its own separate, day-specific override set from the Preview ranking modal (Settings \u2192 Auto-fill ranking \u2192 Preview ranking\u2026) \u2014 a day-specific override always takes precedence over this overall one for that day only. Blank = no overall override (default). Click to sort.">Priority<br><span class="small muted" style="font-weight:400">override</span>${rosterSortArrow("priorityOverride")}</th><th style="cursor:pointer" onclick="setRosterSort('ptoBal')" title="Running PTO balance \u2014 see Settings \u2192 Shift &amp; hours rules \u2192 PTO accrual for the rate/policy this is computed from. Click a value to view history or make a manual adjustment; click this header to sort.">PTO Bal.${rosterSortArrow("ptoBal")}</th><th style="cursor:pointer" onclick="setRosterSort('note')" title="Click to sort by Note">Note${rosterSortArrow("note")}</th><th>Availability</th><th></th></tr></thead>`;
+  <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;max-height:70vh"><table id="staffRosterTable" data-kbnav="1" style="table-layout:fixed"><colgroup><col style="width:26px"><col class="rosterNameC"><col class="rosterEmpIdC"><col class="rosterBadgeC"><col class="rolec"><col class="typec"><col class="rateC" style="width:80px"><col class="hireDateC" style="width:145px"><col class="birthdayC" style="width:140px"><col class="guestRatingC" style="width:70px"><col class="perfScoreC" style="width:80px"><col class="priorityOverrideC" style="width:90px"><col class="ptoBalC" style="width:100px"><col class="noteC" style="width:190px"><col class="availC" style="width:260px"><col class="removeC" style="width:40px"></colgroup><!-- "freeze header row of roster table" — wrapping this header row in a real <thead> (matching the ONE other table in this app that already has a frozen header, the schedule grid — see this file's own generic "thead th{position:sticky;top:0}" CSS rule) is all that's needed: that rule already applies automatically to ANY table's <thead>, this table simply never used the tag before, so it never picked up the sticky behavior every other part of this convention already assumed it had. --><thead><tr><!-- "settings roster checkbox in header row is weird, checkbox not centered within column". This <th> already inherits text-align:center from the app's own generic th,td{text-align:center} rule (see that rule's own comment), which correctly centers an ordinary INLINE-level element — but a native checkbox's own browser-default margin box is NOT symmetric (Chromium's own UA stylesheet applies a slightly uneven margin around a checkbox, e.g. 1px more on one side than the other), so even with correct text-align:center on the parent, the checkbox's own visual box still sat a couple pixels off-center within this narrow, fixed 26px column — a small, easy-to-miss offset at a normal column width, but clearly visible at this one's especially narrow width. Explicit margin:0 on the checkbox itself removes that asymmetric default entirely, so text-align:center on the header can now center it exactly, with no residual offset regardless of browser/OS UA-stylesheet differences. --><th style="width:26px"><label class="rosterChk" title="Select/deselect all currently visible rows"><input type="checkbox" ${allVisibleRosterSelected('active')?"checked":""} onchange="setRosterSelMany(window._rosterVisibleNames_active||[],this.checked)"><span class="rosterChkVisual"></span></label></th><!-- "build sortability into roster". Every column with a genuinely sortable, well-defined value (Name/Role/Type/Rate/Hire date/Guest rating/Perf. Score/PTO Bal./Note) is now a clickable header (onclick=setRosterSort(key)) showing a \u25b2/\u25bc arrow on whichever column is currently active (see rosterSortArrow()); clicking the SAME column again flips ascending\u2194descending (see setRosterSort()'s own comment). Availability is left NOT sortable \u2014 it's a free-text, multi-shape summary (specific dates off, recurring weekly off-days, part-day windows, all mixed together — see avSummary()), with no single well-defined "value" a sort could meaningfully order by, unlike every other column here which already has one clear underlying number/date/string. Cursor:pointer + a title on each signals they're clickable. --><th style="cursor:pointer" onclick="setRosterSort('n')" title="Click to sort by Name">Name${rosterSortArrow("n")}</th><th style="cursor:pointer" onclick="setRosterSort('paycomEmployeeId')" title="This person's EE Code (or Clock Sequence Number/SSN, if this hotel's Paycom account uses one of those instead) \u2014 chosen at export time (Export\u2026 \u2192 Paycom Schedule Import (CSV)). Blank = excluded and flagged only when EE Code is the export's chosen identifier. Click to sort.">Employee ID<br><span class="small muted" style="font-weight:400">(Paycom)</span>${rosterSortArrow("paycomEmployeeId")}</th><th style="cursor:pointer" onclick="setRosterSort('paycomBadgeNumber')" title="A genuinely separate, real identifier from Employee ID/EE Code \u2014 not the same value reformatted (confirmed directly against this hotel's own real Paycom export files; see the Readme's own Paycom integration section). Only needed if this hotel's Paycom account uses Badge Number as its Schedule Import identifier \u2014 chosen at export time. Blank = excluded and flagged only when Badge Number is the export's chosen identifier. Click to sort.">Badge No.<br><span class="small muted" style="font-weight:400">(Paycom)</span>${rosterSortArrow("paycomBadgeNumber")}</th><th style="cursor:pointer" onclick="setRosterSort('role')" title="Click to sort by Role">Role${rosterSortArrow("role")}</th><th style="cursor:pointer" onclick="setRosterSort('type')" title="Click to sort by Type">Type${rosterSortArrow("type")}</th><th style="cursor:pointer" onclick="setRosterSort('rate')" title="Click to sort by Rate">Rate $/h${rosterSortArrow("rate")}</th><th style="cursor:pointer" onclick="setRosterSort('hireDate')" title="Seniority (earliest Hire date = most senior) is used automatically by the Seniority auto-fill ranking factor \u2014 no separate badge is shown in this column. Click to sort by Hire date.">Hire date${rosterSortArrow("hireDate")}</th><!-- "add birthday column to roster and auto stamp birthdays as BDH for each worker" --><th style="cursor:pointer" onclick="setRosterSort('birthday')" title="Used to auto-stamp BDH (Birthday Holiday) onto that person's schedule cell on their actual birthday each year \u2014 see the 'Automatically stamp BDH' checkbox just above the roster. Blank = no birthday recorded, never auto-stamped. Click to sort.">Birthday${rosterSortArrow("birthday")}</th><!-- "columns in roster for performance score and guest rating don't allow input and they should either be dropdown for grade or number input or something so user knows what scale is". Traced the "don't allow input" part: both cells are already plain, functional number inputs (min/max/step already set correctly) \u2014 they're gated by the SAME per-department edit-access fieldset every other roster field already uses (locked until a scheduler enters their PIN), which is the standard, intentional behavior here, not a bug specific to these two. The genuinely actionable part is the scale itself: it previously lived ONLY in a hover tooltip, invisible until a user thought to hover over the header \u2014 now stated directly in the visible header text itself, so the 0\u20135 / 0\u2013100 range is obvious at a glance without needing to discover the tooltip. --><th style="cursor:pointer" onclick="setRosterSort('guestRating')" title="Used by the Guest ratings auto-fill ranking factor. Blank = not yet rated (scores neutral). Click to sort.">Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span>${rosterSortArrow("guestRating")}</th><th style="cursor:pointer" onclick="setRosterSort('performanceScore')" title="Used by the Performance score auto-fill ranking factor. Blank = not yet rated (scores neutral). Click to sort.">Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span>${rosterSortArrow("performanceScore")}</th><!-- "where is the manual override of autofill rankings for each employee" \u2014 a genuine, previously-missing per-PERSON override (distinct from the existing per-ROLE factor-order override in "Auto-fill ranking" Settings above). Blank = no override, the default for everyone \u2014 that person's Auto-fill placement is decided entirely by the normal configured factors, unchanged from before. When set, LOWER number = more preferred (matching this app's own "lower score = more preferred" convention already used by every other ranking factor), and this value wins BEFORE any configured factor is even checked \u2014 see buildRankComparator()'s own comment for the full reasoning on why an override must never be silently out-ranked by, e.g., Seniority or Cost. --><th style="cursor:pointer" onclick="setRosterSort('priorityOverride')" title="Manual Auto-fill priority override \u2014 lower number = more preferred, applied BEFORE any configured ranking factor. This is the OVERALL/default override, applying to every day EXCEPT a day that has its own separate, day-specific override set from the Preview ranking modal (Settings \u2192 Auto-fill ranking \u2192 Preview ranking\u2026) \u2014 a day-specific override always takes precedence over this overall one for that day only. Blank = no overall override (default). Click to sort.">Priority<br><span class="small muted" style="font-weight:400">override</span>${rosterSortArrow("priorityOverride")}</th><th style="cursor:pointer" onclick="setRosterSort('ptoBal')" title="Running PTO balance \u2014 see Settings \u2192 Shift &amp; hours rules \u2192 PTO accrual for the rate/policy this is computed from. Click a value to view history or make a manual adjustment; click this header to sort.">PTO Bal.${rosterSortArrow("ptoBal")}</th><th style="cursor:pointer" onclick="setRosterSort('note')" title="Click to sort by Note">Note${rosterSortArrow("note")}</th><th>Availability</th><th></th></tr></thead>`;
   // "build sortability into roster" — this used to iterate D.staff.forEach() directly, so row order always matched
   // the underlying array's own (import/add) order. To sort WITHOUT disturbing anything else, the filter pass now
   // first collects {st,i} pairs (i = the REAL index into D.staff — every editable field's data-si="${i}" attribute
@@ -18676,7 +19060,7 @@ function _renderSettingsInner(){
          its own right edge without ever overlapping typed name text; the icon's own fill color signals at a glance whether
          a value is already on file, without needing to open the popover just to check. -->
     <td style="position:relative"><input class="sfield" style="width:100%;padding-right:24px" data-si="${i}" data-k="n" value="${esc(st.n)}">
-    <button type="button" onclick="event.stopPropagation();openAltNamePopover(this,${i})" style="position:absolute;right:5px;top:50%;transform:translateY(-50%);width:15px;height:15px;padding:0;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center" title="${st.altName?"Alternate name on file: "+esc(st.altName)+" \u2014 click to edit":"Add an alternate name (optional)"}">${altNameIconSvg(!!st.altName)}</button></td><td><input class="sfield" style="width:100%" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—" title="Required for the Paycom schedule export — must match this hotel’s configured identifier type (EE Code, Badge Number, Clock Sequence Number, or SSN). Blank = excluded and flagged at export time."></td>
+    <button type="button" onclick="event.stopPropagation();openAltNamePopover(this,${i})" style="position:absolute;right:5px;top:50%;transform:translateY(-50%);width:15px;height:15px;padding:0;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center" title="${st.altName?"Alternate name on file: "+esc(st.altName)+" \u2014 click to edit":"Add an alternate name (optional)"}">${altNameIconSvg(!!st.altName)}</button></td><td><input class="sfield" style="width:100%" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—" title="Required for the Paycom schedule export when EE Code (or Clock Sequence Number/SSN) is the chosen identifier type. Enter the FULL value exactly as it appears in Paycom, including any leading zeros (e.g. 001360, not 1360) — this app stores and exports it as plain text with no reformatting. Blank = excluded and flagged only when EE Code is the export's chosen identifier. For Badge Number specifically, use the separate column to the right — a genuinely different real number, not this same one reformatted."></td><td><input class="sfield" style="width:100%" data-si="${i}" data-k="paycomBadgeNumber" value="${esc(st.paycomBadgeNumber||'')}" placeholder="—" title="A genuinely separate, real identifier from Employee ID/EE Code — not the same value reformatted (confirmed directly against this hotel's own real Paycom export files). Only needed if this hotel's Paycom account uses Badge Number as its Schedule Import identifier. Enter the FULL value exactly as it appears in Paycom, including any leading zeros. Blank = excluded and flagged only when Badge Number is the export's chosen identifier."></td>
         <!-- A genuine blank "Select role…" option, so a brand-new staff record (added via addStaffRow() with role:"" — see
          that function's own comment for why) can actually DISPLAY as blank instead of the select silently falling back to
          showing whichever option happens to be first in D.roles (the native <select> behavior when no option matches the
@@ -18779,11 +19163,11 @@ function _renderSettingsInner(){
          unaffected by this change) purely for the SAME general usability/consistency benefit every other long roster-style
          table in this app already gets (a bounded, independently-scrollable region instead of growing to an arbitrary
          length). -->
-    <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;margin-top:6px;max-height:50vh"><table id="formerStaffTable" style="table-layout:fixed"><colgroup><col style="width:26px"><col class="rosterNameC"><col class="rosterEmpIdC"><col class="rolec"><col class="typec"><col class="rateC" style="width:80px"><col class="hireDateC" style="width:130px"><col class="birthdayC" style="width:130px"><col class="guestRatingC" style="width:66px"><col class="perfScoreC" style="width:62px"><col class="priorityOverrideC" style="width:66px"><col class="ptoBalC" style="width:70px"><col class="noteC" style="width:200px"><col class="inactiveSinceC" style="width:140px"><col class="removeC" style="width:60px"></colgroup><tr><th style="width:26px"><label class="rosterChk" title="Select/deselect all currently visible rows"><input type="checkbox" ${allVisibleRosterSelected('former')?"checked":""} onchange="setRosterSelMany(window._rosterVisibleNames_former||[],this.checked)"><span class="rosterChkVisual"></span></label></th><th>Name</th><th>Employee ID</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Hire date</th><th>Birthday</th><th>Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span></th><th>Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span></th><th>Priority<br><span class="small muted" style="font-weight:400">override</span></th><th>PTO Bal.</th><th>Note</th><th>Inactive Since</th><th></th></tr>
+    <div class="tblwrap" style="overflow:auto;-webkit-overflow-scrolling:touch;border-radius:8px;margin-top:6px;max-height:50vh"><table id="formerStaffTable" style="table-layout:fixed"><colgroup><col style="width:26px"><col class="rosterNameC"><col class="rosterEmpIdC"><col class="rosterBadgeC"><col class="rolec"><col class="typec"><col class="rateC" style="width:80px"><col class="hireDateC" style="width:130px"><col class="birthdayC" style="width:130px"><col class="guestRatingC" style="width:66px"><col class="perfScoreC" style="width:62px"><col class="priorityOverrideC" style="width:66px"><col class="ptoBalC" style="width:70px"><col class="noteC" style="width:200px"><col class="inactiveSinceC" style="width:140px"><col class="removeC" style="width:60px"></colgroup><tr><th style="width:26px"><label class="rosterChk" title="Select/deselect all currently visible rows"><input type="checkbox" ${allVisibleRosterSelected('former')?"checked":""} onchange="setRosterSelMany(window._rosterVisibleNames_former||[],this.checked)"><span class="rosterChkVisual"></span></label></th><th>Name</th><th>Employee ID</th><th>Badge No.</th><th>Role</th><th>Type</th><th>Rate $/h</th><th>Hire date</th><th>Birthday</th><th>Guest rating<br><span class="small muted" style="font-weight:400">(0\u20135)</span></th><th>Perf. score<br><span class="small muted" style="font-weight:400">(0\u2013100)</span></th><th>Priority<br><span class="small muted" style="font-weight:400">override</span></th><th>PTO Bal.</th><th>Note</th><th>Inactive Since</th><th></th></tr>
     ${formerIdx.map(i=>{const st=D.staff[i];return `<tr>
     <td style="text-align:center"><label class="rosterChk"><input type="checkbox" ${rosterSelSet().has(st.n)?"checked":""} onchange="toggleRosterSel('${esc(st.n).replace(/'/g,"")}',this.checked)"><span class="rosterChkVisual"></span></label></td>
     <td style="position:relative"><input class="sfield" style="width:100%;color:#8a94a0;padding-right:24px" data-si="${i}" data-k="n" value="${esc(st.n)}">
-    <button type="button" onclick="event.stopPropagation();openAltNamePopover(this,${i})" style="position:absolute;right:5px;top:50%;transform:translateY(-50%);width:15px;height:15px;padding:0;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center" title="${st.altName?"Alternate name on file: "+esc(st.altName)+" \u2014 click to edit":"Add an alternate name (optional)"}">${altNameIconSvg(!!st.altName)}</button></td><td><input class="sfield" style="width:100%;color:#8a94a0" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—"></td>
+    <button type="button" onclick="event.stopPropagation();openAltNamePopover(this,${i})" style="position:absolute;right:5px;top:50%;transform:translateY(-50%);width:15px;height:15px;padding:0;border:none;background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center" title="${st.altName?"Alternate name on file: "+esc(st.altName)+" \u2014 click to edit":"Add an alternate name (optional)"}">${altNameIconSvg(!!st.altName)}</button></td><td><input class="sfield" style="width:100%;color:#8a94a0" data-si="${i}" data-k="paycomEmployeeId" value="${esc(st.paycomEmployeeId||'')}" placeholder="—" title="Enter the FULL value exactly as it appears in Paycom, including any leading zeros (e.g. 001360, not 1360) — this app stores and exports it as plain text with no reformatting."></td><td><input class="sfield" style="width:100%;color:#8a94a0" data-si="${i}" data-k="paycomBadgeNumber" value="${esc(st.paycomBadgeNumber||'')}" placeholder="—" title="A genuinely separate, real identifier from Employee ID/EE Code — not the same value reformatted. Only needed if this hotel's Paycom account uses Badge Number as its Schedule Import identifier."></td>
     <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="role">${D.roles.map(r=>`<option value="${esc(r)}" ${st.role===r?"selected":""}>${esc(dropdownRoleLabel(r))}</option>`).join("")}</select></td>
     <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option value="${t}" ${st.type===t?"selected":""}>${esc(TYPE_LABEL[t]||t)}</option>`).join("")}</select></td>
     <td><input class="sfield" style="width:64px;color:#8a94a0" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
@@ -18962,6 +19346,13 @@ function _renderSettingsInner(){
   // (initTableRowColFocus()) rather than reusing the schedule grid's own name/day-specific logic, which doesn't
   // apply here.
   initTableRowColFocus("staffRosterTable");
+  // See initLockOverlayScrollForwarding()'s own comment for the full "roster doesn't scroll while locked" root
+  // cause this fixes — bound fresh here every Settings render, matching initTableRowColFocus()'s own identical
+  // convention just above.
+  initLockOverlayScrollForwarding();
+  // See initRosterNativeScrollBoundaryFix()'s own comment for the full "trackpad scroll gesture stays stuck on
+  // the roster even after the cursor moves elsewhere" root cause this fixes for the UNLOCKED/native case.
+  initRosterNativeScrollBoundaryFix();
   // \u2014 see _refreshDateInputColors()'s own comment for the full cross-browser root-cause writeup (Firefox has
   // no CSS hook for a native date input's own internal placeholder segments at all). Settings has its own large set
   // of date inputs (Hire date, Birthday, PTO ledger dates, etc.) needing the same initial-color pass every time
@@ -19057,6 +19448,127 @@ function bindTableKeyboardNav(containerEl){
   if(_tableKeyNavBound||!containerEl)return;
   containerEl.addEventListener("keydown",_tableKeyNavHandler);
   _tableKeyNavBound=true;
+}
+// "roster in settings doesn't scroll when locked (frozen midway) — should be visible just not editable until
+// logged in". Root cause, confirmed via direct DOM/CSS inspection: .lockOverlay (position:absolute;inset:0, see
+// that rule's own comment) sits as a SIBLING of the <fieldset> it locks — never an ANCESTOR of that fieldset's
+// own scrollable descendants (e.g. the staff roster's own #staffRosterTable .tblwrap, deliberately capped at
+// max-height:70vh with its own overflow:auto so a long roster scrolls internally rather than growing the whole
+// page). A mouse-wheel or touch-drag gesture over the locked area lands on the overlay (topmost, z-index:5) —
+// and since a browser routes wheel/touch scrolling to the nearest SCROLLABLE ANCESTOR of whatever element the
+// gesture actually landed on, and the overlay's own ancestor chain does not include the fieldset's own tblwrap (a
+// sibling's descendant, never an ancestor), the gesture either scrolls the outer page instead or does nothing at
+// all — leaving the roster visually stuck after its own first ~70vh of rows, with no way to reach the rest while
+// locked. This manually forwards both wheel and touch-drag scrolling from the overlay to whichever scrollable
+// .tblwrap sits inside its own sibling fieldset, so the roster (and any future lockOverlay-gated section that
+// ever gains its own internally-scrollable content) stays fully visible/scrollable while locked — only actual
+// EDITING stays blocked, exactly as intended; nothing here touches the fieldset[disabled] gating itself. A
+// genuine mouse click or an untouched touch tap is completely unaffected either way (this only ever intervenes
+// once real wheel/drag movement is detected, and only for touch — never for a mouse click, which has no separate
+// "was this a drag" ambiguity to begin with), so the existing "tap to enter your PIN" affordance
+// (onclick="unlockCurrentSettingsDept(event)", already present on every .lockOverlay) keeps working exactly as
+// before for a real tap/click.
+//
+// Bound fresh every Settings render (see this function's own call site in _renderSettingsInner()) — matching this
+// app's own established "re-bind every render()" convention elsewhere (e.g. initDragSelect(), initTableRowColFocus()
+// itself, just below): #settingsBody's entire innerHTML is replaced wholesale each render, so every .lockOverlay
+// queried here is always a brand-new element with no listener of its own yet — safe to bind unconditionally, with
+// no risk of double-binding a stale handler to an element that no longer exists.
+function initLockOverlayScrollForwarding(){
+  document.querySelectorAll(".lockOverlay").forEach(overlay=>{
+    const fieldset=overlay.nextElementSibling;
+    const target=fieldset?fieldset.querySelector(".tblwrap"):null;
+    if(!target)return; // nothing internally scrollable inside this particular locked section — the outer page's own native scroll already reaches everything here as-is
+    // Desktop mouse-wheel forwarding — matches native WheelEvent semantics exactly (deltaY/deltaX added directly
+    // to scrollTop/scrollLeft, the same sign convention every browser already uses internally), so this reads as
+    // completely ordinary scrolling with no perceptible difference from scrolling the tblwrap directly.
+    //
+    // "when it works while hovering over roster, even if I move my mouse outside of roster range, it keeps
+    // scrolling roster instead of settings page" — a genuine, well-documented OS/browser-level trackpad-gesture
+    // behavior (NOT unique to this app's own code — a plain, unmodified overflow:auto div with zero JS exhibits
+    // the identical symptom): a continuous two-finger swipe/momentum-scroll gesture is "target-locked" to
+    // whichever element its OWN first wheel tick hit-tested against, and every SUBSEQUENT wheel event from that
+    // SAME physical gesture keeps being dispatched to that SAME element — even once the cursor has genuinely
+    // moved outside its visual bounds (confirmed via this event's own real-time clientX/clientY, which a
+    // WheelEvent always carries, same as any other MouseEvent). Since the OS-level gesture-lock itself can't be
+    // prevented, this instead detects the mismatch on every wheel tick THIS listener still receives (it keeps
+    // receiving them precisely BECAUSE of that same lock) — comparing the event's own clientX/clientY against
+    // this overlay's own CURRENT bounding box — and once they've genuinely diverged, takes over and manually
+    // redirects that same scroll delta to the page's own scroll position instead of letting the roster keep
+    // consuming it, handing control back the instant a mismatch is detected rather than waiting for the whole
+    // gesture to end. A wheel tick that's still genuinely within bounds is completely unaffected, preserving
+    // ordinary roster-scrolling exactly as before.
+    overlay.addEventListener("wheel",e=>{
+      e.preventDefault();
+      const r=overlay.getBoundingClientRect();
+      if(e.clientX<r.left||e.clientX>r.right||e.clientY<r.top||e.clientY>r.bottom){
+        (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
+        (document.scrollingElement||document.documentElement).scrollLeft+=e.deltaX;
+        return;
+      }
+      target.scrollTop+=e.deltaY;
+      target.scrollLeft+=e.deltaX;
+    },{passive:false});
+    // Touch-drag forwarding via Pointer Events (matching this app's own broader established convention of using
+    // Pointer Events — covering mouse/touch/pen with one API — rather than separate raw Touch Events elsewhere in
+    // this file), gated to pointerType==="touch" only: a mouse user's own plain click is never affected by any of
+    // this, since a mouse drag was never how this overlay's click-to-unlock affordance worked in the first place.
+    // Tracks total displacement from the ORIGINAL pointerdown position (not incremental per-move deltas) and
+    // applies it to a captured starting scrollTop/scrollLeft — the exact same "absolute displacement from a
+    // captured start value" approach already proven correct for the mobile schedule table's own equivalent
+    // touch-driven scroll (see mobileCellPointerMove()'s own comment and matching sign convention:
+    // scrollTop=startScrollTop-dy), rather than accumulating many small incremental deltas, which risks drifting
+    // out of sync with the finger's real position over a long drag.
+    let _pid=null,_startX=0,_startY=0,_startScrollTop=0,_startScrollLeft=0,_moved=false;
+    overlay.addEventListener("pointerdown",e=>{
+      if(e.pointerType!=="touch"||_pid!==null)return; // one active touch at a time; a mouse click is unaffected either way
+      _pid=e.pointerId;_startX=e.clientX;_startY=e.clientY;_startScrollTop=target.scrollTop;_startScrollLeft=target.scrollLeft;_moved=false;
+    });
+    overlay.addEventListener("pointermove",e=>{
+      if(e.pointerId!==_pid)return;
+      const dx=e.clientX-_startX,dy=e.clientY-_startY;
+      // Same >10px "was this actually a drag, not a tap" threshold already used elsewhere in this file (e.g.
+      // mobileCellPointerMove()'s own identical check) — below this threshold, nothing here fires at all, so a
+      // genuine tap's own native click event is completely untouched and still reaches the existing
+      // onclick="unlockCurrentSettingsDept(event)" handler exactly as before. Once past it, preventDefault()
+      // suppresses the synthetic click a touchend would otherwise generate after a real drag — without this, a
+      // finger-drag-to-scroll gesture would ALSO accidentally trigger the PIN-entry unlock the instant the finger
+      // lifted, which is not what a person scrolling the roster while locked actually intends.
+      if(!_moved&&(Math.abs(dx)>10||Math.abs(dy)>10))_moved=true;
+      if(_moved){
+        e.preventDefault();
+        target.scrollTop=_startScrollTop-dy;
+        target.scrollLeft=_startScrollLeft-dx;
+      }
+    },{passive:false});
+    const _endTouch=e=>{if(e.pointerId===_pid){_pid=null;_moved=false;}};
+    overlay.addEventListener("pointerup",_endTouch);
+    overlay.addEventListener("pointercancel",_endTouch);
+  });
+}
+// Same "trackpad gesture stays target-locked past this element's own visual bounds" fix as
+// initLockOverlayScrollForwarding()'s own wheel handler (see that comment for the full root-cause writeup) — but
+// for the roster's own ORDINARY, native overflow:auto scrolling (i.e., while UNLOCKED/editable), which has no
+// custom JS of its own at all today and so has no existing hook to add this check to. A plain native scrollable
+// div exhibits the identical OS-level gesture-locking symptom a custom JS listener would — this isn't specific to
+// the locked-overlay case, so the unlocked/native case needs its own equivalent fix. Scoped to the two roster
+// tables specifically (the only Settings sections with their own internally-scrollable region — see
+// initLockOverlayScrollForwarding()'s own comment on why), bound fresh every Settings render, matching every
+// other per-render listener-binding convention already used throughout this file.
+function initRosterNativeScrollBoundaryFix(){
+  ["staffRosterTable","formerStaffTable"].forEach(tableId=>{
+    const table=el(tableId);if(!table)return;
+    const wrap=table.closest(".tblwrap");if(!wrap)return;
+    wrap.addEventListener("wheel",e=>{
+      const r=wrap.getBoundingClientRect();
+      if(e.clientX>=r.left&&e.clientX<=r.right&&e.clientY>=r.top&&e.clientY<=r.bottom)return; // ordinary case — cursor genuinely still over the roster; let native scrolling handle it exactly as before, completely untouched
+      // The browser's own gesture-lock is still targeting this element even though the cursor has genuinely
+      // moved elsewhere — take over and redirect this same scroll delta to the page itself instead.
+      e.preventDefault();
+      (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
+      (document.scrollingElement||document.documentElement).scrollLeft+=e.deltaX;
+    },{passive:false});
+  });
 }
 function initTableRowColFocus(tableId){
   const table=el(tableId);if(!table)return;
@@ -22732,7 +23244,7 @@ async function checkBackgroundPushStatus(){
       if(hbErr){
         rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Could not check</b> \u2014 ${esc(hbErr.message||String(hbErr))}${/permission|RLS|policy/i.test(hbErr.message||"")?" \u2014 likely means function_heartbeat's own GRANT/RLS SQL hasn't been (re-)run yet on this project (see the deploy guide above).":""}</td></tr>`);
       }else if(!hb){
-        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Never confirmed</b> \u2014 no heartbeat row exists yet. This means either the attendance-reminders Edge Function has never been deployed, or it has never actually been invoked (e.g. no cron schedule set up for it yet) \u2014 see the deploy guide's own "Schedule it to run every 5 minutes" step.</td></tr>`);
+        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Never confirmed</b> \u2014 no heartbeat row exists yet. This means one of three things: (1) the attendance-reminders Edge Function has never been deployed; (2) it has never actually been invoked (e.g. no cron schedule set up for it yet); or (3) the cron job's own <code>net.http_post</code> URL points to the WRONG function name \u2014 a genuine, easy-to-make mistake, since the CRON JOB's own name (the first argument to <code>cron.schedule(...)</code>) is just a cosmetic label and does NOT need to match the actual deployed function \u2014 only the URL itself (<code>.../functions/v1/&lt;name&gt;</code>) does. Double-check that <code>&lt;name&gt;</code> in the URL exactly matches what was used in <code>supabase functions deploy &lt;name&gt;</code> \u2014 this deploy guide's own steps consistently use <code>attendance-reminders</code>; a mismatched URL (e.g. a different or older function name) 404s silently from pg_cron's perspective \u2014 the cron job still shows as "run" in its own history, but the request never reaches any real function, so this heartbeat is never written. See the deploy guide's own "Schedule it to run every 5 minutes" step for the exact, correct URL shape.</td></tr>`);
       }else{
         const _lastRun=new Date(hb.last_run_at);
         const _ageMin=Math.round((Date.now()-_lastRun.getTime())/60000);
@@ -27343,6 +27855,51 @@ function seedRoster(){try{
     });
     CFG._hskPaycomIdReseedMig=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
   }}catch(e){}
+  // One-time migration: pre-fills paycomBadgeNumber (see the roster's own Badge Number column comment for why
+  // this is a genuinely separate, real field from paycomEmployeeId/EE Code, not a reformatted version of it) for
+  // every HSK roster member whose CURRENT EE Code matches a confirmed real (EE Code, Badge Number) pair —
+  // obtained by directly cross-referencing this hotel's own real Paycom export files (Time Detail Report, 89 of
+  // 89 rows carrying an explicit Badge column; Timecard Search Export; ZeroHours Summary — see the Readme's own
+  // Paycom integration section for the full verification). Joined on EE Code itself (not name) — more robust
+  // than a name-fuzzy-match, since this EE Code is already confirmed correct in this app's own roster. Only
+  // ever fills a currently-blank paycomBadgeNumber — never overwrites a real, already-entered value, matching
+  // this app's own established migration convention. Uses a NEW flag name (not the original
+  // _hskBadgeNumberSeedMig) specifically because that earlier migration already ran, on any device that loaded
+  // an intervening version of this app, with only 1 of these 59 pairs available at the time (the Time Detail
+  // Report file was not yet supplied for cross-referencing) — reusing the same flag would have permanently
+  // skipped the other 58 people on any such device, since a migration's own guard is designed to run at most
+  // once, ever.
+  try{if(!CFG._hskBadgeNumberSeedMig2){
+    const _hskBadgeMap={"1743":"002328","1878":"002304","2058":"002305","2352":"000026","2357":"000083","2367":"000123","2377":"000350","2378":"000354","2382":"000419","2384":"000436","2389":"000460","2391":"000505","2393":"000509","2396":"000527","2400":"000540","2401":"000542","2407":"000675","2424":"000810","2426":"000814","2427":"000829","2428":"000830","2432":"000900","2435":"000908","2448":"000987","2483":"001325","2484":"001326","2495":"001436","2507":"001535","2512":"001739","2515":"001753","2516":"001758","2524":"001826","2531":"001872","2535":"001911","2537":"001924","2547":"002017","2553":"002058","2556":"002078","2565":"002106","2566":"002116","2569":"002149","2571":"002168","2579":"002249","2580":"002253","2585":"002282","2587":"002147","2588":"900118","2591":"900131","2595":"900137","2605":"900205","3686":"991499","4247":"002373","4424":"002460","4432":"002465","4555":"002525","4557":"002528","4649":"002574","4651":"002578","6732":"002527"};
+    (CFG.HSK.staff||[]).forEach(st=>{
+      if(!st.paycomBadgeNumber&&st.paycomEmployeeId&&_hskBadgeMap[st.paycomEmployeeId])st.paycomBadgeNumber=_hskBadgeMap[st.paycomEmployeeId];
+    });
+    CFG._hskBadgeNumberSeedMig2=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+  }}catch(e){console.warn("badge number migration skipped",e);}
+  // One-time migration: corrects any availDates record already saved (in this or an earlier session) with the
+  // OLD internal sentinel value `reason:"from schedule"` — see setCell()'s own reverse-sync comment for why this
+  // was never meant to be a human-facing reason, and why it leaked verbatim into the schedule grid/Availability/
+  // Leave Requests wherever this record was displayed. Re-tags each one with the new `autoFromSchedule:true` flag
+  // (so the reverse-sync's own cleanup branch keeps recognizing it) and clears `.reason`, letting
+  // availForDate()'s own existing `a.reason||a.code` fallback immediately start returning the real leave code
+  // instead — with no further change needed anywhere else, since every display path already reads through that
+  // one shared fallback. Uses save() (not a direct localStorage.setItem(), unlike this migration's own
+  // neighbors above) specifically so this correction also reaches a currently-connected live Supabase project,
+  // not just this device's own local copy, per this app's own "a local-only fixup must also push to a connected
+  // live copy" convention.
+  try{if(!CFG._fromScheduleReasonMig){
+    let _fixedCount=0;
+    ["FO","HSK"].forEach(dp=>{
+      (CFG[dp].staff||[]).forEach(st=>{
+        const sd=st.availDates;if(!sd)return;
+        Object.keys(sd).forEach(k=>{
+          if(sd[k]&&sd[k].reason==="from schedule"){sd[k].autoFromSchedule=true;delete sd[k].reason;_fixedCount++;}
+        });
+      });
+    });
+    CFG._fromScheduleReasonMig=true;
+    if(_fixedCount)save("hotel_cfg",CFG);else try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+  }}catch(e){console.warn("from-schedule reason migration skipped",e);}
   // One-time migration: seeds the new per-department CFG.sameDayOffCheckDaysByDept from whatever single value was
   // already saved under the old flat, app-wide CFG.sameDayOffCheckDays key (see sameDayOffCheckDays()'s own comment
   // for the full "app-wide instead of dept-wide" bug this closes) — both FO and HSK start from that SAME
