@@ -3839,6 +3839,29 @@ let _undoApplying=false,_undoBatchTimer=null,_undoBatchPre=null;
 // pull is never mistaken for a trackable local action, while every genuine local edit (including one made
 // mid-sync) is completely unaffected.
 let _syncApplying=false;
+// "set a shift for Sept 12... export shows 0 shifts" — traced a genuine, real data-race distinct from every
+// earlier "from schedule"/text-display bug: pullAll()'s own assignments fetch (and the "sched" realtime channel's
+// own assignments echo-handler) both do a WHOLESALE `ASSIGN[dept][week][staff]=r.days` REPLACEMENT the instant
+// either one receives data for that (dept,week,staff) key — with NO awareness of whether a LOCAL edit to that
+// exact key happened more recently than the data they're about to apply. Since a pull is fired (among other
+// triggers) on every realtime reconnect — a routine, frequent event this app's own code elsewhere already
+// acknowledges can happen at effectively any time, entirely independent of what a person happens to be doing in
+// the UI at that moment — a completely plausible sequence is: (1) a person types/saves a real shift, which
+// updates LOCAL ASSIGN immediately and starts an async push to Supabase; (2) a reconnect-triggered pull (or a
+// realtime echo carrying a NOT-YET-updated snapshot, e.g. from a moment queued before the push's own write
+// landed) starts around the same time and finishes af// ter that local edit; (3) its own stale, pre-edit rows.days
+// for that exact person/week silently overwrites the just-made edit in local ASSIGN, before that person ever
+// gets a chance to see or export it — reproducing precisely "I set a shift, then the export/schedule shows
+// nothing there" with no error, warning, or other visible sign anything went wrong. This is a genuine
+// architectural gap, not a one-off: NO existing guard in this app compares "when was this specific key last
+// edited locally" against "when did the incoming data become stale relative to that." _assignDirtyStamp closes
+// this at its root: every real local mutator of ASSIGN[dept][week][staff] (see _markAssignDirty()'s own call
+// sites) records the exact moment it ran; both pullAll()'s own merge step and the realtime echo handler check
+// this stamp before overwriting a given key, and skip (trusting the newer local edit instead) if that key was
+// touched locally at or after the moment their own fetch/event began — so a local edit can never again be
+// silently clobbered by data that was already stale the instant it was requested.
+let _assignDirtyStamp={};
+function _markAssignDirty(dept,wk,name){_assignDirtyStamp[dept+"|"+wk+"|"+name]=Date.now();}
 // Every real mutator in this app (setCell(), and dozens of others) mutates the live in-memory state FIRST, then
 // calls save() afterward. _lastSettledSnapshot maintains a separate, explicitly-tracked snapshot representing the
 // state as of the END of the previous undo-batch (genuinely BEFORE the current batch's own mutations) — seeded
@@ -4381,7 +4404,7 @@ async function toggleLock(){const wk=weekKey(WEEK_START);
   LOCKS[DEPT]=LOCKS[DEPT]||{};LOCKS[DEPT][wk]=!LOCKS[DEPT][wk];save("hotel_locks",LOCKS);render();}
 function curAssign(){const wk=weekKey(WEEK_START);ASSIGN[DEPT]=ASSIGN[DEPT]||{};ASSIGN[DEPT][wk]=ASSIGN[DEPT][wk]||{};return ASSIGN[DEPT][wk];}
 function cellVal(name,day){const a=curAssign()[name];return (a&&a[day]!=null)?a[day]:"";}
-function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[day]+" = "+(val||"(clear)"));/* snapshot handled lazily on boot for weeks that have become past */if(weekLocked()){uiAlert("This week is locked"+(weekIsPast()?" (past week — historical record).":".")+" Unlock to edit.");render();return;}if(!DB){setPending(true);}const wk=weekKey(WEEK_START);const a=curAssign();a[name]=a[name]||{};const _oldCellVal=a[name][day];if(val==="")delete a[name][day];else a[name][day]=val;save("hotel_assign",ASSIGN);pushCell(DEPT,wk,name,day,val);autoSnap();
+function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[day]+" = "+(val||"(clear)"));/* snapshot handled lazily on boot for weeks that have become past */if(weekLocked()){uiAlert("This week is locked"+(weekIsPast()?" (past week — historical record).":".")+" Unlock to edit.");render();return;}if(!DB){setPending(true);}const wk=weekKey(WEEK_START);const a=curAssign();a[name]=a[name]||{};const _oldCellVal=a[name][day];if(val==="")delete a[name][day];else a[name][day]=val;_markAssignDirty(DEPT,wk,name);save("hotel_assign",ASSIGN);pushCell(DEPT,wk,name,day,val);autoSnap();
   // "when I uncheck allow project hours to count towards total, week with two non-project hours totaling 17 shows
   // 33 hours total". Root cause, this function has never cleared the whole-week ACTUAL hours override (the plain,
   // typeable "Hrs" cell at the end of each staff row, set via setActual() — a SEPARATE mechanism from the per-day
@@ -10738,6 +10761,17 @@ function _subscribeSchedChannel(){
     .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{
       const r=payload.new||payload.old;if(!r)return;
       ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};
+      // Deliberately does NOT need the same _assignDirtyStamp guard pullAll() now uses (see that fix's own
+      // comment for the full root cause) — considered directly and ruled out as unnecessary here, not merely
+      // overlooked: a single realtime event's own payload is a snapshot as of the COMMIT that triggered it, not a
+      // long-running query with its own separate "started, but may return stale-by-the-time-it-resolves" window
+      // the way pullAll()'s broad SELECT * has. Two genuine edits to the same key (a local one, and a nearly-
+      // concurrent remote one) are already correctly serialized by the database itself; if this device's own
+      // slightly-older echo happens to arrive AFTER a subsequent local edit, this would only cause a brief,
+      // self-correcting flicker (any following push, from this or another device, produces its own follow-up
+      // echo that restores the correct value moments later) — never the kind of LASTING, silent data loss
+      // pullAll()'s own one-shot, never-revisited overwrite could cause, which is what the reported bug actually
+      // described.
       const _before=JSON.stringify(ASSIGN[r.dept][r.week][r.staff]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
       try{ASSIGN[r.dept][r.week][r.staff]=r.days||{};save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
@@ -10901,7 +10935,13 @@ async function _pullAllInner(isRetry,computeAwayBadge){
       onRows(data||[]);
     }catch(e){errors.push({label,err:e});}
   }
-  await pullTable("assignments","assignments",rows=>{rows.forEach(r=>{ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};ASSIGN[r.dept][r.week][r.staff]=r.days||{};});});
+  // See _assignDirtyStamp's own comment (near _syncApplying) for the full "set a shift, export shows 0" root
+  // cause this closes. Captured IMMEDIATELY BEFORE this fetch begins — any local edit made at or after this exact
+  // instant is, by definition, NEWER than whatever this fetch is about to return (the fetch can only ever reflect
+  // the database's state as of when it was issued, or earlier), so it's always correct to trust a
+  // _assignDirtyStamp at or after this moment over this fetch's own now-provably-stale row for that same key.
+  const _assignsFetchStartedAt=Date.now();
+  await pullTable("assignments","assignments",rows=>{rows.forEach(r=>{ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _dkey=r.dept+"|"+r.week+"|"+r.staff;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][r.staff]=r.days||{};});});
   await pullTable("demand","demand",rows=>{rows.forEach(r=>{DEMAND[r.week]=r.days||{};});});
   await pullTable("leave_requests","leave requests",rows=>{rows.forEach(r=>{if(r.id)LEAVE_REQUESTS[r.id]=r.data||{};});});
   // Deployed GitHub Pages instance: the Leave Requests tab still showed the old, wordy "Seeded from FO Excel sheet
@@ -10959,6 +10999,32 @@ async function _pullAllInner(isRetry,computeAwayBadge){
       if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
     }
+  });
+  // "when I deploy schedule still shows from schedule with lowercase" — a direct re-report after an earlier fix
+  // (see setCell()'s own reverse-sync comment, and the boot()-time migration further down) was already believed
+  // to have closed this. Traced the actual reason it kept recurring: that boot()-time migration runs BEFORE
+  // connect()/this very pull — so on a device that migrates its own LOCAL copy first, then connects, the live
+  // pull immediately above just overwrote CFG.HSK/CFG.FO with whatever the SHARED Supabase copy still holds —
+  // and if NO device had ever been connected at the exact moment IT ran its own local fix (a very plausible,
+  // even likely sequence, since the migration deliberately runs early, before any network round-trip), that
+  // shared copy still has the ORIGINAL, never-corrected `reason:"from schedule"` on every affected record, and
+  // will keep re-arriving via this exact pull on every single device from then on — while each device's own
+  // migration flag is now permanently set, blocking it from ever re-fixing what this same pull keeps re-breaking.
+  // This is the identical bug CLASS (not a new one) as the LRSEED_ leave-request-reason fix just above — fixed
+  // the exact same proven way: re-check every HSK/FO staff member's own availDates for the stale literal string
+  // immediately after every genuine pull (this is what actually has a live, connected DB available to push a
+  // correction through), and if found, fix it locally AND push the fix back up via pushConfig() — so the
+  // correction finally reaches the shared, live copy itself, not just whichever single local browser happens to
+  // still have its own once-only migration left to run.
+  ["FO","HSK"].forEach(dp=>{
+    let _fixedAny=false;
+    (CFG[dp].staff||[]).forEach(st=>{
+      const sd=st.availDates;if(!sd)return;
+      Object.keys(sd).forEach(k=>{
+        if(sd[k]&&sd[k].reason==="from schedule"){sd[k].autoFromSchedule=true;delete sd[k].reason;_fixedAny=true;}
+      });
+    });
+    if(_fixedAny&&typeof pushConfig==="function")pushConfig();
   });
   save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);
   // This final save("hotel_cfg",CFG) — needed purely to PERSIST locally whatever pullAll() just retrieved from live
@@ -12350,6 +12416,7 @@ async function optimizeMultiWeekJoint(numWeeks,daysFilter){
     ASSIGN[DEPT][bestMove.wk][bestMove.toName]=ASSIGN[DEPT][bestMove.wk][bestMove.toName]||{};
     ASSIGN[DEPT][bestMove.wk][bestMove.toName][bestMove.day]=bestMove.val;
     delete ASSIGN[DEPT][bestMove.wk][bestMove.fromName][bestMove.day];
+    _markAssignDirty(DEPT,bestMove.wk,bestMove.toName);_markAssignDirty(DEPT,bestMove.wk,bestMove.fromName);
     save("hotel_assign",ASSIGN);pushWeekAll(DEPT,bestMove.wk);
     WEEK_START=_savedWS2;
     const _moveDate=new Date(bestMove.wk+"T00:00:00");_moveDate.setDate(_moveDate.getDate()+bestMove.day);
@@ -14494,7 +14561,21 @@ async function saveShift(){
   // (approveLeaveRequest()'s own separate call to sameDayOffPreviousWeekNote() below) — see
   // sameDayOffNoteScope()'s own comment. This manual-assignment path is skipped entirely when
   // scope==="workerInitiated"; default "both" leaves this exactly as before.
-  if(classify(_justSavedVal)!=="work"&&classify(_justSavedVal)!=="special"&&sameDayOffNoteScope()!=="workerInitiated"){
+  //
+  // "still seeing the message that worker was off the same day last week when I simply remove a shift (not set
+  // to off)" + "the pop up has a field missing 'employee was set to BLANK for Sat'" — both trace to the SAME
+  // real bug: this condition previously excluded only "work" and "special", which means it was TRUE for every
+  // OTHER classify() outcome — including "" (a genuinely BLANK/cleared cell, classify()'s own explicit
+  // `if(!v)return "";` case), not just the two real off/leave-family outcomes ("off"/"leave") this note was
+  // actually designed for (see this comment's own next line: "Only fires when the JUST-SAVED value is itself an
+  // off/leave-family code — a genuine 'assigning someone as off' action"). Clearing a shift entirely is not
+  // "assigning someone as off" at all — there is no code, no meaning, nothing to compare against last week — so
+  // this note firing for a blank cell was never correct to begin with, and _justSavedVal being empty is exactly
+  // why the confirmation text itself showed a genuinely missing value ("...was just set to  for Sat.", the
+  // blank simply concatenated into the sentence with nothing to show). Fixed by checking directly for the two
+  // real outcomes this was always meant to gate on, rather than excluding the two it wasn't.
+  const _justSavedCls=classify(_justSavedVal);
+  if((_justSavedCls==="off"||_justSavedCls==="leave")&&sameDayOffNoteScope()!=="workerInitiated"){
     const _iso=weekKey(dayDate(_day));
     const _note=sameDayOffPreviousWeekNote(DEPT,_nm,_iso,_iso);
     if(_note)await uiAlert(_nm+" was just set to "+_justSavedVal+" for "+DOW[_day]+"."+_note);
@@ -21384,7 +21465,7 @@ async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);
   const id="D"+dt+"_"+to;st.availDates[id]={from:dt,to:to,part:part,startTime:pf,endTime:pt,code:code,reason:reason};
   // Stamp full-day cells (all days for all-day; middle days for a multiday part-day; single part-day stamps
   // nothing)
-  for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;
+  for(let d=new Date(dt+"T00:00:00");d<=new Date(to+"T00:00:00");d.setDate(d.getDate()+1)){const iso=weekKey(new Date(d));const isFirst=(iso===dt),isLast=(iso===to);const fullDay=!part||(!isFirst&&!isLast);if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;ASSIGN[SETDEPT]=ASSIGN[SETDEPT]||{};ASSIGN[SETDEPT][wk]=ASSIGN[SETDEPT][wk]||{};ASSIGN[SETDEPT][wk][st.n]=ASSIGN[SETDEPT][wk][st.n]||{};ASSIGN[SETDEPT][wk][st.n][dow]=code;_markAssignDirty(SETDEPT,wk,st.n);
     // Same stale-actual-hours-override clearing as stampApprovedLeave() — a day stamped off/leave here should never
     // keep a leftover worked-hours number from before.
     if(ACTUAL[SETDEPT]&&ACTUAL[SETDEPT][wk])delete ACTUAL[SETDEPT][wk][st.n];
@@ -22768,6 +22849,7 @@ async function approveShiftBid(dept,id){
   ASSIGN[dept][bid.week][bid.claimedBy]=ASSIGN[dept][bid.week][bid.claimedBy]||{};
   ASSIGN[dept][bid.week][bid.claimedBy][bid.day]=bid.val;
   if(_fromCellNow===bid.val&&ASSIGN[dept][bid.week][bid.fromName])delete ASSIGN[dept][bid.week][bid.fromName][bid.day];
+  _markAssignDirty(dept,bid.week,bid.claimedBy);_markAssignDirty(dept,bid.week,bid.fromName);
   save("hotel_assign",ASSIGN);
   if(DB){pushWeekAll(dept,bid.week);}
   bid.status="approved";bid.decidedAt=new Date().toISOString();bid.decidedBy=(CURRENT_USER&&CURRENT_USER.name)||"scheduler";
@@ -22802,6 +22884,7 @@ async function revokeShiftBidApproval(dept,id){
     else if(ASSIGN[dept][bid.week][bid.claimedBy]){delete ASSIGN[dept][bid.week][bid.claimedBy][bid.day];}
     ASSIGN[dept][bid.week][bid.fromName]=ASSIGN[dept][bid.week][bid.fromName]||{};
     ASSIGN[dept][bid.week][bid.fromName][bid.day]=bid.val;
+    _markAssignDirty(dept,bid.week,bid.claimedBy);_markAssignDirty(dept,bid.week,bid.fromName);
     save("hotel_assign",ASSIGN);
     if(DB)pushWeekAll(dept,bid.week);
   }
@@ -24867,6 +24950,7 @@ function stampApprovedLeave(req){
       const _existing=ASSIGN[req.dept][wk][st.n][dow];
       if(classify(_existing)!=="work"){
         ASSIGN[req.dept][wk][st.n][dow]=req.code; // safe to stamp — nothing to preserve
+        _markAssignDirty(req.dept,wk,st.n);
         // A stale actual-hours override (whole-week "Hrs" cell, or a per-day \u270e entry) from BEFORE this leave
         // was approved would otherwise keep counting toward the weekly total even though the day is now stamped as
         // leave — e.g. A PT staffer approved for R-OFF/leave all week could still show a leftover 32.5h from an
@@ -25917,6 +26001,7 @@ function refreshRoomConflict(nmE){
 function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),to=new Date(rec.to+"T00:00:00");
   for(let d=new Date(from);d<=to;d.setDate(d.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
     ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};ASSIGN[dept][wk][rec.name]=ASSIGN[dept][wk][rec.name]||{};
+    _markAssignDirty(dept,wk,rec.name);
     if(remove){if((ASSIGN[dept][wk][rec.name]||{})[dow]===rec.code)delete ASSIGN[dept][wk][rec.name][dow];}
     else{ASSIGN[dept][wk][rec.name][dow]=rec.code;
       // Same stale-actual-hours-override clearing as stampApprovedLeave()/addSpecDate() — see those comments.
@@ -26490,7 +26575,7 @@ async function clearScope(kind,dayIdx,fromIso,toIso){
       let dayIdx2=-1;for(let i=0;i<7;i++){const dd=new Date(wk+"T00:00:00");dd.setDate(dd.getDate()+i);if(weekKey(dd)===iso){dayIdx2=i;break;}}
       if(dayIdx2<0)continue;
       ASSIGN[DEPT]=ASSIGN[DEPT]||{};ASSIGN[DEPT][wk]=ASSIGN[DEPT][wk]||{};
-      dept.staff.forEach(s=>{ASSIGN[DEPT][wk][s.n]=ASSIGN[DEPT][wk][s.n]||{};ASSIGN[DEPT][wk][s.n][dayIdx2]="";pushCell(DEPT,wk,s.n,dayIdx2,"");});
+      dept.staff.forEach(s=>{ASSIGN[DEPT][wk][s.n]=ASSIGN[DEPT][wk][s.n]||{};ASSIGN[DEPT][wk][s.n][dayIdx2]="";_markAssignDirty(DEPT,wk,s.n);pushCell(DEPT,wk,s.n,dayIdx2,"");});
     }
     save("hotel_assign",ASSIGN);TOUCH();render();return;
   }
