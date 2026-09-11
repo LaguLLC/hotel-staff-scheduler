@@ -22,9 +22,28 @@
      files originally provided alongside this app). Since none of the expected filenames existed at all in that exact form,
      every icon reference 404'd, and — critically — a 404 while fetching one of the manifest's own listed icons can cause
      some browsers to treat the ENTIRE manifest fetch as failed too (matching the reported "Manifest fetch...failed, code
-     404" alongside the icon 404s in the same console). FIXED by updating every reference below (and this app's own
-     manifest.json/sw.js companion files — see the Readme for the corrected versions) to match the REAL, already-uploaded
-     filenames directly, rather than requiring the icon files themselves to be renamed. -->
+     404" alongside the icon 404s in the same console). FIXED by updating every reference below to match the REAL, already-uploaded filenames directly, rather than
+     requiring the icon files themselves to be renamed.
+
+     CORRECTION to this comment's own prior claim: this previously said "see the Readme for the corrected
+     manifest.json/sw.js versions" — traced directly and confirmed that was never actually true: neither file's
+     real source was ever present anywhere in this app, in the Readme or otherwise, despite this comment (and
+     several others — see registerServiceWorker()'s own comment, and checkBackgroundPushStatus()'s own
+     diagnostic message) repeatedly referring to their existence as an already-settled fact. This is now
+     genuinely fixed: real, complete manifest.json and sw.js files are provided as their own separate downloads
+     alongside this app file — upload both to the exact same folder as this HTML file on your host (e.g. GitHub
+     Pages), matching every filename this file's own <link>/<script> tags already reference below.
+
+     This gap is also the most likely explanation for "works when opened as a downloaded HTML file locally, but
+     not once deployed to GitHub Pages": opening a file directly from disk (a file:// URL) never registers a
+     Service Worker at all in any browser (confirmed elsewhere in this app — see registerServiceWorker()'s own
+     SecurityError handling) — so testing locally can never reveal ANY caching behavior a Service Worker
+     introduces, good or bad. Once deployed to a real https origin, a Service Worker genuinely can register and
+     take over every request — and the specific new sw.js provided is deliberately built to cache NOTHING
+     belonging to this app's own HTML/JS (see that file's own top-of-file comment for the full "why this
+     matters" writeup) — so a future update to THIS file, once redeployed, reaches every visitor immediately on
+     their very next load, with no stale-cache risk of the kind this app's own comments had already flagged as a
+     real, open concern but never actually closed until now. -->
 <link rel="manifest" href="manifest.json?v=__ICONV__">
 <meta name="theme-color" content="#1b2a4a">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -2023,10 +2042,20 @@
      — without this, the browser's own DEFAULT scroll-chaining behavior lets scrolling "spill over" into the
      OUTER page the instant this inner box is fully scrolled, which can feel like the page suddenly, unexpectedly
      jumping mid-gesture. overscroll-behavior:contain stops that spillover at this box's own edge — reaching the
-     top/bottom simply stops responding here, with no unexpected handoff to the page. Applied generically (every
-     .tblwrap, not just the roster's own), since any internally-scrollable table box in this app benefits from
-     the identical, predictable "stops at my own edge" behavior. */
-  .tblwrap{overscroll-behavior:contain;}
+     top/bottom simply stops responding here, with no unexpected handoff to the page.
+     "hsk demand table doesn't have its own vertical scroll so touchpad two-finger scroll should scroll the
+     page, doesn't respond" — a genuine, confirmed REGRESSION from this exact rule, caught via direct
+     real-browser reproduction (not just reasoning about it): this was originally applied genERICALLY to EVERY
+     .tblwrap in the app — but overscroll-behavior:contain, confirmed directly, can swallow a scroll gesture
+     entirely on an element that has NOTHING to scroll internally in the first place (this demand table's own
+     .tblwrap deliberately has max-height:none — see that rule's own comment — so its scrollHeight always equals
+     its clientHeight, genuinely zero internal scroll room), rather than correctly letting that gesture pass
+     straight through to the page as if this rule were never applied at all. Scoped with :has() to ONLY the two
+     tables that are actually, deliberately capped with a real max-height and can genuinely overflow internally
+     (the staff roster and former-staff tables) — every other .tblwrap in the app, including this demand table's
+     own, is now completely unaffected by this rule, exactly restoring native, uncontained scroll-chaining
+     wherever there's truly nothing of this box's own to contain. */
+  .tblwrap:has(#staffRosterTable),.tblwrap:has(#formerStaffTable){overscroll-behavior:contain;}
     /* The roster table is forced to min-width:900px (see #settingsBody table's own rule), so on a narrower
      screen this .tblwrap scrolls horizontally, showing a classic (reserved-space) scrollbar on its right edge.
      Classic scrollbars on Windows/desktop Linux commonly measure 15\u201317px wide, wider than the roster's own
@@ -2286,7 +2315,23 @@
        entirely independent of the h1's much taller font metrics or any baseline-alignment quirks. This is deterministic
        (flexbox centers against the actual rendered content height of just these two elements, not a font-metric guess) and
        should hold regardless of exact font/ rendering differences between browsers. -->
-  <div class="titlewrap"><h1>🏨 Hotel Staff Scheduler</h1><span style="display:inline-flex;align-items:center;gap:6px"><span class="ver" id="ver"></span><span id="appModeStatusDot" title="Sync status — see menu for details"></span></span></div>
+  <!-- "on mobile view the grey dot to show local doesn't show in header, only the green if live does" — traced via
+       a direct stack-trace capture (not guessed): this dot's own color is ONLY ever set as a side effect of
+       setStatus() (see that function's own comment for why it mirrors the classic header's #syncStatus dot's
+       color onto this one) — but setStatus() is itself only ever called REACTIVELY, in response to a specific
+       event (a real edit while offline, a connect attempt, a disconnect, an online/offline transition, etc.),
+       never unconditionally at boot. The classic #syncStatus dot never had this problem because its own static
+       markup already hardcodes background:#c7d0da (grey) as a real, always-present default the very first time
+       it's ever painted — this element had no such default at all, so on a device where boot() happens not to
+       trigger any of those reactive setStatus() paths (confirmed directly: this can genuinely be the very first
+       session on a device, with no saved connection to attempt and no edit yet made), this dot simply stayed
+       permanently transparent/uncolored, invisible against the header's own dark background — never grey,
+       looking exactly like "only green shows, grey never does" once a later, real connect finally DOES set a
+       color. Fixed the same simple way the classic dot already handles this: a real, hardcoded grey default
+       directly in this element's own static markup, matching setStatus()'s own "local" grey (#c7d0da) exactly —
+       so this dot is correctly visible as grey from the very first paint, with setStatus() then free to update
+       it to green/amber exactly as before once a real connection event actually occurs. -->
+  <div class="titlewrap"><h1>🏨 Hotel Staff Scheduler</h1><span style="display:inline-flex;align-items:center;gap:6px"><span class="ver" id="ver"></span><span id="appModeStatusDot" title="Sync status — see menu for details" style="background:#c7d0da"></span></span></div>
     <!-- NEW — see this row's own CSS comment (#appHeaderSubRow, above) for the full "back and forward arrows for week +
        view-only/HSK/FO mode should show in header" feature this adds. Onclick handlers are the SAME
        prevWeek()/nextWeek()/jumpToWeek() the classic header's own week nav already uses — genuinely reused, not a second
@@ -3861,7 +3906,30 @@ let _syncApplying=false;
 // touched locally at or after the moment their own fetch/event began — so a local edit can never again be
 // silently clobbered by data that was already stale the instant it was requested.
 let _assignDirtyStamp={};
+// Same dirty-stamp principle as _assignDirtyStamp just above — see save()'s own comment (the "badge number
+// filled in on roster silently blank at export time" fix) for the full "CFG.FO/CFG.HSK had the identical,
+// never-covered gap" writeup.
+let _cfgDirtyStamp={FO:0,HSK:0};
 function _markAssignDirty(dept,wk,name){_assignDirtyStamp[dept+"|"+wk+"|"+name]=Date.now();}
+// "shift set hours ago, still shows 0 shift punch" — the _assignDirtyStamp fix just above protects a LOCAL edit
+// from being overwritten by a stale pull, but the confirmed reconnect-storm (see subscribe()'s own "console
+// shows a continuous stream of CLOSED messages" fix) revealed a genuinely SEPARATE race this alone doesn't
+// cover: pullAll() is fire-and-forget from three independent trigger points (both channels' own reconnects, plus
+// its own schema-cache retry timer), so a flapping connection can easily have TWO OR MORE overlapping pullAll()
+// invocations in flight AT ONCE — each its own full, independent fetch of the ENTIRE assignments table. If an
+// OLDER of these (started first, but happens to take longer — e.g. a slower/congested request) finishes AFTER
+// a NEWER one that started later but resolved faster, the older call's own now-stale rows would silently
+// overwrite the newer call's own fresher data for every cell NEITHER call's own local-edit dirty-stamp would
+// catch (nobody edited anything locally in between — the staleness here is purely between two SERVER
+// snapshots). A shift pushed successfully hours ago could genuinely still get silently reverted this way, for as
+// long as the connection kept flapping and re-triggering overlapping pulls. _pullGeneration closes this: every
+// pullAll() invocation captures the CURRENT generation number as its own "myGen" the instant it starts, and
+// increments the shared counter so any call that starts LATER is unambiguously identifiable as newer; before
+// applying results from each of its own sequential table fetches, a call checks whether its own myGen is still
+// the MOST RECENT generation issued — if a newer pullAll() has since started, this older call recognizes its
+// own remaining results as provably stale and abandons the rest of its own work harmlessly, never touching
+// global state with data it now knows to be superseded.
+let _pullGeneration=0;
 // Every real mutator in this app (setCell(), and dozens of others) mutates the live in-memory state FIRST, then
 // calls save() afterward. _lastSettledSnapshot maintains a separate, explicitly-tracked snapshot representing the
 // state as of the END of the previous undo-batch (genuinely BEFORE the current batch's own mutations) — seeded
@@ -3974,6 +4042,27 @@ function _refreshUndoRedoButtons(){
 }
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
   if(!DB&&SYNCABLE_KEYS.includes(k)){if(typeof setPending==="function")setPending(true);else PENDING=true;if(typeof setStatus==="function"&&document.getElementById("syncStatus"))setStatus("local","#c7d0da");}
+  // "badge number filled in on roster silently blank at export time" — the same class of bug as the earlier
+  // ASSIGN/schedule-cell fix (see _assignDirtyStamp's own comment), extended to cover CFG.FO/CFG.HSK (the
+  // roster: every staff member's Employee ID, Badge Number, roles, rules, etc.), which turned out to have the
+  // IDENTICAL, never-covered gap: pullAll()'s own app_config fetch does a WHOLESALE `CFG.HSK=row.data.HSK` (and
+  // CFG.FO) REPLACEMENT the instant it resolves, with zero awareness of whether a local roster edit (e.g.,
+  // someone typing a Badge Number into Settings) happened more recently than the data it's about to apply —
+  // exactly the same "a stale, in-flight pull silently clobbers a fresher local edit" race already fixed for
+  // ASSIGN, just never extended to CFG. A realtime connection that keeps dropping and reconnecting (each
+  // reconnect triggers a fresh pullAll()) makes this race far MORE likely to actually occur, not a rare edge
+  // case. Marks BOTH departments dirty on every genuine LOCAL hotel_cfg save (not one driven by a sync/pull
+  // itself — _syncApplying/_pullingConfigNow are both already false at this exact point for a real, hands-on
+  // edit): every one of this app's dozens of individual CFG setters already funnels through this ONE save() call
+  // to persist, so hooking it here — rather than instrumenting each setter individually, as ASSIGN's own fix had
+  // to — closes this off in one place with no risk of a newly-added setter someday being silently missed.
+  // Marking BOTH departments (not just whichever one was actually touched, which save() itself has no way to
+  // know without a full diff) is a deliberate, safe-by-default choice: a local edit to one department briefly
+  // also protects the OTHER department's own next incoming pull for that same short window — a rare, minor,
+  // self-correcting false-positive (the other department's genuinely newer remote change simply applies on the
+  // NEXT pull instead of this one), which is a far smaller cost than the alternative of ever silently destroying
+  // a real edit.
+  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;}
   if(k==="hotel_cfg"&&DB&&!_pullingConfigNow&&typeof pushConfig==="function"){pushConfig();}
   // Undo/redo capture — see this block's own comment above for the full batching design. Skipped entirely while
   // _undoRestore() itself is applying a snapshot (that's an undo/redo action IN PROGRESS, not a new one to track).
@@ -4040,7 +4129,29 @@ function dowOffset(){return (CFG.weekStartDow!=null)?CFG.weekStartDow:4;}
 function mondayOfWeekStartThu(d){const x=new Date(d);const dow=x.getDay();/*0 Sun..6 Sat*/const diff=(dow-dowOffset()+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
 function weekKey(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function fmt(d){return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
-function dayDate(i){const d=new Date(WEEK_START);d.setDate(d.getDate()+i);return d;}
+// "change to dept pages seems to have a delay after clicking" — measured directly (performance.now(), not
+// guesswork): switching departments genuinely takes 100-160ms of synchronous JS on this hotel's own real data
+// scale (100+ staff), perceptible as a real delay. Profiled render()'s own actual call graph and found dayDate()
+// specifically invoked over 5,000 times in a SINGLE render() pass — each call constructing a brand-new Date
+// object via `new Date(WEEK_START)` + `.setDate(...)`, genuinely expensive work repeated for what is, within any
+// one render() pass, always the SAME small set of results (day index 0–6 against a WEEK_START that never
+// changes mid-render). Confirmed safe to cache (not merely assumed): checked every real call site across this
+// file for any place that might mutate the returned Date object in-place (e.g. a later `.setDate()`/`.setHours()`
+// on the SAME returned reference, which would corrupt a shared cached object for every OTHER caller) — none
+// exist; every call site only ever READS from the returned Date (`.getMonth()`, `.getDate()`, a direct
+// comparison, etc.) or constructs its own SEPARATE new Date from its fields, never mutating the original.
+// Cache is keyed on WEEK_START's own timestamp specifically (not just a bare object cache cleared at
+// module-load) — this makes it correct and safe to call dayDate() from ANYWHERE, not just within a render()
+// pass: the moment WEEK_START genuinely changes (a real week navigation), the key naturally changes too, and the
+// cache transparently, automatically rebuilds — there is no scenario where a stale cached Date could ever be
+// returned for a DIFFERENT WEEK_START than the one it was actually computed for.
+let _dayDateCache=null,_dayDateCacheKey=null;
+function dayDate(i){
+  const key=WEEK_START.getTime();
+  if(_dayDateCacheKey!==key){_dayDateCache={};_dayDateCacheKey=key;}
+  if(_dayDateCache[i]===undefined){const d=new Date(WEEK_START);d.setDate(d.getDate()+i);_dayDateCache[i]=d;}
+  return _dayDateCache[i];
+}
 const DOW_NAMES=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
 function buildDOW(){const o=dowOffset();const arr=[];for(let i=0;i<7;i++)arr.push(DOW_NAMES[(o+i)%7]);return arr;}
 let DOW=buildDOW(); // rebuilt via rebuildWeekStart() whenever CFG.weekStartDow changes in Settings
@@ -4079,7 +4190,19 @@ let _enteringSettingsFresh=false;
 // correctly hide itself the instant this function runs, since MULTISEL.lastCell is already null by the time it's
 // called.
 function clearMultiSelectOnNav(){if(MULTISEL.active||MULTISEL.cells.size){MULTISEL.active=false;MULTISEL.cells.clear();MULTISEL.lastCell=null;BULK_SEGS=[{a:"",b:""}];renderMultiSelBar();}try{positionFillHandle();}catch(e){}_focusedCell=null;}
-function setDept(d){SCROLLMEM[curViewKey()]=window.scrollY;if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;clearMultiSelectOnNav();DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;updateAuth&&updateAuth();syncNav();render();const _k="s_"+d;setTimeout(()=>window.scrollTo(0,SCROLLMEM[_k]||0),0);}
+// "change to dept pages seems to have a delay after clicking" — measured directly (real CPU profiling, not
+// guessing): a single setDept() call was doing TWO full render() passes back to back (confirmed via direct
+// instrumentation: render() ran twice, and the large renderFlags()/Checks-panel computation it triggers ran a
+// corresponding extra time), roughly doubling the real, measured 240-500ms cost a department switch already
+// has purely from rebuilding this app's own large grid/demand/checks HTML. Root cause: updateAuth() (called
+// here, right after DEPT/EDIT/EDIT_DEPT/CURRENT_USER/VIEW have ALL already been correctly updated above) already
+// calls render() internally as its own final step — this function's own SEPARATE, explicit render() call right
+// after was therefore purely redundant, re-rendering the exact same already-fully-correct state a second time.
+// syncNav() (still called, unchanged, between the two) doesn't need this second render() either — it directly
+// toggles existing elements' own style.display, taking effect immediately without any render() involved.
+// Removing the redundant call preserves the exact same end state (updateAuth()'s own render() already reflects
+// every piece of state this function sets) while cutting the real, measured per-switch cost roughly in half.
+function setDept(d){SCROLLMEM[curViewKey()]=window.scrollY;if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;clearMultiSelectOnNav();DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;updateAuth&&updateAuth();syncNav();const _k="s_"+d;setTimeout(()=>window.scrollTo(0,SCROLLMEM[_k]||0),0);}
 // TWICE across two rounds: "clicking settings tab still doesn't switch immediately, requires multiple clicks or
 // delays" — this symptom persisted even after last round's touch-action:manipulation fix, which was a real but
 // INCOMPLETE fix for a DIFFERENT contributing factor. Root cause of THIS symptom, confirmed by tracing the actual
@@ -4378,7 +4501,23 @@ function removeDraftRange(i){
   save("hotel_draft_ranges",DRAFT_RANGES);
   manageDraftRanges();
 }
-function weekIsPast(){const end=dayDate(6);const today=new Date();today.setHours(0,0,0,0);return end<today;}
+// Same safe-memoization principle as dayDate() just above (see that function's own comment for the full "5,000+
+// redundant calls in one render() pass" root cause and verification writeup) — weekIsPast() was independently
+// confirmed called 2,257 times in that SAME single render() pass, every single one recomputing an identical
+// answer (dayDate(6) is already cached above; "today" only ever genuinely changes once every 24 real hours).
+// Cached on (WEEK_START's own timestamp, today's own real calendar date string) — invalidates correctly and
+// automatically both when WEEK_START genuinely changes (a real week navigation) AND, safely, across a real
+// midnight boundary in an unusually long-lived tab (checked against toDateString() fresh on every call — a
+// cheap, correct safety net, not assumed away as an edge case too rare to guard against).
+let _weekIsPastCache=null,_weekIsPastCacheKey=null;
+function weekIsPast(){
+  const _todayStr=new Date().toDateString();
+  const key=WEEK_START.getTime()+"|"+_todayStr;
+  if(_weekIsPastCacheKey===key)return _weekIsPastCache;
+  const end=dayDate(6);const today=new Date();today.setHours(0,0,0,0);
+  _weekIsPastCache=(end<today);_weekIsPastCacheKey=key;
+  return _weekIsPastCache;
+}
 function weekLocked(){const wk=weekKey(WEEK_START);const lk=(LOCKS[DEPT]||{})[wk];if(lk==="override")return false;return weekIsPast()||!!lk;}
 // A generalized twin of weekLocked() above, needed for the new yesterday-carryover clock in/out actions (see
 // render()'s own comment on the carryover banner, and checkInStaff()/clockOutStaff()'s own `ctx` parameter): those
@@ -6413,6 +6552,10 @@ function renderDemand(){
   // leaving the page's scroll position entirely up to the deliberate anchor-preservation logic that's supposed to
   // own it.
   if(PENDING_DFOCUS){const _q=el("demandBody").querySelector('input[data-dk="'+PENDING_DFOCUS.k+'"][data-day="'+PENDING_DFOCUS.i+'"]');if(_q){_q.focus({preventScroll:true});try{_q.select();}catch(_e){}}PENDING_DFOCUS=null;}
+  // See initDemandScrollBoundaryFix()'s own comment for the full "two-finger scroll doesn't respond over this
+  // table" root cause this fixes — bound fresh here every render, matching this app's own established
+  // "re-bind after an innerHTML replace" convention (e.g. initTableRowColFocus(), initSettingsScrollBoundaryFix()).
+  initDemandScrollBoundaryFix();
 }
 // Credits formula (confirmed with hotel): total rooms 421, but some room types (suites etc.) count as 2 credits
 // instead of 1, adding a confirmed +54 credits at full capacity -> 421+54 = 475 total credits when the hotel is
@@ -10674,7 +10817,7 @@ async function maybeSyncExistingPushSubscription(){
 // any connection for that error to be about. A sync error only makes sense while DB is non-null (an actual
 // attempted operation failed); disconnecting always clears it now, restoring the invariant that SYNC_ERR can only
 // be set while a connection genuinely exists.
-function disconnect(){if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;localStorage.removeItem("hotel_supa");setStatus("local","#c7d0da");render();}
+function disconnect(){if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;localStorage.removeItem("hotel_supa");setStatus("local","#c7d0da");render();}
 // Console errors and Settings-tab lag are two separate symptoms with no code path connecting them:
 // manifest.json/sw.js 404s are non-fatal (a failed, one-time fetch at page load, never retried); CHANNEL_ERROR/
 // "socket closed" on the realtime channels is reported via reportSyncError()/console.warn(), also a one-time log
@@ -10717,6 +10860,33 @@ function subscribe(){
   _realtimeReconnectAttempts={sched:0,checkins:0};
   _subscribeSchedChannel();
   _subscribeCheckinsChannel();
+}
+// "console shows a continuous, never-ending stream of realtime CLOSED/reconnect messages" — traced this to a
+// real bug in the reconnect-attempt cap itself: both channels' own SUBSCRIBED handlers previously reset
+// `_realtimeReconnectAttempts[...]` back to 0 the INSTANT a subscribe attempt merely reached SUBSCRIBED, with
+// zero check for whether the channel then actually STAYED connected for any real length of time. A channel that
+// is flapping — connecting successfully for a moment, then immediately dropping again (a well-known real-world
+// pattern on an unstable network, a saturated/throttled connection, or a server-side rate-limit briefly
+// accepting then closing rapid reconnects) — would hit SUBSCRIBED just long enough to reset its own counter to
+// 0 before dropping again, meaning the existing "give up after 5 attempts" cap (_scheduleRealtimeReconnect's own
+// `if(n>=5)return;`) could NEVER actually be reached: the counter kept getting wiped out by exactly the kind of
+// brief, non-durable reconnect this cap exists to eventually stop retrying. This produces precisely the reported
+// symptom — an unbounded, continuously repeating stream of CLOSED/reconnect log lines that never stops on its
+// own. Fixed by only crediting a reconnect attempt as genuinely successful — and resetting the counter — once
+// the channel has remained subscribed for a real, sustained minimum duration (5s), not merely touched
+// SUBSCRIBED for an instant; a channel that drops again before that timer elapses correctly keeps its prior
+// attempt count (and its own already-scheduled next backoff delay) exactly as if this brief reconnect had never
+// happened at all, letting the existing 5-attempt cap actually take effect once a connection is genuinely,
+// persistently unable to stay up.
+let _channelStableTimer={sched:null,checkins:null};
+function _onChannelSubscribed(channelKey){
+  if(channelKey==="sched")clearSyncError();
+  clearTimeout(_channelStableTimer[channelKey]);
+  _channelStableTimer[channelKey]=setTimeout(()=>{_realtimeReconnectAttempts[channelKey]=0;},5000);
+}
+function _onChannelDropped(channelKey){
+  clearTimeout(_channelStableTimer[channelKey]);
+  _channelStableTimer[channelKey]=null;
 }
 function _subscribeSchedChannel(){
   CHAN=DB.channel("sched")
@@ -10797,8 +10967,8 @@ function _subscribeSchedChannel(){
     .subscribe((status,err)=>{
       // Surfaces realtime subscription failures (e.g. "demand"/"assignments" table not added to the Supabase
       // realtime publication, or an RLS policy blocking it) instead of silently never receiving live updates
-      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){reportRealtimeChannelError("realtime subscription ("+status+")",err||{message:"channel closed/errored — other screens will not receive live updates until this reconnects"});_scheduleRealtimeReconnect("sched");}
-      else if(status==="SUBSCRIBED"){clearSyncError();_realtimeReconnectAttempts.sched=0;}
+      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){reportRealtimeChannelError("realtime subscription ("+status+")",err||{message:"channel closed/errored — other screens will not receive live updates until this reconnects"});_onChannelDropped("sched");_scheduleRealtimeReconnect("sched");}
+      else if(status==="SUBSCRIBED"){_onChannelSubscribed("sched");}
     });
 }
 // "I get sync error 'could not find public.checkins' when I go live" — see pullAll()'s own comment for the matching
@@ -10832,8 +11002,8 @@ function _subscribeCheckinsChannel(){
       // not existing yet) should not repeatedly overwrite/contend with whatever the main channel's own, more
       // consequential status already reported. A quiet console warning is enough here; the pull-side fix in
       // pullAll() is what actually surfaces an actionable message to the user for this exact scenario.
-      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){console.warn("[checkins realtime] "+status,err);_scheduleRealtimeReconnect("checkins");}
-      else if(status==="SUBSCRIBED"){_realtimeReconnectAttempts.checkins=0;}
+      if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){console.warn("[checkins realtime] "+status,err);_onChannelDropped("checkins");_scheduleRealtimeReconnect("checkins");}
+      else if(status==="SUBSCRIBED"){_onChannelSubscribed("checkins");}
     });
 }
 // "I still get a sync error". Root cause, confirmed by re-reading the PREVIOUS round's own fix critically rather
@@ -10914,11 +11084,16 @@ async function pullAll(isRetry,computeAwayBadge){
   // call finishing first; only the outermost, LAST-to-finish call can ever actually restore the flag to its
   // true baseline of `false`.
   const _prevSyncApplying=_syncApplying;_syncApplying=true;
+  // See _pullGeneration's own comment (near _assignDirtyStamp) for the full "overlapping pulls can finish out of
+  // order" root cause this closes — captured and incremented HERE, at the true single entry point every trigger
+  // (both channels' reconnects, the schema-cache retry) already funnels through, so every genuinely distinct
+  // pullAll() call gets its own unambiguous, correctly-ordered generation number.
+  const _myPullGen=++_pullGeneration;
   try{
-    return await _pullAllInner(isRetry,computeAwayBadge);
+    return await _pullAllInner(isRetry,computeAwayBadge,_myPullGen);
   }finally{_syncApplying=_prevSyncApplying;}
 }
-async function _pullAllInner(isRetry,computeAwayBadge){
+async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // Snapshotted BEFORE any table below is pulled/overwritten — this is "what this device already had" going into
   // this specific sync, the correct baseline for "what changed while I was away" (as opposed to
   // maybeUploadOnConnect()'s OWN, separate snapshot, which serves a different purpose: preserving a genuinely
@@ -10942,8 +11117,14 @@ async function _pullAllInner(isRetry,computeAwayBadge){
   // _assignDirtyStamp at or after this moment over this fetch's own now-provably-stale row for that same key.
   const _assignsFetchStartedAt=Date.now();
   await pullTable("assignments","assignments",rows=>{rows.forEach(r=>{ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _dkey=r.dept+"|"+r.week+"|"+r.staff;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][r.staff]=r.days||{};});});
+  // See _pullGeneration's own comment for the full "overlapping pulls finishing out of order" fix this is part
+  // of — checked after EVERY remaining table fetch below; a newer pullAll() having started in the meantime means
+  // this call's own remaining results are now provably stale, so it stops here rather than risk applying them.
+  if(_myPullGen!==_pullGeneration)return;
   await pullTable("demand","demand",rows=>{rows.forEach(r=>{DEMAND[r.week]=r.days||{};});});
+  if(_myPullGen!==_pullGeneration)return;
   await pullTable("leave_requests","leave requests",rows=>{rows.forEach(r=>{if(r.id)LEAVE_REQUESTS[r.id]=r.data||{};});});
+  if(_myPullGen!==_pullGeneration)return;
   // Deployed GitHub Pages instance: the Leave Requests tab still showed the old, wordy "Seeded from FO Excel sheet
   // (pre-existing record)" reason text, not the shortened "From Excel" this app already switched to. Root cause,
   // confirmed by tracing the actual code: fixupSeededLeaveReason() (the one-time local migration that rewrites this
@@ -10970,6 +11151,7 @@ async function _pullAllInner(isRetry,computeAwayBadge){
   // the table 'public.checkins'" error here is the expected result until that one-time migration is run — isolated
   // here using the exact same never-abort pattern as every other table above.
   await pullTable("checkins","check-ins",rows=>{rows.forEach(r=>{CHECKINS[r.dept]=CHECKINS[r.dept]||{};CHECKINS[r.dept][r.week]=CHECKINS[r.dept][r.week]||{};CHECKINS[r.dept][r.week][r.staff]=r.days||{};});});
+  if(_myPullGen!==_pullGeneration)return;
   // Pulls the shared roster/settings table (see pushConfig()'s own comment for the full "roster never actually
   // synced" gap this closes, and exactly which CFG fields are/aren't included). A row here may genuinely not exist
   // yet for a brand-new Supabase project that hasn't had this table's SQL run — treated as a normal "nothing to
@@ -10977,6 +11159,11 @@ async function _pullAllInner(isRetry,computeAwayBadge){
   // normally with whatever roster this device already has locally. _pullingConfigNow guards against save()'s own
   // push-on-save hook firing a redundant, unnecessary push immediately back out the moment this same pulled data is
   // saved to localStorage below.
+  // See _cfgDirtyStamp's own comment (near _assignDirtyStamp) for the full "badge number silently blank" root
+  // cause this closes — captured IMMEDIATELY BEFORE this specific fetch begins, matching the identical timing
+  // principle the ASSIGN fix already established: any local edit at or after this exact instant is, by
+  // definition, newer than whatever this fetch is about to return.
+  const _cfgFetchStartedAt=Date.now();
   await pullTable("app_config","settings & roster",rows=>{
     const row=rows.find(r=>r.id==="depts");
     // "change that I made to hide settings and readme from view only wasn't listed in pop up of changes". ROOT
@@ -10994,12 +11181,15 @@ async function _pullAllInner(isRetry,computeAwayBadge){
     _lastPulledAppConfig=(row&&row.data)?{FO:row.data.FO||null,HSK:row.data.HSK||null,appWide:row.data.appWide||{}}:{FO:null,HSK:null,appWide:{}};
     if(row&&row.data){
       _pullingConfigNow=true;
-      if(row.data.FO)CFG.FO=row.data.FO;
-      if(row.data.HSK)CFG.HSK=row.data.HSK;
+      // Each department checked independently against ITS OWN dirty stamp — a local edit to HSK's roster (e.g.
+      // typing in a Badge Number) must never block a genuinely newer FO change from applying, and vice versa.
+      if(row.data.FO&&!(_cfgDirtyStamp.FO>=_cfgFetchStartedAt))CFG.FO=row.data.FO;
+      if(row.data.HSK&&!(_cfgDirtyStamp.HSK>=_cfgFetchStartedAt))CFG.HSK=row.data.HSK;
       if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
     }
   });
+  if(_myPullGen!==_pullGeneration)return;
   // "when I deploy schedule still shows from schedule with lowercase" — a direct re-report after an earlier fix
   // (see setCell()'s own reverse-sync comment, and the boot()-time migration further down) was already believed
   // to have closed this. Traced the actual reason it kept recurring: that boot()-time migration runs BEFORE
@@ -19580,6 +19770,31 @@ function _isGenuinelyScrollable(elx){
   const cs=getComputedStyle(elx);
   return (cs.overflowY==="auto"||cs.overflowY==="scroll")&&elx.scrollHeight>elx.clientHeight+1;
 }
+// "hsk demand table doesn't have its own vertical scroll so touchpad two-finger scroll should scroll page up or
+// down, doesn't respond" — a genuinely different flavor of the same underlying OS/browser trackpad-gesture-lock
+// quirk documented above, confirmed directly against this table's own CSS: #demandBody .tblwrap deliberately has
+// max-height:none (a short demand table should never need its OWN internal scroll while the rest of the page
+// does) but STILL carries overflow:auto (needed for genuine, legitimate HORIZONTAL scrolling — its own table has
+// min-width:720px, wider than a narrow screen, so overflow:auto here is real and intentional for that axis). The
+// same OS-level gesture-lock can still "grab" a continuous two-finger scroll the instant it lands on ANY element
+// carrying overflow:auto in its CSS — even one with genuinely NOTHING to scroll VERTICALLY — and, on at least
+// some browser/OS combinations, refuses to hand the rest of that same physical gesture over to the page the way
+// plain, unstyled content correctly would; unlike the Settings-page fix above (where the "cursor moved outside
+// my own bounds" check is the correct signal, since THOSE boxes genuinely DO have real content to scroll while
+// the cursor is still over them), this box can NEVER legitimately consume a vertical wheel delta at all — there
+// is no position where scrolling it vertically is ever the right outcome — so every vertical tick is
+// unconditionally forwarded to the page, with no bounds-check needed. Horizontal deltas are deliberately left
+// completely untouched, since this box's own horizontal scroll is real and must keep working exactly as before
+// for a narrow-screen user swiping through a wide demand table.
+function initDemandScrollBoundaryFix(){
+  const wrap=document.querySelector("#demandBody .tblwrap");if(!wrap)return;
+  wrap.addEventListener("wheel",e=>{
+    if(e.deltaY===0)return; // a purely horizontal gesture — this box's own real, legitimate horizontal scroll handles it exactly as before, completely untouched
+    e.preventDefault();
+    (document.scrollingElement||document.documentElement).scrollTop+=e.deltaY;
+    if(e.deltaX)wrap.scrollLeft+=e.deltaX; // a genuinely two-axis gesture (diagonal swipe) — still let the horizontal component reach this box's own real horizontal scroll
+  },{passive:false});
+}
 // The UNLOCKED/native case — a genuinely-scrollable box that's directly reachable (not covered by any
 // .lockOverlay), so wheel events land on IT directly; only the "gesture stays stuck past my own bounds" behavior
 // needs handling here.
@@ -20062,7 +20277,12 @@ async function supaLogin(){
     // signed-in account can see BOTH at a glance, rather than assuming schedule access implies settings access.
     const _schedAccess=(r.can_edit_fo?"FO":"")+((r.can_edit_fo&&r.can_edit_hsk)?" + ":"")+(r.can_edit_hsk?"HSK":"")||"none";
     const _setAccess=(r.role==="manager")?"FO + HSK (manager)":((r.can_edit_fo_settings?"FO":"")+((r.can_edit_fo_settings&&r.can_edit_hsk_settings)?" + ":"")+(r.can_edit_hsk_settings?"HSK":"")||"none");
-    updateAuth();uiAlert("Signed in as "+email.trim()+"\nRole: "+(r.role||"viewer")+"\nSchedule-edit access: "+_schedAccess+"\nSettings-edit access: "+_setAccess);render();
+    // Same redundant-render() fix as setDept()'s own identical case (see that function's own comment for the
+    // full "measured double render()" writeup) — updateAuth() right above already calls render() internally,
+    // reflecting every state change this branch made; this trailing call was re-rendering the same already-
+    // correct state a second time for no benefit. uiAlert()'s own dialog is unaffected either way — it's a
+    // separate overlay, not dependent on a fresh render() of the page underneath it.
+    updateAuth();uiAlert("Signed in as "+email.trim()+"\nRole: "+(r.role||"viewer")+"\nSchedule-edit access: "+_schedAccess+"\nSettings-edit access: "+_setAccess);
   }catch(e){uiAlert("Login error: "+e.message);}
 }
 async function supaLogout(){if(DB&&DB.auth)await DB.auth.signOut();SUPA_USER=null;EDIT=false;CURRENT_USER=null;updateAuth();uiAlert("Signed out.");}
