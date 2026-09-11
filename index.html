@@ -11216,6 +11216,31 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
     });
     if(_fixedAny&&typeof pushConfig==="function")pushConfig();
   });
+  // "still shows 0 when I try to export paycom csv with badge" — a direct re-report proving the badge-number
+  // migration (see boot()'s own _hskBadgeNumberSeedMig2 block, further down) has the EXACT SAME bug class just
+  // fixed above for "from schedule", not a new/different one: that migration also only ever runs ONCE, LOCALLY,
+  // before this device's live connection is even established — the same "runs early, gets silently overwritten
+  // the instant the live pull above replaces CFG.HSK wholesale, with its own one-time flag now permanently
+  // blocking any future retry" sequence. This was missed when the "from schedule" fix was written — a genuinely
+  // separate migration, storing a genuinely separate field, needed the identical re-check-after-every-pull
+  // treatment on its own, and simply hadn't received it yet. Confirmed directly: a device testing purely
+  // offline/never-connected (this session's own sandbox, with no way to reach a real Supabase project) could
+  // never have reproduced this, since the bug only manifests on a device that HAS a live connection — exactly
+  // matching why this kept looking "fixed" in isolated testing while persisting on the real, deployed, connected
+  // app. Same fix, same reasoning: re-check every HSK staff member's own EE Code against the same confirmed
+  // (EE Code, Badge Number) pairs immediately after every genuine pull, and if a currently-blank
+  // paycomBadgeNumber can now be filled in, do so locally AND push the correction back up via pushConfig() — so
+  // it finally reaches the shared, live copy, not just whichever single local browser happens to still have its
+  // own once-only migration left to run. Never overwrites an already-different, real value — matching this same
+  // migration's own original "never clobber existing data" guarantee.
+  {
+    const _hskBadgeMapForPull={"1743":"002328","1878":"002304","2058":"002305","2352":"000026","2357":"000083","2367":"000123","2377":"000350","2378":"000354","2382":"000419","2384":"000436","2389":"000460","2391":"000505","2393":"000509","2396":"000527","2400":"000540","2401":"000542","2407":"000675","2424":"000810","2426":"000814","2427":"000829","2428":"000830","2432":"000900","2435":"000908","2448":"000987","2483":"001325","2484":"001326","2495":"001436","2507":"001535","2512":"001739","2515":"001753","2516":"001758","2524":"001826","2531":"001872","2535":"001911","2537":"001924","2547":"002017","2553":"002058","2556":"002078","2565":"002106","2566":"002116","2569":"002149","2571":"002168","2579":"002249","2580":"002253","2585":"002282","2587":"002147","2588":"900118","2591":"900131","2595":"900137","2605":"900205","3686":"991499","4247":"002373","4424":"002460","4432":"002465","4555":"002525","4557":"002528","4649":"002574","4651":"002578","6732":"002527"};
+    let _badgeFixedAny=false;
+    (CFG.HSK.staff||[]).forEach(st=>{
+      if(!st.paycomBadgeNumber&&st.paycomEmployeeId&&_hskBadgeMapForPull[st.paycomEmployeeId]){st.paycomBadgeNumber=_hskBadgeMapForPull[st.paycomEmployeeId];_badgeFixedAny=true;}
+    });
+    if(_badgeFixedAny&&typeof pushConfig==="function")pushConfig();
+  }
   save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);
   // This final save("hotel_cfg",CFG) — needed purely to PERSIST locally whatever pullAll() just retrieved from live
   // — previously ran with no _pullingConfigNow guard, unlike the app_config-specific pull above which correctly
