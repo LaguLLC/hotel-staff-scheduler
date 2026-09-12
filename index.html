@@ -650,6 +650,20 @@
      table-wide mismatch against its own left-aligned headers. Currently used only by the reminder-diagnostic
      Check/Result table (see diagnoseReminders()'s own comment). */
   table.leftAlignCells td{text-align:left;}
+    /* "check background push status table is ugly in narrow screen squished so rows are too tall" — this table's
+       own "Check" column holds full SENTENCES ("Connected to the shared live copy right now?", "Local push
+       subscription exists on this device?"), not a short label — under the general table.autoTable rule (which
+       intentionally pins the FIRST column to nowrap so it never wraps mid-word, see that rule's own comment for
+       why this is correct for a short label like "Name"/"Date"), a genuinely long sentence forced to stay on one
+       line can, on a narrow phone width, need MORE horizontal space than the entire viewport by itself — pushing
+       "Result" down to a sliver (or effectively off-screen), exactly the reported symptom. This table's own
+       content shape is the documented exception that rule's comment already anticipated ("a table whose first
+       column is ALSO expected to wrap"): table-layout:fixed with an explicit, guaranteed split between the two
+       columns means NEITHER one can ever balloon past its own fixed share, regardless of how long any individual
+       row's text happens to be — both columns wrap normally instead. */
+  table.checkResultTbl{table-layout:fixed;}
+  table.checkResultTbl th:first-child,table.checkResultTbl td:first-child{width:44%;white-space:normal;overflow-wrap:break-word;}
+  table.checkResultTbl th:last-child,table.checkResultTbl td:last-child{width:56%;white-space:normal;overflow-wrap:break-word;}
   tr:first-child th,tr:first-child td{border-top:1px solid var(--line);}
   th:first-child,td:first-child{border-left:1px solid var(--line);}
   #grid tr td:last-child,#grid tr th:last-child{border-right:1px solid var(--line);}
@@ -3923,23 +3937,34 @@ async function excelImportPickFile(event){
       :`<span style="color:#b30000">Could not read this file: ${esc(err.message)}.</span>`;
   }
 }
+// Session-only name reconciliation for the Excel schedule/demand import — see renderExcelUnmatchedNames()'s own
+// comment for the full "select name from roster to match or skip" feature this backs. Keyed by the exact name as
+// it appears in the file (trimmed); value is the chosen roster name, or "" for an explicit Skip. Reset on every
+// fresh file pick (excelImportPickFile()) so a mapping from a PREVIOUS file never silently carries over and
+// applies to a different one.
+let _xlNameOverrides={};
 function renderExcelImportSheetPicker(){
   const body=el("xlImportBody");
+  _xlNameOverrides={};
   const withDates=_xlImportSheets.filter(s=>s.weekStartGuess);
   const minWk=withDates.length?weekKey(new Date(Math.min(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
   const maxWk=withDates.length?weekKey(new Date(Math.max(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
   body.innerHTML=`
     <p><b>${_xlImportSheets.length} sheet(s) found</b> — ${withDates.length} with an auto-detected week; ${_xlImportSheets.length-withDates.length} need a manual date (or can be left unchecked to skip).</p>
     <div class="mrow" style="align-items:center;gap:8px">
-      <label class="small">Only import weeks starting from <input type="date" id="xlFromDate" class="sfield" value="${esc(minWk)}"></label>
+      <label class="small">Import from <input type="date" id="xlFromDate" class="sfield" value="${esc(minWk)}"></label>
       <label class="small">to <input type="date" id="xlToDate" class="sfield" value="${esc(maxWk)}"></label>
-      <button class="mini" onclick="applyExcelImportDateFilter()">Apply range to checkboxes</button>
+      <button class="mini" onclick="applyExcelImportDateFilter()">Apply range</button>
     </div>
+    <!-- "not sure what the purpose of the sheet and week starts table is? Is it supposed to correct the
+         automatically recognized date that is covered by the sheet?" — yes, exactly that; added a short, direct
+         explanation rather than leaving it to be inferred from the controls alone. -->
+    <p class="small muted" style="margin-top:6px">Each row is one sheet/tab from the file. The checkbox picks whether that sheet is included; <b>Week starts</b> is this app's own auto-detected Monday for that sheet (read from its Date row) — correct it here if it's wrong, or fill it in yourself for a sheet with no auto-detected date at all.</p>
     <div class="tblwrap" style="overflow:auto;max-height:320px;border:1px solid var(--line);border-radius:8px;margin-top:8px">
     <table class="autoTable"><tr><th></th><th>Sheet</th><th style="white-space:nowrap">Week starts</th></tr>
     ${_xlImportSheets.map((s,i)=>`<tr><td><input type="checkbox" class="cbx" id="xlSheetChk${i}" ${s.include?"checked":""}></td><td style="text-align:left">${esc(s.name)}</td><td><input type="date" class="sfield" style="width:150px" id="xlSheetDate${i}" value="${s.weekStartGuess?weekKey(s.weekStartGuess):""}" onchange="_xlImportSheets[${i}].weekStartGuess=this.value?new Date(this.value+'T00:00:00'):null;if(this.value)el('xlSheetChk${i}').checked=true;"></td></tr>`).join("")}
     </table></div>
-    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">Import selected week(s)</button></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="btn30" onclick="previewExcelImport()" title="See exactly what would be written — which schedule cells and Demand fields, and which names in the file didn't match the roster — before anything is actually saved">\ud83d\udd0d Preview…</button> <button class="brand btn30" onclick="runExcelImport()">Import selected week(s)</button></div>
     <div id="xlImportResult" style="margin-top:10px"></div>`;
 }
 function applyExcelImportDateFilter(){
@@ -3951,18 +3976,29 @@ function applyExcelImportDateFilter(){
     chk.checked=inRange;
   });
 }
-async function runExcelImport(){
-  const dept=el("xlImportDept").value;
-  const resultEl=el("xlImportResult");resultEl.innerHTML="Importing…";
+// "add a preview option so user can see what the schedule would look like if imported, also make it so user can
+// see names that didn't match roster, what the schedule was in the excel, and allow them to select name from
+// roster to match or skip" — the whole parsing/matching pass previously lived INSIDE runExcelImport() itself,
+// writing straight to ASSIGN/DEMAND with no way to inspect it first. Split into two halves so Preview and the
+// real Import can never disagree (one parsing path, not two): _planExcelImport() below does 100% of the real
+// parsing/matching work and returns a plain data structure describing exactly what WOULD happen — it never
+// touches ASSIGN/DEMAND itself — and _applyExcelImportPlan() takes that same plan and is the only place that
+// actually writes/saves. previewExcelImport() calls the planner and renders it read-only; runExcelImport() calls
+// the SAME planner and then applies it for real.
+//
+// `nameOverrides` ({fileName: rosterNameOrEmptyStringForSkip}) is how a name reconciled in the Preview's own
+// "Unmatched names" table (see renderExcelUnmatchedNames()/_xlSetNameOverride()) resolves here exactly as if it
+// had matched the roster to begin with — an empty-string mapping means "explicitly skip," distinct from "not
+// yet reconciled."
+function _planExcelImport(dept,nameOverrides){
+  nameOverrides=nameOverrides||{};
   const roster=(CFG[dept].staff||[]);
   const rosterByNorm={};roster.forEach(s=>{rosterByNorm[_xlNormName(s.n)]=s.n;});
-  let weeksLoaded=0,weeksSkippedNoSelection=0,cellsWritten=0,cellsSkippedExisting=0,strayOnesCleaned=0,demandFieldsWritten=0,demandFieldsSkipped=0;
-  const unmatchedNames=new Set();
-  ASSIGN[dept]=ASSIGN[dept]||{};DEMAND=DEMAND||{};
+  const plan={weeks:[],weeksSkippedNoSelection:0,strayOnesCleaned:0,unmatchedNames:new Map()};
   for(let si=0;si<_xlImportSheets.length;si++){
     const s=_xlImportSheets[si];
     const chk=el("xlSheetChk"+si);
-    if(!chk||!chk.checked){weeksSkippedNoSelection++;continue;}
+    if(!chk||!chk.checked){plan.weeksSkippedNoSelection++;continue;}
     if(!s.weekStartGuess){continue;} // no date at all, and never manually filled in — nothing to import against
     const weekStart=(s.weekStartGuess instanceof Date)?s.weekStartGuess:new Date(s.weekStartGuess);
     const wk=weekKey(weekStart);
@@ -3987,19 +4023,26 @@ async function runExcelImport(){
       else if(lbl.indexOf("unassigned")!==-1)demandRowFor.unassigned=r;
       else break; // first non-matching, non-blank label after the Date row — assume the staff area has begun
     }
+    const weekEntry={sheetName:s.name,wk,weekStart,cellsWritten:0,cellsSkippedExisting:0,demandWritten:0,demandSkipped:0,rows:[],demand:{}};
     Object.keys(demandRowFor).forEach(key=>{
       const r=demandRowFor[key];
       Object.keys(colToDay).forEach(col=>{
         const dayIdx=colToDay[col];const raw=(aoa[r]||[])[col];
         if(raw==null||raw==="")return;
         const num=Number(raw);if(isNaN(num))return;
-        DEMAND[wk]=DEMAND[wk]||{};DEMAND[wk][dayIdx]=DEMAND[wk][dayIdx]||{};
-        if(DEMAND[wk][dayIdx][key]!=null){demandFieldsSkipped++;return;}
-        DEMAND[wk][dayIdx][key]=num;demandFieldsWritten++;
+        const already=((DEMAND[wk]||{})[dayIdx]||{})[key];
+        if(already!=null){weekEntry.demandSkipped++;return;}
+        weekEntry.demand[dayIdx]=weekEntry.demand[dayIdx]||{};weekEntry.demand[dayIdx][key]=num;weekEntry.demandWritten++;
       });
     });
     // Staff area: everything after the last demand row found (or right after the Date row if none were found).
     const staffStart=Object.keys(demandRowFor).length?Math.max(...Object.values(demandRowFor))+1:demandScanEnd;
+    // Working copy of this week's already-live ASSIGN data, mutated as rows are planned below — mirrors the
+    // ORIGINAL mutate-as-you-go behavior exactly (so two rows in the file for the same name/day still resolve the
+    // same way: second occurrence sees the first's now-planned value as "already filled" and is itself skipped),
+    // without ever touching the REAL ASSIGN object during a dry-run Preview.
+    const workingAssignForWeek={};
+    Object.keys((ASSIGN[dept]||{})[wk]||{}).forEach(nm=>{workingAssignForWeek[nm]={...((ASSIGN[dept][wk]||{})[nm]||{})};});
     for(let r=staffStart;r<aoa.length;r++){
       const nameRaw=(aoa[r]||[])[0];
       if(nameRaw==null||String(nameRaw).trim()==="")continue;
@@ -4007,28 +4050,140 @@ async function runExcelImport(){
       const hasDataThisRow=Object.keys(colToDay).some(c=>(aoa[r]||[])[c]!=null);
       const hasDataNextRow=Object.keys(colToDay).some(c=>nextRow[c]!=null);
       if(!hasDataThisRow&&!hasDataNextRow)continue; // a section/role header (e.g. "Front Desk Supervisor"), not a person
+      const fileName=String(nameRaw).trim();
       const normed=_xlNormName(nameRaw);
-      const rosterName=rosterByNorm[normed];
-      if(!rosterName){unmatchedNames.add(String(nameRaw).trim());}
-      let consumedNextRow=hasDataNextRow;
+      let rosterName=rosterByNorm[normed];
+      if(!rosterName&&Object.prototype.hasOwnProperty.call(nameOverrides,fileName))rosterName=nameOverrides[fileName]||null;
+      const cellsAll={};
       Object.keys(colToDay).forEach(col=>{
         const dayIdx=colToDay[col];
         const {token,strayCleaned}=_xlBuildShiftToken((aoa[r]||[])[col],hasDataNextRow?nextRow[col]:null);
-        strayOnesCleaned+=strayCleaned;
-        if(!token||!rosterName)return;
-        ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};
-        ASSIGN[dept][wk][rosterName]=ASSIGN[dept][wk][rosterName]||{};
-        if(ASSIGN[dept][wk][rosterName][dayIdx]!=null){cellsSkippedExisting++;return;}
-        ASSIGN[dept][wk][rosterName][dayIdx]=token;cellsWritten++;
+        plan.strayOnesCleaned+=strayCleaned;
+        if(!token)return;
+        cellsAll[dayIdx]=token;
       });
-      if(consumedNextRow)r++; // the paired end-time row was consumed — don't re-process it as its own row
+      if(!rosterName){
+        const cnt=Object.keys(cellsAll).length||1;
+        plan.unmatchedNames.set(fileName,(plan.unmatchedNames.get(fileName)||0)+cnt);
+      }else if(Object.keys(cellsAll).length){
+        const existingForPerson=workingAssignForWeek[rosterName]||{};
+        const newCells={},skippedDays=[];
+        Object.keys(cellsAll).forEach(dayIdx=>{
+          if(existingForPerson[dayIdx]!=null){weekEntry.cellsSkippedExisting++;skippedDays.push(Number(dayIdx));}
+          else{
+            newCells[dayIdx]=cellsAll[dayIdx];weekEntry.cellsWritten++;
+            workingAssignForWeek[rosterName]=workingAssignForWeek[rosterName]||{};
+            workingAssignForWeek[rosterName][dayIdx]=cellsAll[dayIdx];
+          }
+        });
+        weekEntry.rows.push({name:rosterName,fileName,cellsAll,newCells,skippedDays});
+      }
+      if(hasDataNextRow)r++; // the paired end-time row was consumed — don't re-process it as its own row
     }
-    weeksLoaded++;
+    plan.weeks.push(weekEntry);
   }
+  return plan;
+}
+// The ONLY function that actually writes a plan's contents into ASSIGN/DEMAND and saves — see
+// _planExcelImport()'s own comment for why parsing and writing are now two separate steps.
+function _applyExcelImportPlan(dept,plan){
+  ASSIGN[dept]=ASSIGN[dept]||{};DEMAND=DEMAND||{};
+  let cellsWritten=0,cellsSkippedExisting=0,demandFieldsWritten=0,demandFieldsSkipped=0;
+  plan.weeks.forEach(w=>{
+    ASSIGN[dept][w.wk]=ASSIGN[dept][w.wk]||{};
+    w.rows.forEach(row=>{
+      ASSIGN[dept][w.wk][row.name]=ASSIGN[dept][w.wk][row.name]||{};
+      Object.keys(row.newCells).forEach(dayIdx=>{ASSIGN[dept][w.wk][row.name][dayIdx]=row.newCells[dayIdx];});
+    });
+    DEMAND[w.wk]=DEMAND[w.wk]||{};
+    Object.keys(w.demand).forEach(dayIdx=>{
+      DEMAND[w.wk][dayIdx]=DEMAND[w.wk][dayIdx]||{};
+      Object.assign(DEMAND[w.wk][dayIdx],w.demand[dayIdx]);
+    });
+    cellsWritten+=w.cellsWritten;cellsSkippedExisting+=w.cellsSkippedExisting;
+    demandFieldsWritten+=w.demandWritten;demandFieldsSkipped+=w.demandSkipped;
+  });
   save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);
-  let msg=`<b>${weeksLoaded} week(s) processed.</b> ${cellsWritten} schedule cell(s) written, ${cellsSkippedExisting} left untouched (already had data), ${demandFieldsWritten} Demand field(s) written, ${demandFieldsSkipped} Demand field(s) left untouched.`;
-  if(strayOnesCleaned)msg+=` ${strayOnesCleaned} stray "1"-only cell(s) were ignored as known formatting artifacts, not written as a value.`;
-  if(unmatchedNames.size)msg+=`<br><br><b style="color:#b30000">${unmatchedNames.size} name(s) in the file didn't match anyone in the current ${esc(CFG[dept].label)} roster and were NOT imported</b> (never auto-added/guessed) — add them to the roster first, or fix the spelling in the file, then re-run: ${Array.from(unmatchedNames).map(esc).join(", ")}.`;
+  return{weeksLoaded:plan.weeks.length,cellsWritten,cellsSkippedExisting,demandFieldsWritten,demandFieldsSkipped,strayOnesCleaned:plan.strayOnesCleaned};
+}
+// One week's read-only preview table: every parsed name/day cell from the file, not just the ones that would
+// actually be written — directly answers "what the schedule was in the excel." A cell already covered by
+// existing live data is shown struck-through/muted (left untouched, per this import's own "never overwrite"
+// rule); everything else is bold (a genuinely new value about to be written).
+function _excelPreviewWeekTable(weekEntry){
+  if(!weekEntry.rows.length)return `<div class="small muted" style="margin:4px 0">No staff rows recognized for this week.</div>`;
+  const dayHeaders=DOW.map(d=>`<th>${esc(d)}</th>`).join("");
+  const rowsHtml=weekEntry.rows.map(row=>{
+    const cellsHtml=[0,1,2,3,4,5,6].map(dayIdx=>{
+      const val=row.cellsAll[dayIdx];
+      if(val==null)return `<td class="small muted">—</td>`;
+      const isSkipped=row.skippedDays.includes(dayIdx);
+      return isSkipped
+        ?`<td class="small muted" style="text-decoration:line-through" title="Already has a value in the live schedule — left untouched">${esc(val)}</td>`
+        :`<td class="small" style="font-weight:600">${esc(val)}</td>`;
+    }).join("");
+    return `<tr><td style="text-align:left;white-space:nowrap">${esc(row.name)}</td>${cellsHtml}</tr>`;
+  }).join("");
+  return `<div class="tblwrap" style="overflow:auto;max-height:240px;border:1px solid var(--line);border-radius:8px;margin-top:4px"><table class="autoTable"><tr><th>Name</th>${dayHeaders}</tr>${rowsHtml}</table></div>
+    <div class="small muted" style="margin-top:2px">Bold = new value to be written. Struck-through = already has a value in the live schedule (left untouched).</div>`;
+}
+// "make it so user can see names that didn't match roster... and allow them to select name from roster to match
+// or skip" — same reconciliation pattern this app already established for Paycom imports (see
+// openPaycomNameReconciliation()'s own comment), scoped here to just THIS preview/import session rather than a
+// permanent, saved alias: each unmatched name gets a dropdown of every current roster person in this department,
+// plus an explicit "Skip" option. Picking one calls _xlSetNameOverride(), which re-runs the preview so the
+// reconciled name immediately moves from this table into the real schedule preview above it.
+function renderExcelUnmatchedNames(dept,unmatchedNames){
+  if(!unmatchedNames||!unmatchedNames.size)return "";
+  const allStaffNames=(CFG[dept].staff||[]).map(s=>s.n);
+  const rows=Array.from(unmatchedNames.entries()).sort((a,b)=>b[1]-a[1]).map(([fileName,count])=>{
+    const curMap=_xlNameOverrides[fileName];
+    const fnEsc=esc(fileName).replace(/'/g,"&#39;");
+    const opts=`<option value="">Skip — don't import</option>`+allStaffNames.map(n=>`<option value="${esc(n)}" ${curMap===n?"selected":""}>${esc(n)}</option>`).join("");
+    return `<tr><td class="small" style="text-align:left">${esc(fileName)}</td><td class="small" style="text-align:center">${count}</td><td><select class="sfield small" onchange="_xlSetNameOverride('${fnEsc}',this.value)">${opts}</select></td></tr>`;
+  }).join("");
+  return `<div style="margin-top:10px"><b style="color:#b30000">${unmatchedNames.size} name(s) in the file didn't match anyone on the current ${esc(CFG[dept].label)} roster</b> — map each to the correct person below, or leave as Skip to exclude them from this import (shown by day-cell count, most-affected first):
+    <div class="tblwrap" style="overflow:auto;max-height:220px;border:1px solid var(--line);border-radius:8px;margin-top:6px"><table class="autoTable"><tr><th style="text-align:center">Name in file</th><th>Day cells</th><th>Maps to</th></tr>${rows}</table></div>
+  </div>`;
+}
+function _xlSetNameOverride(fileName,rosterName){
+  _xlNameOverrides[fileName]=rosterName||"";
+  previewExcelImport(); // re-run so the reconciled name moves out of Unmatched and into the schedule preview above
+}
+// Read-only dry run — calls the SAME _planExcelImport() runExcelImport() itself calls, so nothing shown here
+// can ever drift out of sync with what a real Import would actually do.
+function previewExcelImport(){
+  const dept=el("xlImportDept").value;
+  const plan=_planExcelImport(dept,_xlNameOverrides);
+  const resultEl=el("xlImportResult");
+  const weekBlocks=plan.weeks.map((w,i)=>{
+    const openAttr=i===0?" open":"";
+    const label=w.weekStart.toLocaleDateString()+" – "+new Date(w.weekStart.getTime()+6*86400000).toLocaleDateString()+" ("+esc(w.sheetName)+")";
+    return `<details style="margin-top:6px"${openAttr}><summary style="cursor:pointer"><b>${label}</b> — ${w.cellsWritten} cell(s) to write, ${w.cellsSkippedExisting} already filled, ${w.demandWritten} Demand field(s) to write, ${w.demandSkipped} Demand field(s) already filled</summary>${_excelPreviewWeekTable(w)}</details>`;
+  }).join("");
+  resultEl.innerHTML=`<div style="font-weight:600;margin-bottom:4px">Preview — nothing has been imported yet</div>
+    ${weekBlocks||"<div class='small muted'>No dated/checked weeks to preview — check at least one sheet with a valid Week starts date above.</div>"}
+    ${renderExcelUnmatchedNames(dept,plan.unmatchedNames)}
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">✅ Import selected week(s)</button></div>`;
+}
+async function runExcelImport(){
+  const dept=el("xlImportDept").value;
+  const resultEl=el("xlImportResult");resultEl.innerHTML="Importing…";
+  const plan=_planExcelImport(dept,_xlNameOverrides);
+  const r=_applyExcelImportPlan(dept,plan);
+  // "change '# week(s) processed' to '[From date] to [To date] processed'" — a plain count didn't say WHICH
+  // weeks; showing the actual covered date range is more useful and matches the From/To date-range language
+  // already used elsewhere in this same wizard (the Import-from/to range filter above).
+  let dateRangeLabel="No weeks";
+  if(plan.weeks.length){
+    const starts=plan.weeks.map(w=>w.weekStart.getTime());
+    const minStart=new Date(Math.min(...starts)),maxStart=new Date(Math.max(...starts));
+    const maxEnd=new Date(maxStart.getTime()+6*86400000);
+    dateRangeLabel=minStart.toLocaleDateString()+" to "+maxEnd.toLocaleDateString();
+  }
+  let msg=`<b>${dateRangeLabel} processed.</b> ${r.cellsWritten} schedule cell(s) written, ${r.cellsSkippedExisting} left untouched (already had data), ${r.demandFieldsWritten} Demand field(s) written, ${r.demandFieldsSkipped} Demand field(s) left untouched.`;
+  if(r.strayOnesCleaned)msg+=` ${r.strayOnesCleaned} stray "1"-only cell(s) were ignored as known formatting artifacts, not written as a value.`;
+  if(plan.unmatchedNames.size)msg+=`<br><br><b style="color:#b30000">${plan.unmatchedNames.size} name(s) in the file didn't match anyone in the current ${esc(CFG[dept].label)} roster and were NOT imported</b> (never auto-added/guessed) — use Preview above to map them to a roster name or skip them, or add them to the roster/fix the spelling in the file and re-run: ${Array.from(plan.unmatchedNames.keys()).map(esc).join(", ")}.`;
   resultEl.innerHTML=msg;
   render();
 }
@@ -8963,7 +9118,24 @@ function notifTypeEnabled(key){return !CFG._notifTypes||CFG._notifTypes[key]!==f
 // Notifications section is rendered (see _notifIdentSyncFromCfg()), matching this app's own established
 // "settings reflect last-saved state on open" convention.
 let _notifIdentSelected=new Set();
+// "I set notif remind me as manager then a few seconds later it reverted to none selected by itself" — root
+// cause: renderNotificationsSettingsBlock() unconditionally called _notifIdentSyncFromCfg() on EVERY render()
+// pass while sitting on Settings, not just the first time this section is opened — and render() itself can fire
+// for reasons that have nothing to do with the notification picker (a live-sync pull from Supabase completing in
+// the background, another device's edit arriving over realtime, the connection-retry timer a few lines up in
+// pullAll(), etc.). Checking (or picking a name) here only ever updates this in-memory _notifIdentSelected Set —
+// nothing is actually saved to CFG until "Update/Enable notifications" is pressed (see _submitNotifSettings()) —
+// so any one of those unrelated background renders, landing in the several-second gap between checking the box
+// and pressing that button, re-ran _notifIdentSyncFromCfg() and silently overwrote the in-progress selection back
+// to whatever was last actually SAVED (often "None"), exactly matching the reported symptom. Fixed with a simple
+// dirty flag: once the person has touched the picker, _notifIdentSyncFromCfg() no longer overwrites their
+// in-progress choice on a subsequent render — it only re-syncs from CFG on a genuinely FRESH visit to this
+// section (dirty flag unset), or right after a real save actually completes (enableNotifications()/
+// disableNotifications() both clear it explicitly, since CFG and the in-memory selection are back in agreement
+// at that exact point).
+let _notifIdentDirty=false;
 function _notifIdentSyncFromCfg(){
+  if(_notifIdentDirty)return;
   _notifIdentSelected=new Set();
   if(CFG._notifName)_notifIdentSelected.add(CFG._notifName);
   ["FO","HSK"].forEach(dp=>{if((CFG._notifManagerDepts||[]).includes(dp))_notifIdentSelected.add("__MGR_"+dp+"__");});
@@ -9051,6 +9223,7 @@ function toggleNotifIdentityDropdown(e){
   },0);
 }
 function _onNotifIdentMgrToggle(dp,checked){
+  _notifIdentDirty=true; // see _notifIdentSyncFromCfg()'s own comment for the full "reverted by itself" fix this is part of
   const val="__MGR_"+dp+"__";
   if(checked)_notifIdentSelected.add(val);else _notifIdentSelected.delete(val);
   const summaryEl=el("notifIdentSummary");if(summaryEl)summaryEl.innerHTML=_notifIdentSummaryText();
@@ -9059,6 +9232,7 @@ function _onNotifIdentMgrToggle(dp,checked){
 // Single-select: clears any PREVIOUSLY chosen name (there is at most one) before adding the newly picked one — a
 // blank/empty name (the "None" radio) simply clears without adding a replacement.
 function _onNotifIdentNameSelect(name){
+  _notifIdentDirty=true; // see _notifIdentSyncFromCfg()'s own comment for the full "reverted by itself" fix this is part of
   Array.from(_notifIdentSelected).forEach(v=>{if(v.indexOf("__MGR_")!==0)_notifIdentSelected.delete(v);});
   if(name)_notifIdentSelected.add(name);
   const summaryEl=el("notifIdentSummary");if(summaryEl)summaryEl.innerHTML=_notifIdentSummaryText();
@@ -9117,6 +9291,11 @@ async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment
     CFG._notifRoomAssignment=!!wantsRoomAssignment;
     CFG._notifTypes=notifTypes||CFG._notifTypes||{};
     save("hotel_cfg",CFG);
+    // The in-memory picker selection and CFG are genuinely back in agreement as of this exact line — see
+    // _notifIdentSyncFromCfg()'s own comment for the full "reverted by itself" fix this closes. Cleared here,
+    // immediately after the real save, rather than waiting for the (async, can fail/take a while) push-
+    // registration steps below to finish.
+    _notifIdentDirty=false;
     // StartReminderEngine() — the function that actually runs the 60s polling loop calling maybeLocalNotify() — was
     // ONLY ever invoked once, at page-load bootstrap, gated on CFG._notifEnabled already being true at that point.
     // Enabling notifications for the first time THIS session (via this exact function) correctly requests
@@ -9161,7 +9340,7 @@ async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment
         }
         if(error){reportSyncError("push subscription upload",error);flashNote("Notifications enabled locally, but couldn't reach the shared database to enable background push \u2014 see sync error.");return "local-only";}
         if(_notifTypesColumnMissing){flashNote("Notifications enabled \u2014 per-issue-type filtering will only apply to background push once this project's database is updated (see Readme's \\\"Notifications & reminders\\\" SQL). In-app reminders on this device already respect it.");return true;}
-        flashNote("Notifications enabled \u2014 this device is now registered for both in-app reminders and background push (once the server-side check is deployed \u2014 see Readme).");
+        flashNote("Notifications enabled \u2014 this device is now registered for both in-app reminders and background push.");
       } else {
         flashNote("Notifications enabled on this device. Connect to the shared live copy (Settings \u2192 Sync & data) to also register for background push.");
       }
@@ -10977,6 +11156,18 @@ function _categorizeConflictLine(line){
   return "Schedule"; // the remaining shape is the per-cell schedule diff: "NAME — DEPT DAY (WK): ..."
 }
 const _CONFLICT_CATEGORY_ORDER=["Schedule","Demand","Leave requests","Staff roster","Coverage minimums","Rules & thresholds","Default shifts","Role list","App-wide settings"];
+// "changes while away list is a wall of text, organize" — the per-category grouping/collapsible split above
+// already exists (see this section's own comment further up), but INSIDE each category, every individual change
+// line was still just string-joined with a bare "\n" into one plain, undifferentiated white-space:pre-wrap block
+// — visually a single dense paragraph, with nothing but a line-break separating a person's name from an entirely
+// unrelated schedule cell change on the next line. Shared here (used by both toggleAwayChangesPanel() and
+// showUploadChoiceDialog()'s own listBlock(), which previously duplicated this exact same wall-of-text markup in
+// two places) so ANY future caller gets the same real, itemized rendering: a genuine <ul>/<li> list, one visually
+// distinct row per change, with its own bullet and breathing room between rows — scannable at a glance rather than
+// read top-to-bottom as running prose.
+function _renderCategoryItemsList(items){
+  return `<ul style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(x=>`<li style="margin-bottom:4px;line-height:1.4">${esc(x)}</li>`).join("")}</ul>`;
+}
 // Renders the small, dismissible "N changes since you last had this open" badge — see _awayChanges' own comment
 // (near pullAll()) for the full feature this supports. Reuses the SAME per-category grouping/ collapsible
 // convention showUploadChoiceDialog() already established, so this stays visually consistent with that popup rather
@@ -10994,7 +11185,7 @@ function toggleAwayChangesPanel(e){
   const byCat={};_awayChanges.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
   const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
     const items=byCat[c];const openAttr=items.length<=2?" open":"";
-    return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${items.length})</summary><div style="white-space:pre-wrap;margin-top:2px;margin-left:4px;font-size:11.5px">${items.map(x=>esc(x)).join("\n")}</div></details>`;
+    return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${items.length})</summary><div style="margin-top:2px;margin-left:4px;font-size:11.5px">${_renderCategoryItemsList(items)}</div></details>`;
   }).join("");
   const panel=document.createElement("div");
   panel.id="awayChangesPanel";
@@ -11056,7 +11247,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync)
       const body=_CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
         const catItems=byCat[c];
         const openAttr=catItems.length<=2?" open":"";
-        return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${catItems.length})</summary><div style="white-space:pre-wrap;margin-top:2px;margin-left:4px">${catItems.map(x=>esc(x)).join("\n")}</div></details>`;
+        return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${catItems.length})</summary><div style="margin-top:2px;margin-left:4px">${_renderCategoryItemsList(catItems)}</div></details>`;
       }).join("");
       return `<div style="margin-bottom:8px"><b${color?` style="color:${color}"`:""}>${title} (${items.length})</b><div style="max-height:220px;overflow:auto;border:1px solid var(--line);border-radius:6px;padding:6px;margin-top:4px;font-size:11.5px">${body}</div></div>`;
     };
@@ -16540,9 +16731,16 @@ function renderMobileDrawerContent(){
   // text with a barely-visible border, not merely "hard to see." Using plain, explicit colors instead (matching
   // this drawer's own .mob-drawer-item text color) so both buttons are actually visible against the drawer's real
   // background.
+  // "when there's nothing to redo redo button should be greyed, same with undo button?" — the `disabled`
+  // attribute itself was already always set correctly here (see this block's own comment above), but this
+  // drawer's buttons carry none of the app's own established disabled-look classes (.weeknav:disabled{opacity:
+  // .35}, the one that greys out the CLASSIC header's Undo/Redo) — so a disabled button here rendered with the
+  // SAME full-opacity background/text color as an enabled one, genuinely indistinguishable at a glance. Added the
+  // identical opacity/cursor treatment inline, conditioned on the same stack-length check already driving
+  // `disabled`, so both states can never drift out of sync with each other.
   h+=`<div class="mrow" style="padding:6px 16px;gap:8px">`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px" onclick="undoAction()" ${UNDO_STACK.length?"":"disabled"} title="${UNDO_STACK.length?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo"}">\u21b6 Undo</button>`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px" onclick="redoAction()" ${REDO_STACK.length?"":"disabled"} title="${REDO_STACK.length?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo"}">\u21b7 Redo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${UNDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" onclick="undoAction()" ${UNDO_STACK.length?"":"disabled"} title="${UNDO_STACK.length?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo"}">\u21b6 Undo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${REDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" onclick="redoAction()" ${REDO_STACK.length?"":"disabled"} title="${REDO_STACK.length?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo"}">\u21b7 Redo</button>`
     +`</div>`;
   h+=`<hr class="mob-drawer-sep">`;
   h+=`<div class="mob-drawer-label">Schedule</div>`;
@@ -21127,9 +21325,12 @@ function clearAbsentMark(dept,iso,name){
 // checkInStaff()/clockOutStaff()'s own `by`, which correctly falls back to the staff member's own name for a
 // genuine self-service clock-in/out with no manager signed in) record that real name here instead of silently
 // falling through to CURRENT_USER — which is null, and therefore shows as a bare, uninformative "?" in the change
-// log's own User column, for every ordinary self-service clock-in/out (see those two call sites for the fix this
-// enables). Every OTHER caller (schedule edits, settings changes, imports, etc.) is unaffected and keeps using
-// CURRENT_USER exactly as before, since those actions are only ever reachable while signed in via EDIT mode.
+// log's own User column, for every ordinary self-service clock-in/out AND their own undo counterparts (see
+// checkInStaff()/clockOutStaff()/undoCheckIn()/undoClockOut() for the four call sites this fix covers — the two
+// undo functions were originally missed in an earlier pass of this same fix, and separately corrected once
+// re-reported still showing "?"). Every OTHER caller (schedule edits, settings changes, imports, etc.) is
+// unaffected and keeps using CURRENT_USER exactly as before, since those actions are only ever reachable while
+// signed in via EDIT mode.
 function logChange(action,detail,asUser){try{AUDIT.push({ts:new Date().toISOString(),user:(asUser||(CURRENT_USER?CURRENT_USER.name:"?")),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
 // "set up separate pins for FO vs HSK so that I can demonstrate per dept access": each user record can now
 // optionally carry a `dept` scope ("FO", "HSK", or "" / omitted = both, the existing default behavior — so every
@@ -21943,7 +22144,7 @@ async function clockOutStaff(nmE,day,ctx){
   // A completed clock in/out pair now exists for this day — see maybeAutoComputeActualFromClock()'s own comment for
   // the full opt-in design (Settings toggle, never overwrites a real manual entry). A no-op entirely when that
   // setting is off, matching this app's own established independence between the two systems by default.
-  if(maybeAutoComputeActualFromClock(_dept,wk,nm,day))logChange("checkin",nm+"'s actual hours for "+DOW[day]+" auto-computed from clock in/out ("+computeHoursFromCheckin(rec[day])+"h)");
+  if(maybeAutoComputeActualFromClock(_dept,wk,nm,day))logChange("checkin",nm+"'s actual hours for "+DOW[day]+" auto-computed from clock in/out ("+computeHoursFromCheckin(rec[day])+"h)",by);
   render();
 }
 // Now accepts the same OPTIONAL `ctx` ({wk}) argument as checkInStaff()/clockOutStaff() above, for the same
@@ -21962,7 +22163,15 @@ function undoCheckIn(nmE,day,ctx){
   const nm=decodeURIComponent(nmE);
   const wk=(ctx&&ctx.wk)||weekKey(WEEK_START);if(CHECKINS[DEPT]&&CHECKINS[DEPT][wk]&&CHECKINS[DEPT][wk][nm])delete CHECKINS[DEPT][wk][nm][day];
   clearAutoActualIfStale(DEPT,wk,nm,day);
-  save("hotel_checkins",CHECKINS);pushCheckin(DEPT,wk,nm);logChange("checkin","Undid clock-in for "+nm+" "+DOW[day]);render();
+  // "there is still a ? for user" — checkInStaff()/clockOutStaff() themselves already resolve and pass a real
+  // `by` (see those functions' own comments for the original asUser fix, right where each calls logChange), but
+  // their UNDO counterparts here were missed — both still called logChange() with no 3rd argument, silently
+  // falling through to CURRENT_USER (null for an ordinary self-service undo with no manager signed in), so the
+  // User column showed a bare "?" specifically for undo actions even after the original fix. Same resolution
+  // logic as checkInStaff()/clockOutStaff(): the signed-in manager/scheduler if one is actively in edit mode,
+  // otherwise the staff member undoing their own record.
+  const by=EDIT&&CURRENT_USER?CURRENT_USER.name:nm;
+  save("hotel_checkins",CHECKINS);pushCheckin(DEPT,wk,nm);logChange("checkin","Undid clock-in for "+nm+" "+DOW[day],by);render();
 }
 // The undo counterpart for clock-OUT specifically — clears only outTs/outBy, leaving the original clock-in intact
 // (undoing a clock-out should return to "still clocked in," not erase the whole day's record).
@@ -21971,7 +22180,9 @@ function undoClockOut(nmE,day,ctx){
   const wk=(ctx&&ctx.wk)||weekKey(WEEK_START);const rec=((CHECKINS[DEPT]||{})[wk]||{})[nm];
   if(rec&&rec[day]){delete rec[day].outTs;delete rec[day].outBy;}
   clearAutoActualIfStale(DEPT,wk,nm,day);
-  save("hotel_checkins",CHECKINS);pushCheckin(DEPT,wk,nm);logChange("checkin","Undid clock-out for "+nm+" "+DOW[day]);render();
+  // Same "still a ?" fix as undoCheckIn() just above — see that function's own comment for the full "why".
+  const by=EDIT&&CURRENT_USER?CURRENT_USER.name:nm;
+  save("hotel_checkins",CHECKINS);pushCheckin(DEPT,wk,nm);logChange("checkin","Undid clock-out for "+nm+" "+DOW[day],by);render();
 }
 function actualDay(nm,day){const wk=weekKey(WEEK_START);const v=(((((ACTUALD[DEPT]||{})[wk]||{})[nm]||{}))[day]);return v;}
 function isActualAutoSourced(dept,wk,nm,day){return !!_nestedLookup4(ACTUALD_AUTOSRC,dept,wk,nm,day);}
@@ -23625,16 +23836,27 @@ async function removeUser(i){if(!(await uiConfirm("Remove "+USERS[i].name+"?")))
 // Same reasoning as showHistory() just above — "Backup & versions… → View change log" is reachable from the
 // header on any tab, not just Settings, so this always opens in its own modal rather than writing into an
 // in-page target element that depends on which tab/section happens to be open and visible right now.
-// "freeze header of change log when scrolling down": the table's own thead th{position:sticky;top:0} rule (the
-// same established convention every OTHER table in this app already relies on) needs a bounded-height ancestor
-// that ACTUALLY scrolls to stick against — previously this div only had overflow:auto with no height limit of its
-// own, so it simply grew to fit all 200 rows and the OUTER modal (openGenericViewModal()'s own overflow:auto) was
-// left doing the real scrolling instead; a sticky header only ever sticks relative to its own nearest scrolling
-// ancestor, so it silently scrolled away with everything else. Giving this div its own real, bounded max-height
-// makes IT the actual scrolling container, so its header now genuinely freezes in place while the 200 rows scroll
-// beneath it, exactly like every other scrollable table in this app already does.
+// "freeze header of change log when scrolling down" (still reported as NOT done after an earlier attempt) — that
+// earlier attempt gave this div a real, bounded max-height so it's genuinely the scrolling ancestor a sticky
+// header would stick against — necessary, but not sufficient on its own. Root cause of it still not freezing:
+// this table's own header row is a bare `<tr><th>...</tr>`, with NO `<thead>` wrapper — and this app's ONLY
+// position:sticky header rule is the descendant selector `thead th{...}` (see that rule's own comment, and the
+// staff-roster table's own matching fix, id="staffRosterTable", for the identical pattern used there). A `<th>`
+// with no `<thead>` ancestor simply never matches that selector at all, so it was never actually sticky — the
+// bounded-height container from the earlier fix was necessary, but not sufficient. Wrapping this exact same
+// header row in a real <thead> (no other markup changes) is what actually applies the sticky rule now.
 function showAudit(){const rows=(AUDIT||[]).slice(-200).reverse();
-  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table class="autoTable"><tr><th>When</th><th style="white-space:nowrap">User</th><th style="white-space:nowrap">Dept</th><th>Change</th></tr>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td style="white-space:nowrap">${esc(r.user)}</td><td style="white-space:nowrap">${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
+  // "Change column is squished, becomes too tall when screen is narrowed" — table.autoTable's own general rule
+  // only pins the FIRST column ("When") to nowrap, intentionally leaving every other column free to wrap (see
+  // that rule's own comment: a short, fixed-meaning first column paired with genuinely variable-length siblings
+  // should be the only one exempted). This table's markup additionally forced BOTH "User" and "Dept" to nowrap
+  // via their own inline styles — three of four columns nowrap, not one — so on a narrow screen those three
+  // together consumed most of the available width, squeezing the sole wrap-enabled "Change" column down to a
+  // sliver and forcing its own text to wrap across many lines (tall rows). "User"/"Dept" hold short values (a
+  // name; "FO"/"HSK") that don't need forced nowrap the way a fixed-format timestamp does — removed here so a
+  // narrow screen wraps THOSE first if genuinely needed, instead of taking width away from "Change", the one
+  // column that actually holds long, variable-length text.
+  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table class="autoTable"><thead><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr></thead>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
   openGenericViewModal("Change log (most recent 200)",_html);
 }
 function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hotel_audit_log.csv";a.click();}
@@ -24333,7 +24555,7 @@ async function checkBackgroundPushStatus(){
   rows.push(`<tr><td>Connected to the shared live copy right now?</td><td>${DB?"Yes":"<b>No</b> \u2014 background push CANNOT reach the server-side function at all until this device connects (Settings \u2192 Live sync). A foreground/in-app test notification can still work perfectly fine while disconnected \u2014 that's a separate, local-only mechanism (see Readme)."}</td></tr>`);
   if(!("serviceWorker" in navigator)){
     rows.push(`<tr><td>Service worker support</td><td><b>Not supported</b> in this browser \u2014 background push is not possible on this device regardless of connection.</td></tr>`);
-    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
+    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
     return;
   }
   // "nothing happens when I click Check background push status, see console error" \u2014 an UNCAUGHT
@@ -24354,7 +24576,7 @@ async function checkBackgroundPushStatus(){
   try{reg=await navigator.serviceWorker.getRegistration();}catch(e){_regErr=e;}
   if(_regErr){
     rows.push(`<tr><td>Service worker registered?</td><td><b>Could not check</b> \u2014 ${esc(_regErr.message||String(_regErr))}${/protocol|secure|SecurityError/i.test(String(_regErr))?" \u2014 this specific wording almost always means this page is being opened directly from disk (a file:// URL) rather than served over http/https. Service Workers (and therefore background push) are unsupported on a file:// origin in every major browser, with no workaround \u2014 the app must be hosted (even a simple local web server, or a real host like GitHub Pages) for this feature to ever work. In-app/foreground reminders (the button above) do NOT require this and continue to work regardless.":""}</td></tr>`);
-    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
+    box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
     return;
   }
   rows.push(`<tr><td>Service worker registered?</td><td>${reg?"Yes":"<b>No</b> \u2014 check that manifest.json/sw.js were actually uploaded to the SAME folder as this app file on your host (see Readme's install guide)."}</td></tr>`);
@@ -24415,7 +24637,7 @@ async function checkBackgroundPushStatus(){
   }else{
     rows.push(`<tr><td>Server-side function actually running on schedule?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync).</td></tr>`);
   }
-  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
+  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway \u2014 it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
 }
 // See checkBackgroundPushStatus()'s own "Retry upload now" button comment for the full root cause this closes.
@@ -24512,7 +24734,7 @@ function diagnoseReminders(){
   // subscribed to manager alerts for at least one department — a manager who has picked a personal name too would
   // otherwise never see this section at all, even though it's just as relevant to them.
   const _mgrSection=mgrDepts.length?_diagnoseManagerAlertsHtml(mgrDepts):"";
-  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
+  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">If everything above says a notification SHOULD fire, but nothing appears within ~60 seconds, the issue is in DELIVERY, not detection \u2014 most commonly: this tab/PWA must stay open (even in the background) for local reminders to fire at all (see Readme \u2014 a fully closed app/locked phone needs background push, a separate, server-dependent mechanism); or the OS/browser notification permission for this site was silently blocked outside this app.</div>${_mgrSection}`;
 }
 // Now also carries altName (see the roster's own "Alternate name" field, added per the hotel's suggestion of
