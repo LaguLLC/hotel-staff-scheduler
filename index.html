@@ -684,9 +684,22 @@
        widths + min-width equal to their sum, so this table can never be squeezed narrower than that — a screen
        narrower than the total now correctly scrolls horizontally via .tblwrap instead of shrinking every column
        (and therefore every row's own text) down to an unreadable sliver. */
-  table.checkResultTbl{table-layout:fixed;min-width:420px;width:100%;}
-  table.checkResultTbl th:first-child,table.checkResultTbl td:first-child{width:160px;white-space:normal;overflow-wrap:break-word;}
-  table.checkResultTbl th:last-child,table.checkResultTbl td:last-child{width:260px;white-space:normal;overflow-wrap:break-word;}
+    /* "STILL NOT FIXED... can't scroll right to see past check column" — traced the REAL reason this fix had
+       zero visible effect: this table also carries the .autoTable class (needed for its OTHER established
+       behaviors), and this app has a pre-existing, MORE SPECIFIC rule scoped to Settings —
+       `#settingsBody table.autoTable{table-layout:auto;min-width:0;}` (see that rule's own comment) — which, by
+       CSS specificity rules (ID+class+type beats a bare class+type selector), silently overrode table-layout
+       back to `auto` and min-width back to `0` every time this table rendered inside Settings, exactly where
+       every one of these 4 usages actually lives. The previous fix was never wrong on its own terms — it was
+       simply never able to WIN the cascade in its one real context. Re-declared here with the SAME
+       `#settingsBody`-scoped selector (equal specificity, and physically later in this stylesheet than the
+       conflicting rule, so it wins the tie) alongside the original bare selector, so this table is correctly
+       fixed-width both inside Settings and anywhere else it might ever be used. */
+  table.checkResultTbl,#settingsBody table.checkResultTbl{table-layout:fixed;min-width:420px;width:100%;}
+  table.checkResultTbl th:first-child,table.checkResultTbl td:first-child,
+  #settingsBody table.checkResultTbl th:first-child,#settingsBody table.checkResultTbl td:first-child{width:160px;white-space:normal;overflow-wrap:break-word;}
+  table.checkResultTbl th:last-child,table.checkResultTbl td:last-child,
+  #settingsBody table.checkResultTbl th:last-child,#settingsBody table.checkResultTbl td:last-child{width:260px;white-space:normal;overflow-wrap:break-word;text-align:left;}
   tr:first-child th,tr:first-child td{border-top:1px solid var(--line);}
   th:first-child,td:first-child{border-left:1px solid var(--line);}
   #grid tr td:last-child,#grid tr th:last-child{border-right:1px solid var(--line);}
@@ -2553,7 +2566,15 @@
      the toast, including its visible card, never captures a click at all; dismissal instead happens via a
      separate, permanent document-level click listener, so a toast never blocks a click intended for whatever's
      actually underneath it, and that SAME click also dismisses the toast, with no need to wait for it to fade. -->
-<div id="toastBox" style="position:fixed;top:10px;left:50%;transform:translate(-50%,-8px);z-index:2500;max-width:92vw;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease;"></div>
+<!-- "toast that appears when import excel unmatched name mapped is cut off by modal" — this toast's own z-index
+     (2500) sat BELOW .modalbg's own z-index:9999 (every modal in this app, including the Excel import wizard),
+     so any open modal always visually covered it whenever flashNote() fired while that modal was still open —
+     the toast wasn't actually broken, it was simply rendering UNDERNEATH the modal the whole time. Raised above
+     the highest z-index anywhere else in this app (9999) so a toast is now always visible regardless of what
+     modal, if any, happens to be open when it fires — matching this app's own established "notifications should
+     always be visible" precedent already used for the away-changes panel (raised above the header for the exact
+     same reason — see that panel's own comment). -->
+<div id="toastBox" style="position:fixed;top:10px;left:50%;transform:translate(-50%,-8px);z-index:10050;max-width:92vw;opacity:0;pointer-events:none;transition:opacity .25s ease,transform .25s ease;"></div>
 <div class="wrap">
   <div class="card" id="readmeCard" style="display:none"><h2>How this app works</h2><div class="small" id="readmeBody"></div></div>
   <div class="card" id="settingsCard" style="display:none"><h2>Settings</h2><div id="settingsBody"></div></div>
@@ -3971,7 +3992,13 @@ function renderExcelImportSheetPicker(){
   _xlNameOverrides={};
   const withDates=_xlImportSheets.filter(s=>s.weekStartGuess);
   const minWk=withDates.length?weekKey(new Date(Math.min(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
-  const maxWk=withDates.length?weekKey(new Date(Math.max(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
+  // "should only import the date range specified, not the whole week" — these two date fields are now a REAL
+  // per-day filter (see _planExcelImport()'s own comment for the full "why"), not just a sheet-selection helper —
+  // so the default "to" value must cover the LAST DAY of the last included week, not merely that week's own
+  // START date. Left as the bare week-start date before, the default range (unless a person deliberately
+  // narrowed it) would have silently excluded the last several days of the final week from every import, even
+  // though nothing about the file or the checkboxes above suggested anything was being restricted.
+  const maxWk=withDates.length?weekKey(new Date(Math.max(...withDates.map(s=>s.weekStartGuess.getTime()+6*86400000)))):"";
   body.innerHTML=`
     <p><b>${_xlImportSheets.length} sheet(s) found</b> — ${withDates.length} with an auto-detected week; ${_xlImportSheets.length-withDates.length} need a manual date (or can be left unchecked to skip).</p>
     <div class="mrow" style="align-items:center;gap:8px">
@@ -3988,6 +4015,16 @@ function renderExcelImportSheetPicker(){
     </table></div>
     <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="btn30" onclick="previewExcelImport()" title="See exactly what would be written — which schedule cells and Demand fields, and which names in the file didn't match the roster — before anything is actually saved">🔍 Preview…</button> <button class="brand btn30" onclick="runExcelImport()">Import selected date(s)</button></div>
     <div id="xlImportResult" style="margin-top:10px"></div>`;
+}
+// Reads the two From/To date fields as real Date objects (or null if either is blank) — the single shared
+// source both applyExcelImportDateFilter() (which sheets get checked) and _planExcelImport() (which INDIVIDUAL
+// DAY CELLS within a checked week actually get written) now read, so the two can never disagree about what "the
+// requested range" currently means.
+function _xlActiveDateRange(){
+  const fromEl=el("xlFromDate"),toEl=el("xlToDate");
+  const from=fromEl&&fromEl.value?new Date(fromEl.value+"T00:00:00"):null;
+  const to=toEl&&toEl.value?new Date(toEl.value+"T00:00:00"):null;
+  return {from,to};
 }
 function applyExcelImportDateFilter(){
   const from=el("xlFromDate").value?new Date(el("xlFromDate").value+"T00:00:00"):null;
@@ -4028,6 +4065,15 @@ function _planExcelImport(dept,nameOverrides){
   nameOverrides=nameOverrides||{};
   const roster=(CFG[dept].staff||[]);
   const rosterByNorm={};roster.forEach(s=>{rosterByNorm[_xlNormName(s.n)]=s.n;});
+  // "needs to be able to accept non-week ranges... should only import the date range specified, not the whole
+  // week" — the From/To fields were previously used ONLY to decide which whole SHEETS/weeks get checked
+  // (applyExcelImportDateFilter()); every day within a checked week was then imported regardless of whether that
+  // specific day actually fell inside the requested range. Read here now too, so the SAME two fields also gate
+  // each INDIVIDUAL day cell/Demand field about to be written — a week that only partially overlaps the request
+  // (or a single-day request like 7/23-7/23) now writes only the days genuinely inside [from,to], never the rest
+  // of that week just because its sheet happened to be checked.
+  const {from:_rangeFrom,to:_rangeTo}=_xlActiveDateRange();
+  const _inRange=d=>(!_rangeFrom||d>=_rangeFrom)&&(!_rangeTo||d<=_rangeTo);
   const plan={weeks:[],weeksSkippedNoSelection:0,strayOnesCleaned:0,unmatchedNames:new Map()};
   for(let si=0;si<_xlImportSheets.length;si++){
     const s=_xlImportSheets[si];
@@ -4042,6 +4088,10 @@ function _planExcelImport(dept,nameOverrides){
     const colToDay={};
     (s.dates.length?s.dates:[]).forEach(d=>{const dayIdx=Math.round((d.date-weekStart)/86400000);if(dayIdx>=0&&dayIdx<7)colToDay[d.col]=dayIdx;});
     if(!Object.keys(colToDay).length)continue; // couldn't map any column to a real day — skip rather than guess
+    // The actual calendar date for a given dayIdx within THIS week — reconstructs the same date the file's own
+    // Date row held for that column (colToDay was itself derived from that exact same offset), used to test each
+    // individual day against the requested [from,to] range above.
+    const _dayIdxDate=dayIdx=>new Date(weekStart.getTime()+dayIdx*86400000);
     // Demand rows: label-driven search (never a fixed row number — sheets vary), scanned from just after the Date
     // row through to the first staff-looking row.
     const demandRowFor={};
@@ -4057,13 +4107,14 @@ function _planExcelImport(dept,nameOverrides){
       else if(lbl.indexOf("unassigned")!==-1)demandRowFor.unassigned=r;
       else break; // first non-matching, non-blank label after the Date row — assume the staff area has begun
     }
-    const weekEntry={sheetName:s.name,wk,weekStart,cellsWritten:0,cellsSkippedExisting:0,demandWritten:0,demandSkipped:0,rows:[],demand:{}};
+    const weekEntry={sheetName:s.name,wk,weekStart,cellsWritten:0,cellsSkippedExisting:0,cellsOutOfRange:0,demandWritten:0,demandSkipped:0,demandOutOfRange:0,rows:[],demand:{}};
     Object.keys(demandRowFor).forEach(key=>{
       const r=demandRowFor[key];
       Object.keys(colToDay).forEach(col=>{
         const dayIdx=colToDay[col];const raw=(aoa[r]||[])[col];
         if(raw==null||raw==="")return;
         const num=Number(raw);if(isNaN(num))return;
+        if(!_inRange(_dayIdxDate(dayIdx))){weekEntry.demandOutOfRange++;return;}
         const already=((DEMAND[wk]||{})[dayIdx]||{})[key];
         if(already!=null){weekEntry.demandSkipped++;return;}
         weekEntry.demand[dayIdx]=weekEntry.demand[dayIdx]||{};weekEntry.demand[dayIdx][key]=num;weekEntry.demandWritten++;
@@ -4101,16 +4152,21 @@ function _planExcelImport(dept,nameOverrides){
         plan.unmatchedNames.set(fileName,(plan.unmatchedNames.get(fileName)||0)+cnt);
       }else if(Object.keys(cellsAll).length){
         const existingForPerson=workingAssignForWeek[rosterName]||{};
-        const newCells={},skippedDays=[];
+        const newCells={},skippedDays=[],outOfRangeDays=[];
         Object.keys(cellsAll).forEach(dayIdx=>{
-          if(existingForPerson[dayIdx]!=null){weekEntry.cellsSkippedExisting++;skippedDays.push(Number(dayIdx));}
+          const dIdx=Number(dayIdx);
+          // Cells outside the requested range are never written AND never counted as "already filled" — they're
+          // simply out of scope for this run, distinct from both other states (see _excelPreviewWeekTable()'s
+          // own comment for how this third state is shown).
+          if(!_inRange(_dayIdxDate(dIdx))){weekEntry.cellsOutOfRange++;outOfRangeDays.push(dIdx);return;}
+          if(existingForPerson[dayIdx]!=null){weekEntry.cellsSkippedExisting++;skippedDays.push(dIdx);}
           else{
             newCells[dayIdx]=cellsAll[dayIdx];weekEntry.cellsWritten++;
             workingAssignForWeek[rosterName]=workingAssignForWeek[rosterName]||{};
             workingAssignForWeek[rosterName][dayIdx]=cellsAll[dayIdx];
           }
         });
-        weekEntry.rows.push({name:rosterName,fileName,cellsAll,newCells,skippedDays});
+        weekEntry.rows.push({name:rosterName,fileName,cellsAll,newCells,skippedDays,outOfRangeDays});
       }
       if(hasDataNextRow)r++; // the paired end-time row was consumed — don't re-process it as its own row
     }
@@ -4171,6 +4227,14 @@ function _excelPreviewWeekTable(weekEntry){
     const cellsHtml=[0,1,2,3,4,5,6].map(dayIdx=>{
       const val=row.cellsAll[dayIdx];
       if(val==null)return `<td class="small muted" style="text-align:center">\u2014</td>`;
+      // "should only import the date range specified, not the whole week" — a THIRD state, distinct from both
+      // others: this day genuinely exists in the file, but falls outside the requested Import-from/to range
+      // above, so it's never written regardless of whether the live schedule already holds a value there or not
+      // (that "already filled?" question is never even asked for an out-of-range day \u2014 it's simply out of
+      // scope for this run). Shown visibly dimmer than "(kept)" so a week that's ENTIRELY out of range (e.g. a
+      // single-day 7/23\u20137/23 request against a Thu\u2013Wed sheet) reads clearly as "nothing here was
+      // touched," not confused with "everything here already existed."
+      if(row.outOfRangeDays.includes(dayIdx))return `<td class="small muted" style="text-align:center;opacity:.5" title="Outside the requested Import-from/to date range above \u2014 not touched">${esc(val)} <span style="font-size:10px">(not in range)</span></td>`;
       const isSkipped=row.skippedDays.includes(dayIdx);
       return isSkipped
         ?`<td class="small muted" style="text-align:center" title="Live schedule already has a value here \u2014 this import leaves it untouched">${esc(val)} <span style="font-size:10px">(kept)</span></td>`
@@ -4179,7 +4243,7 @@ function _excelPreviewWeekTable(weekEntry){
     return `<tr><td class="small ${_c0.cls}" style="text-align:left;white-space:nowrap;${_c0.style}">${esc(row.name)}</td>${cellsHtml}</tr>`;
   }).join("");
   return `<div class="tblwrap" style="overflow:auto;max-height:280px;border:1px solid var(--line);border-radius:8px;margin-top:4px"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th class="${_h0.cls}" style="${_h0.style}">Name</th>${dayHeaders}</tr></thead><tbody>${rowsHtml}</tbody></table></div>
-    <div class="small muted" style="margin-top:2px"><span style="color:#0e7c46;font-weight:600">Green bold</span> = new value to be written. <span class="muted">Grey \u201c(kept)\u201d</span> = live schedule already has a value here; left untouched.</div>`;
+    <div class="small muted" style="margin-top:2px"><span style="color:#0e7c46;font-weight:600">Green bold</span> = new value to be written. <span class="muted">Grey \u201c(kept)\u201d</span> = live schedule already has a value; left untouched. <span class="muted" style="opacity:.5">Faint \u201c(not in range)\u201d</span> = outside the requested date range; not touched.</div>`;
 }
 // "make it so user can see names that didn't match roster... and allow them to select name from roster to match
 // or skip" — same reconciliation pattern this app already established for Paycom imports (see
@@ -4230,27 +4294,32 @@ function previewExcelImport(){
   const weekBlocks=plan.weeks.map((w,i)=>{
     const openAttr=i===0?" open":"";
     const label=w.weekStart.toLocaleDateString()+" – "+new Date(w.weekStart.getTime()+6*86400000).toLocaleDateString()+" ("+esc(w.sheetName)+")";
-    return `<details style="margin-top:6px"${openAttr}><summary style="cursor:pointer"><b>${label}</b> — ${w.cellsWritten} cell(s) to write, ${w.cellsSkippedExisting} already filled, ${w.demandWritten} Demand field(s) to write, ${w.demandSkipped} Demand field(s) already filled</summary>${_excelPreviewWeekTable(w)}</details>`;
+    const _outOfRangeNote=(w.cellsOutOfRange||w.demandOutOfRange)?(", "+(w.cellsOutOfRange+w.demandOutOfRange)+" outside requested range"):"";
+    return `<details style="margin-top:6px"${openAttr}><summary style="cursor:pointer"><b>${label}</b> — ${w.cellsWritten} cell(s) to write, ${w.cellsSkippedExisting} already filled, ${w.demandWritten} Demand field(s) to write, ${w.demandSkipped} Demand field(s) already filled${_outOfRangeNote}</summary>${_excelPreviewWeekTable(w)}</details>`;
   }).join("");
   resultEl.innerHTML=`<div style="font-weight:600;margin-bottom:4px">Preview — nothing has been imported yet</div>
     ${weekBlocks||"<div class='small muted'>No dated/checked weeks to preview — check at least one sheet with a valid Week starts date above.</div>"}
     ${renderExcelUnmatchedNames(dept,plan.unmatchedNames)}
-    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">✅ Import selected date(s)</button></div>`;
+    <!-- "check mark for bottom button but not one above preview... don't put checkmark" — dropped, so both this
+         button and its twin next to Preview above match exactly (plain text, no emoji). -->
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">Import selected date(s)</button></div>`;
 }
 async function runExcelImport(){
   const dept=el("xlImportDept").value;
   const resultEl=el("xlImportResult");resultEl.innerHTML="Importing…";
   const plan=_planExcelImport(dept,_xlNameOverrides);
   const r=_applyExcelImportPlan(dept,plan);
-  // "change '# week(s) processed' to '[From date] to [To date] processed'" — a plain count didn't say WHICH
-  // weeks; showing the actual covered date range is more useful and matches the From/To date-range language
-  // already used elsewhere in this same wizard (the Import-from/to range filter above).
-  let dateRangeLabel="No weeks";
+  // "I set the range for 7/23-7/23... should show 7/23 to 7/23" — this previously showed the covered WEEK(S)'
+  // own full span (e.g. a week's Thursday start through the following Wednesday), not the actual range that was
+  // requested and just imported — misleading the moment a request is narrower than a whole week, exactly the
+  // reported symptom. Now reads directly from the SAME From/To fields _planExcelImport() itself just used to
+  // decide what to write (via _xlActiveDateRange() — the one shared source of truth for "what range was
+  // requested"), so this message always matches what was ACTUALLY processed, whether that's a single day, a
+  // partial week, or a full multi-week span.
+  const {from:_rangeFrom,to:_rangeTo}=_xlActiveDateRange();
+  let dateRangeLabel="No dates";
   if(plan.weeks.length){
-    const starts=plan.weeks.map(w=>w.weekStart.getTime());
-    const minStart=new Date(Math.min(...starts)),maxStart=new Date(Math.max(...starts));
-    const maxEnd=new Date(maxStart.getTime()+6*86400000);
-    dateRangeLabel=minStart.toLocaleDateString()+" to "+maxEnd.toLocaleDateString();
+    dateRangeLabel=(_rangeFrom?_rangeFrom.toLocaleDateString():"(earliest)")+" to "+(_rangeTo?_rangeTo.toLocaleDateString():"(latest)");
   }
   let msg=`<b>${dateRangeLabel} processed.</b> ${r.cellsWritten} schedule cell(s) written, ${r.cellsSkippedExisting} left untouched (already had data), ${r.demandFieldsWritten} Demand field(s) written, ${r.demandFieldsSkipped} Demand field(s) left untouched.`;
   if(r.strayOnesCleaned)msg+=` ${r.strayOnesCleaned} stray "1"-only cell(s) were ignored as known formatting artifacts, not written as a value.`;
@@ -11195,7 +11264,26 @@ function analyzeCfgChanges(localDepts,liveDepts){
             if(f==="avail")return humanizeWeeklyAvail(v);
             return humanizeDiffValue(v);
           };
-          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${STAFF_FIELD_LABELS[f]||f}: yours=${_humanizeField(f,l[f]??null)}, live=${_humanizeField(f,r[f]??null)}`).join("; ");
+          // "'differs - specific dates off/availability' is redundant, delete" — two separate trims: (1) the
+          // word "differs" itself is redundant with simply being IN this changes/conflicts list at all (nothing
+          // reaches this line unless something already differs); (2) for availDates/avail specifically, the
+          // generic "<field label>: yours=X, live=Y" wrapper repeated a field name that adds nothing once the
+          // itemized entries below it (now genuinely multi-line \u2014 see _renderCategoryItemsList()'s own
+          // "missing line breaks" fix) already read unambiguously as availability/date entries on their own
+          // ("Off all day [PTO]", etc.). Every OTHER (non-availability) field keeps its label \u2014 only these
+          // two, whose own humanized value is already self-descriptive, drop it. "Your device:"/"Live copy:"
+          // (replacing the terser "yours="/"live=") is kept for these two specifically since they're now real
+          // multi-line blocks, not a short inline value \u2014 a bare "yours=" immediately before a line break
+          // reads oddly, while a real label sitting on its own line does not.
+          const _simpleClauses=[],_availLines=[];
+          diffFields.forEach(f=>{
+            if(f==="availDates"||f==="avail"){
+              _availLines.push(`\n  Your device: ${_humanizeField(f,l[f]??null)}\n  Live copy: ${_humanizeField(f,r[f]??null)}`);
+            }else{
+              _simpleClauses.push(`${STAFF_FIELD_LABELS[f]||f}: yours=${_humanizeField(f,l[f]??null)}, live=${_humanizeField(f,r[f]??null)}`);
+            }
+          });
+          const line=`${deptLabel} roster: "${name}" \u2014 `+_simpleClauses.join("; ")+(_simpleClauses.length&&_availLines.length?"; ":"")+_availLines.join("");
           changes.push(line);conflicts.push(line);
         }
       }
@@ -11293,8 +11381,18 @@ const _CONFLICT_CATEGORY_ORDER=["Schedule","Demand","Leave requests","Staff rost
 // two places) so ANY future caller gets the same real, itemized rendering: a genuine <ul>/<li> list, one visually
 // distinct row per change, with its own bullet and breathing room between rows — scannable at a glance rather than
 // read top-to-bottom as running prose.
+// "sub bullet points missing line breaks and not formatted as children" — a single top-level item (e.g. one
+// person's roster diff) can itself contain MULTIPLE embedded lines (see humanizeAvailDates()'s own \n-joined
+// per-date bullets) — but esc() only ever escapes <,>,& (confirmed directly from esc()'s own definition; it never
+// touches whitespace), so those real newline characters were always present in the escaped text, they simply had
+// no CSS telling the browser to respect them as visual line breaks, collapsing the whole multi-date block onto
+// one dense run-on line instead. white-space:pre-line here does exactly that (preserves explicit \n as real line
+// breaks while still collapsing ordinary runs of spaces) \u2014 a pure, additive CSS fix, no change to escaping
+// or injection-safety. text-indent+padding-left (rather than a plain padding-left alone) is what makes a WRAPPED
+// continuation line hang indented under its own bullet rather than snapping back to the bullet's own left edge,
+// so a multi-date entry visually reads as genuine children of the person's own line above it.
 function _renderCategoryItemsList(items){
-  return `<ul style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(x=>`<li style="margin-bottom:4px;line-height:1.4">${esc(x)}</li>`).join("")}</ul>`;
+  return `<ul style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(x=>`<li style="margin-bottom:4px;line-height:1.5;white-space:pre-line;padding-left:14px;text-indent:-14px">${esc(x)}</li>`).join("")}</ul>`;
 }
 // Renders the small, dismissible "N changes since you last had this open" badge — see _awayChanges' own comment
 // (near pullAll()) for the full feature this supports. Reuses the SAME per-category grouping/ collapsible
@@ -21450,16 +21548,26 @@ function clearAbsentMark(dept,iso,name){
   save("hotel_absentmarks",ABSENT_MARKS);
 }
 // Optional 3rd param `asUser`: lets a caller that already resolved WHO actually performed an action (e.g.
-// checkInStaff()/clockOutStaff()'s own `by`, which correctly falls back to the staff member's own name for a
-// genuine self-service clock-in/out with no manager signed in) record that real name here instead of silently
-// falling through to CURRENT_USER — which is null, and therefore shows as a bare, uninformative "?" in the change
-// log's own User column, for every ordinary self-service clock-in/out AND their own undo counterparts (see
-// checkInStaff()/clockOutStaff()/undoCheckIn()/undoClockOut() for the four call sites this fix covers — the two
-// undo functions were originally missed in an earlier pass of this same fix, and separately corrected once
-// re-reported still showing "?"). Every OTHER caller (schedule edits, settings changes, imports, etc.) is
-// unaffected and keeps using CURRENT_USER exactly as before, since those actions are only ever reachable while
-// signed in via EDIT mode.
-function logChange(action,detail,asUser){try{AUDIT.push({ts:new Date().toISOString(),user:(asUser||(CURRENT_USER?CURRENT_USER.name:"?")),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
+// checkInStaff()/clockOutStaff()'s own `by`) record that real name here instead of relying on this function's
+// own fallback below.
+//
+// "there is still a ? for user" (re-reported after the checkInStaff/clockOutStaff/undo fix above) — traced ONE
+// MORE real, still-live source: setDept() itself can write a bare boolean `true` into EDITMEM[dept] (its own
+// `EDITMEM[EDIT_DEPT]=CURRENT_USER||true` fallback, for the rare case CURRENT_USER is unexpectedly null at the
+// moment of switching departments) — and unlockDeptForEdit()/setDept()'s own fast-path re-entry into that same
+// department (`CURRENT_USER=(mm&&mm!==true)?mm:CURRENT_USER`) then NEVER upgrades that bare `true` into a real
+// name; it just keeps EDIT mode active for that department indefinitely with no identity ever attached, for
+// every subsequent action until that department's access is fully re-granted from a fresh PIN entry. Every
+// caller that didn't pass its own `asUser` (setCell, timeoff, leave, copy-week, bulk-stamp, draft-week/range,
+// imports) was correspondingly relying on a bare `CURRENT_USER?CURRENT_USER.name:"?"` fallback, which produced
+// exactly this literal "?" whenever that gap was hit. Fixed at this ONE shared root instead of chasing
+// individual call sites again: the fallback now goes through _actingUserNameForDept(DEPT) \u2014 the SAME
+// resolver already used for shift-bid/leave-request decisions (see that function's own comment) \u2014 whose own
+// final fallback is the readable "scheduler", never a bare "?". Note: entries ALREADY WRITTEN to the change log
+// before this fix (or before the earlier checkInStaff/clockOutStaff/undo fix) are historical, immutable records
+// of what was actually captured at the time \u2014 no code change can retroactively relabel a "?" that's already
+// been saved; only NEW entries going forward are affected by this fix.
+function logChange(action,detail,asUser){try{AUDIT.push({ts:new Date().toISOString(),user:(asUser||_actingUserNameForDept(DEPT)),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
 // "set up separate pins for FO vs HSK so that I can demonstrate per dept access": each user record can now
 // optionally carry a `dept` scope ("FO", "HSK", or "" / omitted = both, the existing default behavior — so every
 // EXISTING saved user, which has no `dept` field at all, continues to work for both departments exactly as before,
@@ -24724,10 +24832,14 @@ async function checkBackgroundPushStatus(){
       // upload-side one), that specific Supabase error text is now shown directly rather than a generic "Could not
       // check" \u2014 an RLS policy commonly allows one direction (e.g. INSERT for the anon key) while blocking the
       // other (SELECT), which would otherwise look identical to a network hiccup here.
+      // "make the result text for registered in shared... more concise" — same underlying facts (RLS/GRANT hint,
+      // the Retry button, the "check server logs, not this device" pointer), reworded to one short sentence per
+      // state instead of a full explanatory paragraph; the fuller original reasoning is preserved above in this
+      // function's own comments for future maintenance, just no longer repeated to the end user every time.
       if(error){
-        rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(error.message||String(error))}${/permission|RLS|policy/i.test(error.message||"")?" \u2014 this specific wording usually means a Row-Level Security policy or missing GRANT is blocking even reading this table with the anon key, not a problem on this device.":""}</td></tr>`);
+        rows.push(`<tr><td>Registered in shared DB?</td><td><b>Could not check</b> \u2014 ${esc(error.message||String(error))}${/permission|RLS|policy/i.test(error.message||"")?" (likely an RLS/GRANT issue, not this device)":""}</td></tr>`);
       }else if(data&&data.length){
-        rows.push(`<tr><td>Registered in the shared database?</td><td><b>Yes</b> \u2014 this exact device's subscription is present in push_subscriptions, updated ${esc(data[0].updated_at||"")}. If a real background push still isn't arriving with the app fully closed, the issue is on the server side (the attendance-reminders function itself, or its schedule) \u2014 not this device's own registration.</td></tr>`);
+        rows.push(`<tr><td>Registered in shared DB?</td><td><b>Yes</b> \u2014 updated ${esc(data[0].updated_at||"")}. Still no push? Check the server side (function/schedule), not this device.</td></tr>`);
       }else{
         // The "Retry upload now" button below "I enabled permissions but still get 0 push subscriptions" \u2014
         // even across multiple Disable\u2192Enable cycles. See _upsertPushSubscriptionRow()'s own comment for the
@@ -24736,13 +24848,13 @@ async function checkBackgroundPushStatus(){
         // from right here and prints the RAW Supabase error text on failure (e.g. "permission denied for table
         // push_subscriptions", confirming an RLS/GRANT problem specifically) instead of asking to repeat a
         // client-side toggle that cannot possibly change a server-side outcome.
-        rows.push(`<tr><td>Registered in the shared database?</td><td><b>No</b> \u2014 a local subscription exists on this device, but it never reached the shared database. <button class="mini" onclick="retryPushUploadNow()">Retry upload now</button> attempts the exact same upload directly and shows the real server response below \u2014 more useful than repeating Disable/Enable, which cannot fix a server-side (RLS/GRANT) problem if that's the actual cause.</td></tr>`);
+        rows.push(`<tr><td>Registered in shared DB?</td><td><b>No</b> \u2014 local subscription never reached the server. <button class="mini" onclick="retryPushUploadNow()">Retry upload now</button></td></tr>`);
       }
     }catch(e){
-      rows.push(`<tr><td>Registered in the shared database?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
+      rows.push(`<tr><td>Registered in shared DB?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
     }
   }else if(sub&&!DB){
-    rows.push(`<tr><td>Registered in the shared database?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync), which will also automatically upload this existing subscription if it hasn't reached the server yet.</td></tr>`);
+    rows.push(`<tr><td>Registered in shared DB?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync).</td></tr>`);
   }
   // A real, confirmed observability gap (see function_heartbeat's own SQL/Edge-Function comments for the
   // full "notified_events only fills in when a REAL attendance violation happens, so a hotel with clean attendance
@@ -24754,21 +24866,24 @@ async function checkBackgroundPushStatus(){
     try{
       const{data:hbRows,error:hbErr}=await DB.from("function_heartbeat").select("*").eq("id","attendance-reminders");
       const hb=(hbRows&&hbRows[0])||null;
+      // Same conciseness pass as "Registered in shared DB?" just above — full original reasoning (the 3 possible
+      // causes of "never confirmed," the cosmetic-vs-real cron function name distinction, etc.) is kept in the
+      // Readme's own deploy guide (linked via "see deploy guide" below) rather than repeated in full here.
       if(hbErr){
-        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Could not check</b> \u2014 ${esc(hbErr.message||String(hbErr))}${/permission|RLS|policy/i.test(hbErr.message||"")?" \u2014 likely means function_heartbeat's own GRANT/RLS SQL hasn't been (re-)run yet on this project (see the deploy guide above).":""}</td></tr>`);
+        rows.push(`<tr><td>Server function running?</td><td><b>Could not check</b> \u2014 ${esc(hbErr.message||String(hbErr))}${/permission|RLS|policy/i.test(hbErr.message||"")?" (likely GRANT/RLS on function_heartbeat)":""}</td></tr>`);
       }else if(!hb){
-        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Never confirmed</b> \u2014 no heartbeat row exists yet. This means one of three things: (1) the attendance-reminders Edge Function has never been deployed; (2) it has never actually been invoked (e.g. no cron schedule set up for it yet); or (3) the cron job's own <code>net.http_post</code> URL points to the WRONG function name \u2014 a genuine, easy-to-make mistake, since the CRON JOB's own name (the first argument to <code>cron.schedule(...)</code>) is just a cosmetic label and does NOT need to match the actual deployed function \u2014 only the URL itself (<code>.../functions/v1/&lt;name&gt;</code>) does. Double-check that <code>&lt;name&gt;</code> in the URL exactly matches what was used in <code>supabase functions deploy &lt;name&gt;</code> \u2014 this deploy guide's own steps consistently use <code>attendance-reminders</code>; a mismatched URL (e.g. a different or older function name) 404s silently from pg_cron's perspective \u2014 the cron job still shows as "run" in its own history, but the request never reaches any real function, so this heartbeat is never written. See the deploy guide's own "Schedule it to run every 5 minutes" step for the exact, correct URL shape.</td></tr>`);
+        rows.push(`<tr><td>Server function running?</td><td><b>Never confirmed</b> \u2014 no heartbeat yet. Not deployed, no cron schedule, or the cron URL points to the wrong function name (see deploy guide above).</td></tr>`);
       }else{
         const _lastRun=new Date(hb.last_run_at);
         const _ageMin=Math.round((Date.now()-_lastRun.getTime())/60000);
         const _stale=_ageMin>20; // generous margin over the deploy guide's own 5-minute cron interval
-        rows.push(`<tr><td>Server-side function actually running on schedule?</td><td>${_stale?"<b>Likely NOT running on schedule</b>":"<b>Yes</b>"} \u2014 last confirmed check-in was ${_ageMin<1?"less than a minute ago":_ageMin+" minute(s) ago"} (${esc(_lastRun.toLocaleString())}).${_stale?" A gap this large, if a 5-minute cron schedule was set up, most likely means the cron schedule itself was never actually created/enabled in the Supabase dashboard (Edge Functions \\u2192 attendance-reminders \\u2192 Cron), or the function is failing before reaching this heartbeat line \\u2014 check its own execution logs directly for the real error.":" This is independent of whether any real attendance issue happened to exist \u2014 it confirms the function itself is genuinely executing, which a permanently-empty notified_events table alone could never prove."}</td></tr>`);
+        rows.push(`<tr><td>Server function running?</td><td>${_stale?"<b>Likely NOT running</b>":"<b>Yes</b>"} \u2014 last check-in ${_ageMin<1?"under a minute ago":_ageMin+" min ago"}.${_stale?" Check the Cron schedule is enabled, or the function's own execution logs.":""}</td></tr>`);
       }
     }catch(e){
-      rows.push(`<tr><td>Server-side function actually running on schedule?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
+      rows.push(`<tr><td>Server function running?</td><td><b>Could not check</b> \u2014 ${esc(e.message||String(e))}</td></tr>`);
     }
   }else{
-    rows.push(`<tr><td>Server-side function actually running on schedule?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync).</td></tr>`);
+    rows.push(`<tr><td>Server function running?</td><td>Cannot check while disconnected \u2014 connect first (Settings \u2192 Live sync).</td></tr>`);
   }
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
   <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway \u2014 it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
