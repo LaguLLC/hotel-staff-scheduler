@@ -3792,6 +3792,246 @@ async function runManualHistoricalLoad(){
   await uiAlert(msg);
   render();
 }
+// ============================================================================================================
+// "Can it be wired so user can upload excel and specify date range to import schedules and demand/hu/ooo/
+// unassigned rooms from?" — runManualHistoricalLoad()/loadHistoricalSchedule() above only ever re-apply the ONE
+// fixed snapshot parsed a single time (at build time) from this app's own two original source workbooks
+// (HISTORICAL_ASSIGN/HISTORICAL_DEMAND/HISTORICAL_FLOORS/HISTORICAL_ACTUAL_HOURS — baked-in constants, not a live
+// parser). This is the general, repeatable version: upload ANY Excel file that follows the SAME layout as those
+// two original workbooks (a "Date" row with 7 real date cells, Occupancy/Arrivals/Departures rows — and for HSK,
+// an OOO/House-use/Unassigned rooms row — then one two-physical-row block per staff member below), pick a date
+// range, and import directly from it — never limited to the two original files or the dates already baked in.
+//
+// Design choices, so future changes here don't accidentally re-break something already deliberately handled:
+//  - Dates are read from the REAL "Date" row cells inside each sheet, never guessed from the sheet TAB name — the
+//    hotel's own real workbooks have visibly inconsistent tab-name formats across weeks (e.g. "01.29-02-04",
+//    "05.21-27", "06.11-6.17)", "03.05-03.11 (2)"), so the tab name is only ever used as a fallback label for
+//    display and manual override, never as the primary source of truth for a week's actual date.
+//  - "make sure it cleans up things like '1' in cell blocks": a lone, bare "1" in a day cell (no time, no code) is
+//    a known artifact of these workbooks' own merged/carried-over cell formatting — never a real value — so it's
+//    always treated as blank and counted separately in the import report, never written as a literal schedule
+//    value of "1".
+//  - Never overwrites a cell that already has real data (ASSIGN or DEMAND), and never silently creates a new
+//    roster entry for an unrecognized name — an unmatched name is reported for manual review instead, exactly
+//    matching this app's own established Paycom-name-reconciliation convention elsewhere.
+// ============================================================================================================
+let _xlImportWB=null,_xlImportSheets=[];
+function openExcelImportWizard(){
+  closeExcelImportModal();
+  const bg=document.createElement("div");bg.className="modalbg";bg.id="xlImportModal";bg.style.display="flex";
+  bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%;max-height:88vh;overflow:auto">
+    <h2>⬆ Import schedule/demand from Excel</h2>
+    <p class="small">Upload an Excel file using the same layout as this hotel's own FO/HSK schedule workbooks (a <b>Date</b> row, <b>Occupancy/Arrivals/Departures</b> rows — plus, for Housekeeping, <b>OOO/House-use/Unassigned rooms</b> — then a two-row block per staff member). Only cells that are still genuinely empty get filled in; anything already entered here is always left untouched, and any staff name that doesn't match the current roster is reported for you to review rather than guessed at.</p>
+    <div class="mrow" style="align-items:center;flex-wrap:wrap;gap:8px">
+      <label class="small">Department: <select id="xlImportDept" class="sfield"><option value="FO">${esc(CFG.FO.label)}</option><option value="HSK">${esc(CFG.HSK.label)}</option></select></label>
+      <button class="btn30" onclick="document.getElementById('xlImportFile').click()">📂 Choose file…</button>
+      <span id="xlImportFileLabel" class="small muted">No file chosen</span>
+      <input type="file" id="xlImportFile" accept=".xlsx,.xls" style="display:none" onchange="excelImportPickFile(event)">
+    </div>
+    <div id="xlImportBody" class="small" style="margin-top:10px"></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeExcelImportModal()">Close</button></div>
+  </div>`;
+  document.body.appendChild(bg);
+  bg.addEventListener("mousedown",e=>{if(e.target===bg)closeExcelImportModal();});
+}
+function closeExcelImportModal(){_removeModalById("xlImportModal");_xlImportWB=null;_xlImportSheets=[];}
+// Tolerant of the real, messy time-cell formats these workbooks actually contain: a genuine Excel time-of-day
+// value (SheetJS returns a Date anchored at the 1899-12-30 epoch when read with cellDates:true — only the
+// hours/minutes are meaningful), a plain "HH:MM" string (often with trailing spaces, e.g. "14:00  "), a bare
+// literal code (OFF, R-OFF, TASK FORCE, F&B, PTO, …, optionally trailing a "®"/extra whitespace this data is
+// known to carry), a lone stray "1" (see this section's own file-level comment — never a real value), or blank.
+function _xlCellToken(v){
+  if(v==null)return null;
+  if(v instanceof Date)return String(v.getUTCHours()).padStart(2,"0")+":"+String(v.getUTCMinutes()).padStart(2,"0");
+  const s=String(v).trim();
+  if(s==="")return null;
+  if(/^1$/.test(s))return {stray:true};
+  const tm=s.match(/^(\d{1,2}):(\d{2})/);
+  if(tm)return String(tm[1]).padStart(2,"0")+":"+tm[2];
+  const cleaned=s.replace(/[®™]/g,"").replace(/\s+/g," ").trim();
+  return cleaned||null;
+}
+// Combines a staff pair-row's two physical cells (same day column, consecutive rows) into one ASSIGN-style token
+// ("HH:MM-HH:MM" for a real shift, or a bare code like "OFF"/"TASK FORCE" when only one half is present) — mirrors
+// how a real shift always spans both physical rows in these workbooks, while an OFF-family/task code only ever
+// occupies the first.
+function _xlBuildShiftToken(startCell,endCell){
+  const a=_xlCellToken(startCell),b=_xlCellToken(endCell);
+  let strayCleaned=0;
+  const aStray=a&&a.stray,bStray=b&&b.stray;
+  if(aStray)strayCleaned++;if(bStray)strayCleaned++;
+  const av=aStray?null:a,bv=bStray?null:b;
+  const isTime=x=>x&&/^\d{2}:\d{2}$/.test(x);
+  if(isTime(av)&&isTime(bv))return{token:av+"-"+bv,strayCleaned};
+  if(av&&!bv)return{token:av,strayCleaned};
+  if(!av&&bv)return{token:bv,strayCleaned};
+  return{token:null,strayCleaned};
+}
+// Normalizes a roster/Excel staff name for matching only — strips trailing parenthetical tags this source data is
+// known to carry (e.g. "(FT)"/"(PT)"/"(TRN)"), collapses whitespace, lowercases. Never used for DISPLAY or for
+// what actually gets stored — only to decide whether an Excel row matches an existing roster name.
+function _xlNormName(n){return String(n||"").replace(/\([^)]*\)/g,"").replace(/\s+/g," ").trim().toLowerCase();}
+async function excelImportPickFile(event){
+  const file=event.target.files[0];if(!file)return;
+  el("xlImportFileLabel").textContent=file.name;
+  const body=el("xlImportBody");body.innerHTML="Reading file…";
+  // "Import excel didn't work, gives 'XLSX is not defined'. I know file isn't corrupted" — confirmed: this
+  // function was missing the SAME guard every OTHER XLSX-dependent feature in this app already carries (see
+  // dataMenu()'s own exportXLSX() check, and the Cost Center export's own matching check) — window.XLSX is
+  // undefined whenever the CDN-hosted xlsx.full.min.js <script> tag itself never loaded, which happens whenever
+  // the hosting environment blocks outbound requests to cdn.jsdelivr.net (see this file's own Readme note on
+  // SharePoint Online's March 2026 CSP enforcement — the SAME root cause already documented for Open-Meteo/
+  // Nager.Date failing under "failed to fetch" in the labor-budgeting section). Without this check, that
+  // ReferenceError fell straight into the catch block below, which — written assuming XLSX.read() itself had
+  // thrown on genuinely bad file content — misleadingly blamed "confirm it's a real .xlsx export, not a
+  // renamed/corrupted file," when the real cause has nothing to do with the file at all. Checked FIRST, before
+  // ever touching the file or calling XLSX, so this exact case is now named accurately instead of being
+  // misdiagnosed as a bad file.
+  if(!window.XLSX){body.innerHTML=`<span style="color:#b30000">Excel library didn't load — a network/hosting issue (e.g. this host blocking CDN requests), not a problem with your file. Reload the page with a working internet connection and try again.</span>`;return;}
+  try{
+    const buf=await file.arrayBuffer();
+    const wb=XLSX.read(buf,{type:"array",cellDates:true});
+    _xlImportWB=wb;
+    // For every sheet, try to find a real "Date" row and read 7 (or however many are actually present) real date
+    // cells from it — this is the ONLY source of truth for a week's actual date; the sheet's own tab name is
+    // never trusted for this (see this section's own file-level comment for why), only shown for reference.
+    _xlImportSheets=wb.SheetNames.map(sn=>{
+      const ws=wb.Sheets[sn];
+      const aoa=XLSX.utils.sheet_to_json(ws,{header:1,defval:null});
+      let dateRowIdx=-1,dates=[];
+      for(let r=0;r<Math.min(aoa.length,15);r++){
+        const row=aoa[r]||[];
+        if(String(row[0]||"").trim().toLowerCase()==="date"){
+          const found=[];
+          row.forEach((c,ci)=>{if(c instanceof Date)found.push({col:ci,date:c});});
+          if(found.length){dateRowIdx=r;dates=found;break;}
+        }
+      }
+      let weekStartGuess=null;
+      if(dates.length){const minDate=new Date(Math.min(...dates.map(d=>d.date.getTime())));weekStartGuess=mondayOfWeekStartThu(minDate);}
+      return{name:sn,aoa,dateRowIdx,dates,weekStartGuess,include:!!weekStartGuess};
+    });
+    renderExcelImportSheetPicker();
+  }catch(err){
+    // Defense-in-depth: the explicit window.XLSX guard above should already catch the "library never loaded"
+    // case before this ever runs, but if XLSX loaded PARTIALLY or a future code path reaches here some other
+    // way, this still avoids blaming the file for a non-file problem — "is not defined"/"is not a function"
+    // in an error message is a strong, specific signal of a missing dependency, not bad file content.
+    const _libMissing=/XLSX|is not defined|is not a function/i.test(err.message||"");
+    body.innerHTML=_libMissing
+      ?`<span style="color:#b30000">Excel library didn't fully load — reload the page with a working internet connection and try again.</span>`
+      :`<span style="color:#b30000">Could not read this file: ${esc(err.message)}.</span>`;
+  }
+}
+function renderExcelImportSheetPicker(){
+  const body=el("xlImportBody");
+  const withDates=_xlImportSheets.filter(s=>s.weekStartGuess);
+  const minWk=withDates.length?weekKey(new Date(Math.min(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
+  const maxWk=withDates.length?weekKey(new Date(Math.max(...withDates.map(s=>s.weekStartGuess.getTime())))):"";
+  body.innerHTML=`
+    <p><b>${_xlImportSheets.length} sheet(s) found</b> — ${withDates.length} with an auto-detected week; ${_xlImportSheets.length-withDates.length} need a manual date (or can be left unchecked to skip).</p>
+    <div class="mrow" style="align-items:center;gap:8px">
+      <label class="small">Only import weeks starting from <input type="date" id="xlFromDate" class="sfield" value="${esc(minWk)}"></label>
+      <label class="small">to <input type="date" id="xlToDate" class="sfield" value="${esc(maxWk)}"></label>
+      <button class="mini" onclick="applyExcelImportDateFilter()">Apply range to checkboxes</button>
+    </div>
+    <div class="tblwrap" style="overflow:auto;max-height:320px;border:1px solid var(--line);border-radius:8px;margin-top:8px">
+    <table class="autoTable"><tr><th></th><th>Sheet</th><th style="white-space:nowrap">Week starts</th></tr>
+    ${_xlImportSheets.map((s,i)=>`<tr><td><input type="checkbox" class="cbx" id="xlSheetChk${i}" ${s.include?"checked":""}></td><td style="text-align:left">${esc(s.name)}</td><td><input type="date" class="sfield" style="width:150px" id="xlSheetDate${i}" value="${s.weekStartGuess?weekKey(s.weekStartGuess):""}" onchange="_xlImportSheets[${i}].weekStartGuess=this.value?new Date(this.value+'T00:00:00'):null;if(this.value)el('xlSheetChk${i}').checked=true;"></td></tr>`).join("")}
+    </table></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">Import selected week(s)</button></div>
+    <div id="xlImportResult" style="margin-top:10px"></div>`;
+}
+function applyExcelImportDateFilter(){
+  const from=el("xlFromDate").value?new Date(el("xlFromDate").value+"T00:00:00"):null;
+  const to=el("xlToDate").value?new Date(el("xlToDate").value+"T00:00:00"):null;
+  _xlImportSheets.forEach((s,i)=>{
+    const chk=el("xlSheetChk"+i);if(!chk||!s.weekStartGuess)return;
+    const inRange=(!from||s.weekStartGuess>=from)&&(!to||s.weekStartGuess<=to);
+    chk.checked=inRange;
+  });
+}
+async function runExcelImport(){
+  const dept=el("xlImportDept").value;
+  const resultEl=el("xlImportResult");resultEl.innerHTML="Importing…";
+  const roster=(CFG[dept].staff||[]);
+  const rosterByNorm={};roster.forEach(s=>{rosterByNorm[_xlNormName(s.n)]=s.n;});
+  let weeksLoaded=0,weeksSkippedNoSelection=0,cellsWritten=0,cellsSkippedExisting=0,strayOnesCleaned=0,demandFieldsWritten=0,demandFieldsSkipped=0;
+  const unmatchedNames=new Set();
+  ASSIGN[dept]=ASSIGN[dept]||{};DEMAND=DEMAND||{};
+  for(let si=0;si<_xlImportSheets.length;si++){
+    const s=_xlImportSheets[si];
+    const chk=el("xlSheetChk"+si);
+    if(!chk||!chk.checked){weeksSkippedNoSelection++;continue;}
+    if(!s.weekStartGuess){continue;} // no date at all, and never manually filled in — nothing to import against
+    const weekStart=(s.weekStartGuess instanceof Date)?s.weekStartGuess:new Date(s.weekStartGuess);
+    const wk=weekKey(weekStart);
+    const aoa=s.aoa;
+    // Map each real date cell found in the Date row to this app's own dayIdx (0..6) for THIS week, so the import
+    // works correctly regardless of which day-of-week this hotel's own week starts on (Settings → weekStartDow).
+    const colToDay={};
+    (s.dates.length?s.dates:[]).forEach(d=>{const dayIdx=Math.round((d.date-weekStart)/86400000);if(dayIdx>=0&&dayIdx<7)colToDay[d.col]=dayIdx;});
+    if(!Object.keys(colToDay).length)continue; // couldn't map any column to a real day — skip rather than guess
+    // Demand rows: label-driven search (never a fixed row number — sheets vary), scanned from just after the Date
+    // row through to the first staff-looking row.
+    const demandRowFor={};
+    let demandScanEnd=(s.dateRowIdx>=0?s.dateRowIdx:2)+1;
+    for(let r=demandScanEnd;r<Math.min(aoa.length,demandScanEnd+12);r++){
+      const lbl=String((aoa[r]||[])[0]||"").trim().toLowerCase();
+      if(!lbl)continue;
+      if(lbl.indexOf("occup")===0)demandRowFor.occ=r;
+      else if(lbl.indexOf("arriv")===0)demandRowFor.arr=r;
+      else if(lbl.indexOf("depart")===0)demandRowFor.dep=r;
+      else if(lbl.indexOf("ooo")!==-1||lbl.indexOf("oos")!==-1)demandRowFor.ooo=r;
+      else if(lbl.indexOf("house")!==-1)demandRowFor.house=r;
+      else if(lbl.indexOf("unassigned")!==-1)demandRowFor.unassigned=r;
+      else break; // first non-matching, non-blank label after the Date row — assume the staff area has begun
+    }
+    Object.keys(demandRowFor).forEach(key=>{
+      const r=demandRowFor[key];
+      Object.keys(colToDay).forEach(col=>{
+        const dayIdx=colToDay[col];const raw=(aoa[r]||[])[col];
+        if(raw==null||raw==="")return;
+        const num=Number(raw);if(isNaN(num))return;
+        DEMAND[wk]=DEMAND[wk]||{};DEMAND[wk][dayIdx]=DEMAND[wk][dayIdx]||{};
+        if(DEMAND[wk][dayIdx][key]!=null){demandFieldsSkipped++;return;}
+        DEMAND[wk][dayIdx][key]=num;demandFieldsWritten++;
+      });
+    });
+    // Staff area: everything after the last demand row found (or right after the Date row if none were found).
+    const staffStart=Object.keys(demandRowFor).length?Math.max(...Object.values(demandRowFor))+1:demandScanEnd;
+    for(let r=staffStart;r<aoa.length;r++){
+      const nameRaw=(aoa[r]||[])[0];
+      if(nameRaw==null||String(nameRaw).trim()==="")continue;
+      const nextRow=aoa[r+1]||[];
+      const hasDataThisRow=Object.keys(colToDay).some(c=>(aoa[r]||[])[c]!=null);
+      const hasDataNextRow=Object.keys(colToDay).some(c=>nextRow[c]!=null);
+      if(!hasDataThisRow&&!hasDataNextRow)continue; // a section/role header (e.g. "Front Desk Supervisor"), not a person
+      const normed=_xlNormName(nameRaw);
+      const rosterName=rosterByNorm[normed];
+      if(!rosterName){unmatchedNames.add(String(nameRaw).trim());}
+      let consumedNextRow=hasDataNextRow;
+      Object.keys(colToDay).forEach(col=>{
+        const dayIdx=colToDay[col];
+        const {token,strayCleaned}=_xlBuildShiftToken((aoa[r]||[])[col],hasDataNextRow?nextRow[col]:null);
+        strayOnesCleaned+=strayCleaned;
+        if(!token||!rosterName)return;
+        ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};
+        ASSIGN[dept][wk][rosterName]=ASSIGN[dept][wk][rosterName]||{};
+        if(ASSIGN[dept][wk][rosterName][dayIdx]!=null){cellsSkippedExisting++;return;}
+        ASSIGN[dept][wk][rosterName][dayIdx]=token;cellsWritten++;
+      });
+      if(consumedNextRow)r++; // the paired end-time row was consumed — don't re-process it as its own row
+    }
+    weeksLoaded++;
+  }
+  save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);
+  let msg=`<b>${weeksLoaded} week(s) processed.</b> ${cellsWritten} schedule cell(s) written, ${cellsSkippedExisting} left untouched (already had data), ${demandFieldsWritten} Demand field(s) written, ${demandFieldsSkipped} Demand field(s) left untouched.`;
+  if(strayOnesCleaned)msg+=` ${strayOnesCleaned} stray "1"-only cell(s) were ignored as known formatting artifacts, not written as a value.`;
+  if(unmatchedNames.size)msg+=`<br><br><b style="color:#b30000">${unmatchedNames.size} name(s) in the file didn't match anyone in the current ${esc(CFG[dept].label)} roster and were NOT imported</b> (never auto-added/guessed) — add them to the roster first, or fix the spelling in the file, then re-run: ${Array.from(unmatchedNames).map(esc).join(", ")}.`;
+  resultEl.innerHTML=msg;
+  render();
+}
 let DEMAND=load("hotel_demand",{});        // DEMAND[weekKey][dayIdx] = {occ,arr,dep,co,credits}
 let DEPT="FO"; let VIEW="schedule"; let EDIT=false; let EDIT_DEPT=null; let EDITMEM={};
 // The likely real root cause behind "asked to enter PIN mult times" to "check entire workflow".
@@ -8614,12 +8854,23 @@ function todaysWeekAndDayIdx(){
 // closed/phone locked) — needs a server-side scheduled job to actually detect "hasn't clocked in yet" and send a
 // push through Apple/Google/Mozilla's own push services. The CLIENT-side half (service worker + push subscription +
 // VAPID key) is fully built below and already functional; the SERVER half (a Supabase Edge Function on a cron
-// schedule) is provided as real, ready-to-deploy files (supabase/migrations/0001_notifications.sql and
-// supabase/functions/attendance-reminders/index.ts + DEPLOY.md, delivered alongside this app) since deploying it
-// requires this hotel's own Supabase project credentials, which this session does not have access to — see the
-// Readme's new "Notifications & reminders" section for the exact, disclosed line between what's live today vs. What
-// needs that one deployment step.
-const VAPID_PUBLIC_KEY="BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk";
+// schedule) is provided as a real, ready-to-deploy SQL migration and index.ts source — both embedded directly in
+// this Readme tab's own "Notifications & reminders" section (not separate files; this app is a single self-
+// contained HTML file) — since deploying it requires this hotel's own Supabase project credentials, which this
+// session does not have access to. See that Readme section for the exact, disclosed line between what's live
+// today vs. what needs that one deployment step.
+// Updated to a freshly-generated key pair (Sept 2026): the ORIGINAL public key's own matching private half could
+// not be recovered — Supabase secrets are write-only by design (a project's own Dashboard/CLI can set or replace a
+// secret's value, but never read one back out once saved), so there was no way to confirm what the original
+// private key actually was, or whether whatever the Edge Function's own VAPID_PRIVATE_KEY secret currently holds
+// genuinely still matches this constant. Per this app's own Readme ("Full background-notification setup"), the
+// safe path when the private half is unknown/unconfirmable is to generate a brand-new MATCHING pair together (never
+// try to pair an old public key against a guessed-at private one) and update both halves together: this constant,
+// and the Edge Function's own VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY secrets (see Readme for the exact steps). Real,
+// disclosed cost of this change: any device that had ALREADY enabled notifications under the old key is now
+// subscribed against a key this app no longer uses — those devices must open Settings → Notifications & reminders
+// and press Enable again once this new version is live, or they will silently stop receiving background push.
+const VAPID_PUBLIC_KEY="BM3QmkSy0h5tpejQ2Fbyf6sG2a0fPQu8W32Frtyk3yIeNna_pyJ-ORnGIzwEhBuu46L2k3VZRyTmTJUnt4wHORo";
 // Capitalize "Granted" for notif permissions. Notification.permission is a raw browser API value
 // ("granted"/"denied"/"default") — correct and required lowercase for every actual programmatic comparison
 // elsewhere in this file (e.g. EnableNotifications()'s own `perm!=="granted"` check, which MUST stay lowercase to
@@ -8684,15 +8935,187 @@ async function registerServiceWorker(){
 // so renderSettings() unconditionally runs on every single exit path, and the Settings panel always shows an
 // accurate, up-to-date reflection of the real
 // underlying state, matching disableNotifications()'s own existing convention.
-async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment){
+// "Make it so user can select what issues to receive notifications for (eg no clock in/out, shift passed without
+// clockin/out, upcoming,etc)": CFG._notifTypes is a per-condition opt-out map, keyed by the SAME condition names
+// attendanceStateFor()/runReminderCheck() already use internally (upcoming/clockin/clockout for the worker-facing
+// reminders; mgrMissing/mgrNotout/mgrSpecialConsid for the manager-facing alerts, "mgrNoshow" since removed per
+// direct request — see runReminderCheck()'s own comment for the full "why") — a key that's
+// genuinely absent (rather than explicitly false) defaults to enabled, so any account/device that enabled
+// notifications before this feature existed keeps receiving every notification type exactly as before, with
+// nothing to re-configure. See notifTypeEnabled() below for the one shared helper both the client engine and the
+// Settings checkboxes read against, and Step 2 — index.ts's own updated query for how this now ALSO reaches the
+// server-side background-push function (best-effort — see that function's own comment for the graceful fallback
+// if the notif_types column doesn't exist yet on an older Supabase project).
+function notifTypeEnabled(key){return !CFG._notifTypes||CFG._notifTypes[key]!==false;}
+// "In current setup notify checkboxes apply to all remind me as selections (eg if selected as aida and angelo,
+// can't get notif about upcoming shift only for one and about all for the other)" — root cause: this device's
+// own push subscription (and CFG._notifName) can only ever represent ONE person's shift reminders at a time (see
+// _upsertPushSubscriptionRow()'s own `name:CFG._notifName` column), so allowing MULTIPLE staff names to be
+// selected here was always cosmetic — only the first ever actually took effect, silently discarding the rest
+// (see the now-deleted "only the first one is used" note this replaces). Rather than build real, separate
+// per-person settings storage for something a single device was never architecturally able to support, personal
+// shift reminders are now genuinely single-select (radio-style) — choosing a different name replaces the
+// previous one outright, with an explicit "None" option to select nobody. Manager alerts remain multi-select
+// (a real device CAN legitimately want alerts for both departments at once), using per-department pseudo-entries
+// "__MGR_FO__"/"__MGR_HSK__" built generically from the ["FO","HSK"] loop below (matching this app's own
+// established department-iteration convention, e.g. runReminderCheck()'s own loop) — kept in the SAME
+// _notifIdentSelected Set alongside at most one real staff name. Re-synced fresh from CFG every time the
+// Notifications section is rendered (see _notifIdentSyncFromCfg()), matching this app's own established
+// "settings reflect last-saved state on open" convention.
+let _notifIdentSelected=new Set();
+function _notifIdentSyncFromCfg(){
+  _notifIdentSelected=new Set();
+  if(CFG._notifName)_notifIdentSelected.add(CFG._notifName);
+  ["FO","HSK"].forEach(dp=>{if((CFG._notifManagerDepts||[]).includes(dp))_notifIdentSelected.add("__MGR_"+dp+"__");});
+}
+function _notifIdentNames(){return Array.from(_notifIdentSelected).filter(v=>v.indexOf("__MGR_")!==0);}
+function _notifIdentMgrDepts(){return ["FO","HSK"].filter(dp=>_notifIdentSelected.has("__MGR_"+dp+"__"));}
+function _notifIdentSummaryText(){
+  const names=_notifIdentNames();
+  const mgrLabels=_notifIdentMgrDepts().map(dp=>"Manager \u2014 "+CFG[dp].label);
+  const parts=names.concat(mgrLabels);
+  return parts.length?esc(parts.join(", ")):"(None selected \u2014 no reminders)";
+}
+// "make this option only show if the dropdown selection includes hsk staff or manager" (original request) —
+// the room/floor assignment checkbox only makes sense for Housekeeping (floor/zone assignments are a purely HSK
+// concept, see runReminderCheck()'s own `if(dp==="HSK"...)` gate on this same feature); looks up the currently-
+// selected staff name's own department (if any) to decide.
+function _notifIdentSelectedNameDept(){
+  const name=_notifIdentNames()[0];if(!name)return null;
+  const found=allActiveStaffOptions().find(o=>o.name===name);
+  return found?found.dept:null;
+}
+// Re-examined per direct follow-up: "should this only show if the dropdown selection includes HSK staff, not for
+// an HSK manager?" — yes. This row lives INSIDE notifWorkerBlock (see renderNotificationsSettingsBlock()'s own
+// markup), which itself only renders/stays visible while a real personal NAME is selected (`curName` truthy) —
+// so the "or is an HSK manager" half of the original OR condition could only ever matter in the one edge case
+// where a NON-HSK personal name (e.g. a Front Office staff member) is selected for personal reminders AND the
+// separate, independent "Manager — Housekeeping" checkbox is ALSO ticked at the same time. In exactly that case,
+// the old OR condition surfaced this checkbox anyway — but it's still submitted as `roomAssign` tied to `forName`
+// (see _submitNotifSettings()), i.e. it would silently be asking "notify THIS Front Office person of THEIR OWN
+// room/floor assignment", which doesn't exist for a non-HSK identity. Manager alerts have no personal
+// room/floor concept of their own (they're department-wide, not tied to one individual's shift) \u2014 so
+// eligibility now depends ONLY on the selected personal name's own department, never on which manager checkboxes
+// happen to also be ticked.
+function _notifRoomAssignApplicable(){return _notifIdentSelectedNameDept()==="HSK";}
+// Opens/closes the checkbox panel — reuses the SAME established click-to-open/click-outside-to-close absolute-
+// positioned panel pattern this app already uses for the "changes since you were away" badge (see
+// toggleAwayChangesPanel()'s own comment for the full pattern this mirrors). Manager entries are real checkboxes
+// (multi-select); staff names are real radio buttons sharing one group name (single-select, see this section's
+// own file-level comment above for why), with an explicit "None" radio to clear personal reminders without
+// picking a replacement name.
+function toggleNotifIdentityDropdown(e){
+  if(e)e.stopPropagation();
+  const existing=document.getElementById("notifIdentDropdownPanel");
+  if(existing){existing.remove();return;}
+  const opts=allActiveStaffOptions();
+  const curName=_notifIdentNames()[0]||"";
+  const rows=[`<div style="font-weight:600;font-size:11px;margin-bottom:2px">Manager</div>`];
+  ["FO","HSK"].forEach(dp=>{
+    rows.push(`<label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:2px 0;cursor:pointer"><input type="checkbox" class="cbx" ${_notifIdentSelected.has("__MGR_"+dp+"__")?"checked":""} onchange="_onNotifIdentMgrToggle('${dp}',this.checked)"> Manager \u2014 ${esc(CFG[dp].label)}</label>`);
+  });
+  rows.push(`<div style="font-weight:600;font-size:11px;margin:6px 0 2px 0;border-top:1px solid var(--line);padding-top:6px">Personal shift reminders (choose one)</div>`);
+  rows.push(`<label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px;padding:3px 0;cursor:pointer"><input type="radio" name="notifIdentNameRadio" ${curName?"":"checked"} onchange="_onNotifIdentNameSelect('')"> <span class="muted">None</span></label>`);
+  // Name + role/dept were previously one single-line flex row ("Name (also: Alt) (Role, Dept)"), so the role/dept
+  // text's own start position drifted left/right depending purely on how long the preceding name (plus any
+  // altName) happened to be \u2014 "name and role alignment weird, each wraps like they're in diff columns". Fixed
+  // by nesting the name and role/dept into their OWN 2-line flex column, immediately after the radio: every row's
+  // role/dept line now starts at the exact SAME fixed indent (flush under its own name), independent of how long
+  // any individual name is, rather than trailing unevenly after it on the same line.
+  // altName ("also: ...") intentionally dropped from THIS specific picker: cross-checked against how it's
+  // populated (see roster's own altName field / Paycom-import auto-fill) \u2014 it exists to help Paycom-import
+  // name MATCHING, not as a genuine, human-facing nickname; the values that actually show here are typically just
+  // an all-caps Paycom spelling of the same name (e.g. "Aida Panlilio (also: AIDA PANLILIO)"), which adds no real
+  // help for someone finding their OWN name in this list, only extra text length that was making the wrapping
+  // above worse. Still shown as-is in the Leave Request name dropdown (a genuinely different, disambiguation-
+  // sensitive context), so this only narrows where it displays, not the underlying data.
+  opts.forEach(o=>{
+    const valEsc=esc(o.name).replace(/'/g,"&#39;");
+    rows.push(`<label style="display:flex;flex-wrap:nowrap;align-items:flex-start;gap:6px;padding:3px 0;cursor:pointer"><input type="radio" name="notifIdentNameRadio" style="margin-top:3px" ${curName===o.name?"checked":""} onchange="_onNotifIdentNameSelect('${valEsc}')"> <span style="display:flex;flex-direction:column;line-height:1.35"><span>${esc(o.name)}</span><span class="muted" style="font-size:11px">${esc(roleDisplayNameProper(o.role))}, ${esc(CFG[o.dept].label)}</span></span></label>`);
+  });
+  const panel=document.createElement("div");
+  panel.id="notifIdentDropdownPanel";
+  panel.style.cssText="position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px;min-width:260px;max-width:360px;max-height:320px;overflow:auto;z-index:2100;font-size:12px;color:#1f2d3d";
+  panel.innerHTML=rows.join("");
+  document.body.appendChild(panel);
+  const btn=el("notifIdentBtn");
+  if(btn){
+    const r=btn.getBoundingClientRect();
+    panel.style.top=(r.bottom+window.scrollY+4)+"px";
+    panel.style.left=Math.max(8,r.left+window.scrollX)+"px";
+  }
+  setTimeout(()=>{
+    document.addEventListener("click",function _close(ev){
+      if(!panel.contains(ev.target)&&ev.target!==btn&&!(btn&&btn.contains(ev.target))){panel.remove();document.removeEventListener("click",_close);}
+    });
+  },0);
+}
+function _onNotifIdentMgrToggle(dp,checked){
+  const val="__MGR_"+dp+"__";
+  if(checked)_notifIdentSelected.add(val);else _notifIdentSelected.delete(val);
+  const summaryEl=el("notifIdentSummary");if(summaryEl)summaryEl.innerHTML=_notifIdentSummaryText();
+  updateNotifIdentityVisibility();
+}
+// Single-select: clears any PREVIOUSLY chosen name (there is at most one) before adding the newly picked one — a
+// blank/empty name (the "None" radio) simply clears without adding a replacement.
+function _onNotifIdentNameSelect(name){
+  Array.from(_notifIdentSelected).forEach(v=>{if(v.indexOf("__MGR_")!==0)_notifIdentSelected.delete(v);});
+  if(name)_notifIdentSelected.add(name);
+  const summaryEl=el("notifIdentSummary");if(summaryEl)summaryEl.innerHTML=_notifIdentSummaryText();
+  updateNotifIdentityVisibility();
+}
+// Live show/hide for the Worker/Manager option blocks (and the HSK-only room/floor assignment row within the
+// Worker block) below the identity picker — called on every checkbox/radio change so they react IMMEDIATELY as
+// someone is still deciding, with no need to click Update first to see the right fields appear (matches the same
+// "preview before committing" spirit already established by diagnoseReminders() reading live form state).
+function updateNotifIdentityVisibility(){
+  const names=_notifIdentNames(),mgrDepts=_notifIdentMgrDepts();
+  const workerBlock=el("notifWorkerBlock"),mgrBlock=el("notifMgrBlock"),roomRow=el("notifRoomAssignRow");
+  if(workerBlock)workerBlock.style.display=names.length?"":"none";
+  if(mgrBlock)mgrBlock.style.display=mgrDepts.length?"":"none";
+  // roomRow is a <label>, not a <div> like workerBlock/mgrBlock above \u2014 its ORIGINAL server-rendered markup
+  // sets display:flex explicitly (see renderNotificationsSettingsBlock()'s own template) so its checkbox and text
+  // line up on one row exactly like its sibling worker-alert labels. Resetting it to "" (empty) here, as this
+  // used to do, falls back to the browser's DEFAULT display for a <label> \u2014 \"inline\", not \"flex\" \u2014 so the
+  // very first live toggle after this section renders (e.g. picking a different personal name) silently knocked
+  // this ONE row out of its flex layout while every other, never-JS-touched worker-alert label kept its original
+  // inline flex style untouched. Root cause of \"room/floor assignment's left alignment doesn't match other
+  // checkbox texts like shift ended, shift started, upcoming shift\" \u2014 explicitly re-asserting \"flex\" here
+  // (matching the original markup exactly) instead of \"\" fixes this without touching any other row.
+  if(roomRow)roomRow.style.display=_notifRoomAssignApplicable()?"flex":"none";
+}
+// Reads the current _notifIdentSelected state (plus every checkbox in whichever blocks are currently visible)
+// and calls enableNotifications() with the right arguments — pulled out of the button's own onclick for
+// readability.
+function _submitNotifSettings(){
+  const names=_notifIdentNames(),mgrDepts=_notifIdentMgrDepts();
+  const forName=names[0]||"";
+  const roomAssign=(el("notifRoomAssign")&&_notifRoomAssignApplicable())?el("notifRoomAssign").checked:false;
+  const notifTypes={
+    upcoming:el("notifTypeUpcoming")?el("notifTypeUpcoming").checked:true,
+    clockin:el("notifTypeClockin")?el("notifTypeClockin").checked:true,
+    clockout:el("notifTypeClockout")?el("notifTypeClockout").checked:true,
+    mgrMissing:el("notifTypeMgrMissing")?el("notifTypeMgrMissing").checked:true,
+    mgrNotout:el("notifTypeMgrNotout")?el("notifTypeMgrNotout").checked:true,
+    mgrSpecialConsid:el("notifTypeMgrSpecialConsid")?el("notifTypeMgrSpecialConsid").checked:true
+  };
+  enableNotifications(forName,mgrDepts,roomAssign,notifTypes);
+}
+async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment,notifTypes){
   try{
     if(!("Notification" in window)){uiAlert("Notifications are not supported in this browser.");return false;}
     const perm=await Notification.requestPermission();
     if(perm!=="granted"){uiAlert("Notification permission was not granted \u2014 reminders can't be shown without it.");return false;}
+    // CFG._notifIsManager (a separate boolean) has been REMOVED \u2014 with per-department manager pseudo-entries now
+    // selected directly in the identity picker (see this section's own comment above), "is this device a
+    // manager" is fully and unambiguously captured by whether CFG._notifManagerDepts is non-empty; a separate
+    // flag to track "chose Manager but hasn't picked a department yet" no longer applies, since choosing a
+    // per-department manager option IS choosing that department in the same click.
     CFG._notifName=forName||null;CFG._notifManagerDepts=Array.isArray(wantsManagerDepts)?wantsManagerDepts:[];CFG._notifEnabled=true;
     // Persisted alongside the other notification preferences using the same save() call already here, no separate
     // save path needed.
     CFG._notifRoomAssignment=!!wantsRoomAssignment;
+    CFG._notifTypes=notifTypes||CFG._notifTypes||{};
     save("hotel_cfg",CFG);
     // StartReminderEngine() — the function that actually runs the 60s polling loop calling maybeLocalNotify() — was
     // ONLY ever invoked once, at page-load bootstrap, gated on CFG._notifEnabled already being true at that point.
@@ -8717,11 +9140,27 @@ async function enableNotifications(forName,wantsManagerDepts,wantsRoomAssignment
         // boolean, matching the same per-department scoping fix as the client-side in-app engine above; the
         // server-side attendance-reminders Edge Function reads this same column (see its own updated query) so
         // background push respects the identical per-department scoping.
-        const{error}=await DB.from("push_subscriptions").upsert({
+        // notif_types is a best-effort extra column (see the migration SQL's own "alter table...add column if not
+        // exists" for this) — an older Supabase project that hasn't re-run the migration yet simply doesn't have
+        // this column, and Postgres/PostgREST would reject the WHOLE upsert over one unrecognized key. Detected and
+        // silently retried WITHOUT that key below so a device already working before this feature shipped never
+        // regresses to a hard failure just because the project's own schema hasn't been updated yet — per-type
+        // filtering only reaches the SERVER/background half once that column genuinely exists; the client-side
+        // in-app engine (runReminderCheck(), reading CFG._notifTypes directly) is unaffected either way.
+        let{error}=await DB.from("push_subscriptions").upsert({
           endpoint:subJson.endpoint,subscription:subJson,name:forName||null,
-          manager_depts:wantsManagerDepts||[],updated_at:new Date().toISOString()
+          manager_depts:wantsManagerDepts||[],notif_types:CFG._notifTypes||{},updated_at:new Date().toISOString()
         },{onConflict:"endpoint"});
+        let _notifTypesColumnMissing=false;
+        if(error&&/notif_types/i.test(error.message||"")){
+          _notifTypesColumnMissing=true;
+          ({error}=await DB.from("push_subscriptions").upsert({
+            endpoint:subJson.endpoint,subscription:subJson,name:forName||null,
+            manager_depts:wantsManagerDepts||[],updated_at:new Date().toISOString()
+          },{onConflict:"endpoint"}));
+        }
         if(error){reportSyncError("push subscription upload",error);flashNote("Notifications enabled locally, but couldn't reach the shared database to enable background push \u2014 see sync error.");return "local-only";}
+        if(_notifTypesColumnMissing){flashNote("Notifications enabled \u2014 per-issue-type filtering will only apply to background push once this project's database is updated (see Readme's \\\"Notifications & reminders\\\" SQL). In-app reminders on this device already respect it.");return true;}
         flashNote("Notifications enabled \u2014 this device is now registered for both in-app reminders and background push (once the server-side check is deployed \u2014 see Readme).");
       } else {
         flashNote("Notifications enabled on this device. Connect to the shared live copy (Settings \u2192 Sync & data) to also register for background push.");
@@ -8782,6 +9221,10 @@ function runReminderCheck(){
     // it.
     ["FO","HSK"].forEach(dp=>{
       const dept=CFG[dp];if(!dept)return;
+      // CFG._notifIsManager (a separate boolean) has been REMOVED \u2014 see enableNotifications()'s own comment
+      // for why a non-empty CFG._notifManagerDepts array alone is now sufficient to mean "this device wants
+      // manager alerts for this department" (selecting a per-department "Manager \u2014 <dept>" entry in the
+      // redesigned identity picker directly implies both at once, with nothing separate left to track).
       const wantsManagerAlerts=(CFG._notifManagerDepts||[]).includes(dp);
       dept.staff.forEach(s=>{
         if(s.employed===false)return;
@@ -8804,7 +9247,7 @@ function runReminderCheck(){
         // different key and correctly re-notifies, while re-checking the SAME unchanged shift value continues to be
         // silently deduplicated (no repeat spam every 60s poll), exactly as intended. Worker-facing: "your shift is
         // coming up" reminder, once, within the early-clock-in grace window.
-        if(isMe&&timing.state==="before"&&timing.minutesUntilStart!=null&&timing.minutesUntilStart<=graceEarly){
+        if(isMe&&notifTypeEnabled("upcoming")&&timing.state==="before"&&timing.minutesUntilStart!=null&&timing.minutesUntilStart<=graceEarly){
           maybeLocalNotify("Upcoming shift",s.n+" is scheduled "+v+" today \u2014 you can clock in now.","assign:"+dp+":"+s.n+":"+dayIdx+":"+v);
         }
         // "modify notification feature of app to send room assignments to hsk workers". Fires at the SAME "shift
@@ -8830,25 +9273,30 @@ function runReminderCheck(){
         // attendanceStateFor()'s own comment for the full severity redesign this responds to) now also triggers the
         // SAME clock-in reminder as the milder "late" case; if anything, a currently-in-progress shift with no
         // clock-in is the MORE relevant moment for a worker-facing nudge, not less.
-        if(isMe&&(attn==="late"||attn==="missing")){
+        if(isMe&&notifTypeEnabled("clockin")&&(attn==="late"||attn==="missing")){
           maybeLocalNotify("Clock-in reminder","Don't forget to clock in for your "+v+" shift.","ci:"+dp+":"+s.n+":"+dayIdx+":"+v);
         }
-        if(isMe&&attn==="notout"){
+        if(isMe&&notifTypeEnabled("clockout")&&attn==="notout"){
           maybeLocalNotify("Clock-out reminder","Don't forget to clock out \u2014 your "+v+" shift has ended.","co:"+dp+":"+s.n+":"+dayIdx+":"+v);
         }
-        // Manager-facing: escalated alert once a condition becomes a genuine apparent no-show, a currently-
-        // in-progress shift with zero clock-in ("missing" — NEW added for the same reason as the worker-facing
-        // change above: this is now a distinct, more urgent tier, not lumped in with the mild "late" case), or a
-        // clock-out was simply forgotten — deliberately NOT alerted for the ordinary "late" ("shift just ended,
-        // hasn't tapped In yet") case, which stays a worker-facing-only nudge (see attendanceStateFor()'s own
-        // severity comment for the full reasoning behind this distinction).
-        if(wantsManagerAlerts&&attn==="noshow"){
-          maybeLocalNotify("No clock-in recorded",s.n+"'s "+v+" shift has ended with no clock-in ("+dept.label+").","mgr-noshow:"+dp+":"+s.n+":"+dayIdx+":"+v);
-        }
-        if(wantsManagerAlerts&&attn==="missing"){
+        // Manager-facing: escalated alert once a shift becomes currently-in-progress with zero clock-in
+        // ("missing"), or a clock-out was simply forgotten — deliberately NOT alerted for the ordinary "late"
+        // ("shift just ended, hasn't tapped In yet") case, which stays a worker-facing-only nudge (see
+        // attendanceStateFor()'s own severity comment for the full reasoning behind this distinction).
+        //
+        // "Delete mgr option for shift passed no clock in" — the separate, more-escalated "noshow" alert (shift
+        // has ALREADY ended with no clock-in ever recorded) has been REMOVED here per direct request: a manager
+        // already received the "currently in progress" alert just below for this exact same unresolved shift
+        // BEFORE it ever reached "noshow" \u2014 a second, later alert for the identical underlying issue was
+        // judged redundant escalation, not a genuinely distinct event worth its own notification. The
+        // attendanceStateFor() "noshow" classification itself is UNCHANGED and still drives the grid marker,
+        // Checks panel, and the manager diagnostic table (_diagnoseManagerAlertsHtml()) \u2014 only this specific
+        // PUSH/local notification trigger was removed, here and in the Edge Function's own managerConditions
+        // filter.
+        if(wantsManagerAlerts&&notifTypeEnabled("mgrMissing")&&attn==="missing"){
           maybeLocalNotify("Not clocked in — shift in progress",s.n+"'s "+v+" shift is currently running with no clock-in recorded ("+dept.label+").","mgr-missing:"+dp+":"+s.n+":"+dayIdx+":"+v);
         }
-        if(wantsManagerAlerts&&attn==="notout"){
+        if(wantsManagerAlerts&&notifTypeEnabled("mgrNotout")&&attn==="notout"){
           maybeLocalNotify("Missing clock-out",s.n+" clocked in but never clocked out ("+dept.label+").","mgr-notout:"+dp+":"+s.n+":"+dayIdx+":"+v);
         }
       });
@@ -8862,7 +9310,7 @@ function runReminderCheck(){
       // filter below only looks at CURRENTLY pending requests. The original immediate call in submitLeaveRequest()
       // is removed (see that function's own updated comment) to avoid a duplicate, differently-scoped notification
       // firing for the same event from two separate places.
-      if(wantsManagerAlerts){
+      if(wantsManagerAlerts&&notifTypeEnabled("mgrSpecialConsid")){
         Object.values(LEAVE_REQUESTS).forEach(r=>{
           if(r.dept!==dp||r.status!=="pending"||!r.specialConsideration)return;
           maybeLocalNotify("Special consideration requested",r.name+" is requesting special consideration for "+r.code+" "+r.from+(r.to!==r.from?"\u2192"+r.to:"")+" ("+dept.label+")."+(r.specialConsiderationReason?" "+r.specialConsiderationReason:""),"mgr-specialconsid:"+r.id);
@@ -10307,7 +10755,8 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
 // (the Paycom Earning Code mapping, Clock in/out grace periods, auto-deny rules, overstaff/understaff flags,
 // etc.) that are genuine, hotel-wide policy facts (not a personal preference) meant to reach every device once
 // configured — deliberately excluding genuinely personal/device-only fields
-// (_notifName, _notifEnabled, _notifManagerDepts, _notifRoomAssignment, which panels are expanded, etc.) and every
+// (_notifName, _notifEnabled, _notifManagerDepts, _notifRoomAssignment, which panels are
+// expanded, etc.) and every
 // internal one-time migration-guard flag (_xxxFix/_xxxMig booleans — these record which local-data migrations have
 // already run on THIS device and would actively cause harm if synced, e.g. Silently telling a device its own local
 // data migration already happened when it hasn't).
@@ -10549,7 +10998,15 @@ function toggleAwayChangesPanel(e){
   }).join("");
   const panel=document.createElement("div");
   panel.id="awayChangesPanel";
-  panel.style.cssText="position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px;max-width:420px;max-height:320px;overflow:auto;z-index:500;font-size:12px;color:#1f2d3d";
+  // "changes while away don't show (maybe hidden under header?)": header{...position:sticky;z-index:2000} is
+  // FAR above this panel's own previous z-index:500 — since header is a positioned (sticky+z-index) ancestor
+  // establishing its own high stacking context, ANY sliver of vertical overlap between the two (e.g. the badge
+  // sitting in the header's own wrapped sub-row, a slightly stale getBoundingClientRect() right after a resize,
+  // or simply scrolling mid-open) rendered that part of this panel completely invisible behind the opaque header,
+  // rather than merely stacking below it as intended. Raised above the header's own z-index (2000) so the panel is
+  // always genuinely visible regardless of any such overlap, matching how every other above-header overlay in this
+  // app (modals at z-index:9999, the mobile drawer at 3001) already stacks.
+  panel.style.cssText="position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px;max-width:420px;max-height:320px;overflow:auto;z-index:2100;font-size:12px;color:#1f2d3d";
   panel.innerHTML=`<div style="font-weight:600;margin-bottom:6px">Changed on the shared live copy since you were away</div>${body}<div class="mrow" style="justify-content:flex-end;margin-top:8px"><button class="mini" onclick="dismissAwayChanges()">Dismiss</button></div>`;
   const badge=el("awayChangesBadge");
   document.body.appendChild(panel);
@@ -16897,6 +17354,13 @@ async function revealLeaveDecision(id){
 // information beyond "click to expand" (a one-line preview of what the whole Readme covers) kept that extra
 // description, just without the redundant preamble phrase.
 function renderReadme(){
+  // "Can't project's url and anon key be filled in for cron code (the same ones used to prefill when connect is
+  // clicked)?" — yes: reads the SAME two values, with the SAME fallback-to-this-project's-own-default pattern,
+  // already used at every OTHER "prefill the Supabase URL/key" site in this app (Settings' own Live-sync row, and
+  // the boot-time auto-connect check) — so whatever this hotel is ACTUALLY connected to (or would connect to by
+  // default) is what appears in the cron SQL sample below, never a generic placeholder needing manual lookup.
+  const _readmeSupaUrl=(el('supaUrl')&&el('supaUrl').value)||'https://rrvxbvpcbbmdabgzqykp.supabase.co';
+  const _readmeSupaKey=(el('supaKey')&&el('supaKey').value)||'sb_publishable_JkMtNhQ-HUO80fMtG1n7ZA_1zItxTdq';
   el("readmeBody").innerHTML=`
 <p><b>What it is:</b> One scheduling platform for Front Office and Housekeeping — it tracks every change (an audit/change log), keeps a historical record of past weeks (locked schedules plus a frozen snapshot of the rules/coverage/roster in effect that week), and automatically flags a range of scheduling issues while a week is being built, including understaffing, overstaffing, part-time hour caps, and availability conflicts. A separate Leave Requests tab lets any staff member submit a time-off request, visible to everyone for transparency.</p>
 
@@ -17041,7 +17505,7 @@ function renderReadme(){
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Historical Excel preload</b></summary>
-<p>Parsed directly from the two source workbooks ("08 August 2026 FO Schedule.xlsx" and "HSK Staff Schedule -August 2026.xlsx") on first load, and applied only to a (department, week) with no existing data — this never overwrites anything already entered/edited in the live app. Covers all 4 available FO weeks (07/23–08/19 2026) and all 33 available HSK weeks (12/25/2025–08/12/2026). Re-triggerable any time via Settings → "📅 Load historical Excel data."</p>
+<p>Parsed directly from the two source workbooks ("08 August 2026 FO Schedule.xlsx" and "HSK Staff Schedule -August 2026.xlsx") on first load, and applied only to a (department, week) with no existing data — this never overwrites anything already entered/edited in the live app. Covers all 4 available FO weeks (07/23–08/19 2026) and all 33 available HSK weeks (12/25/2025–08/12/2026). The one-time “Load historical Excel data” button is currently hidden from Settings (all covered weeks are already loaded), but the underlying re-apply logic is unchanged and can be re-exposed if a further historical import is ever needed.</p>
 <p><b>Demand (Occupancy/Arrivals/Departures) preload, FO only:</b> the FO workbook's own Occupancy/Arrivals/Departures rows are also preloaded for its 3 fully-past weeks (2026-08-06, 2026-07-30, 2026-07-23 — 2026-08-13 is the current week and is left for the live Demand table). Same never-overwrite rule, independently re-triggerable from the same button.</p>
 <p><mark style="background:#ffe08a"><b>Pending verification</b></mark> — the 2026-08-06 FO tab's Occupancy row (66/64/68/69/65/61/63%) is identical, day-for-day, to the current week's (2026-08-13) — imported as-is since it's the only figure the source file provides, but this looks like a copy/paste artifact rather than that week's real occupancy; the real 08/06–08/12 figures remain unconfirmed. Arrivals/Departures for that week are NOT identical to the current week, so only Occupancy is in question.</p>
 <p><b>HSK OOO/House-use is preloaded</b> — confirmed populated per day in the sheet's primary block (columns D–J), imported for the same 3 past weeks as FO's figures above.</p>
@@ -17110,7 +17574,7 @@ function renderReadme(){
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Export &amp; backup</b></summary>
-<p>(Settings → Export…): JSON (full backup), Excel (approximates the hotel's own sheet layout), a Payroll &amp; Time CSV, a Room Assignments CSV (Housekeeping only, floor/zone-level), and the change log as CSV — see Integration status below for the Payroll and Room Assignments exports. Settings → Backup &amp; versions… covers Import full backup (JSON), Import actual hours from Paycom (CSV) — a narrower, additive action reading a timecard file from Paycom and adding real clocked hours on top of the existing schedule, touching nothing else — manual "Save version now" snapshots, and the change log.</p>
+<p>(Settings → Export…): JSON (full backup), Excel (approximates the hotel's own sheet layout), a Payroll &amp; Time CSV, a Room Assignments CSV (Housekeeping only, floor/zone-level), and the change log as CSV — see Integration status below for the Payroll and Room Assignments exports. Settings → Import… covers Actual hours from Paycom (CSV/Excel) and Punch times from Paycom — each a narrower, additive action reading a timecard/punch file from Paycom and adding real clocked hours/times on top of the existing schedule, touching nothing else — plus Schedule/demand from Excel. Settings → Backup &amp; versions… covers Import full backup (JSON) — a full app-state restore, genuinely different in scope from the narrower Paycom imports — manual "Save version now" snapshots, version history, and the change log.</p>
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Historical settings view</b></summary>
@@ -17228,6 +17692,14 @@ create table if not exists public.push_subscriptions (
   name text, manager_depts text[] not null default '{}',
   updated_at timestamptz not null default now()
 );
+-- notif_types: per-condition opt-out preferences ("select what issues to receive notifications for" — see the
+-- app's own Settings → Notifications & reminders checkboxes and notifTypeEnabled() helper). Added via a separate
+-- "alter table...add column if not exists" (rather than folded into the create table above) so this single
+-- statement is safe to re-run on a project that already has this table from before this feature existed — an
+-- already-existing table is left with all its existing rows/data intact, just gaining this one new column
+-- (defaulting to '{}', which notifTypeEnabled()'s own "absent key = enabled" convention treats as "every type
+-- enabled," matching pre-existing subscriptions' actual prior behavior with zero migration needed for their data).
+alter table public.push_subscriptions add column if not exists notif_types jsonb not null default '{}'::jsonb;
 create table if not exists public.notified_events (
   event_key text primary key, notified_at timestamptz not null default now()
 );
@@ -17331,12 +17803,12 @@ NOTIFY pgrst, 'reload schema';</pre>
 <p class="small muted">"Permission denied for table X" means the GRANT statements weren't run for that table — re-run the SQL. "Could not find the table 'public.X'" means either it doesn't exist yet (run the SQL once) or PostgREST's schema cache hasn't refreshed (the SQL's own trailing NOTIFY forces this). Everything keeps working locally either way — only sync is affected. Persistent errors: reload the schema cache manually (Supabase dashboard → Settings → API), or disconnect/reconnect.</p>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Full background-notification setup</b></summary>
-<p class="small" style="background:#fde8e8;border:1px solid #e0a0a0;border-left:4px solid #b30000;border-radius:6px;padding:6px 10px"><b>⚠ Already have a working Edge Function under a different name (e.g. "backgroundreminders")? Read this first.</b> This app's own client-side code has a specific VAPID_PUBLIC_KEY constant already baked in (<code>BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk</code>) — every device that has ever enabled notifications already subscribed to push using THIS exact public key, baked permanently into that device's own subscription; it cannot be changed retroactively for an existing subscription. The function's own <i>name</i> is cosmetic and irrelevant to whether push delivery works — what actually matters is whether the function that sends the push holds the PRIVATE key that genuinely matches this SAME public key. Two real cases:
+<p class="small" style="background:#fde8e8;border:1px solid #e0a0a0;border-left:4px solid #b30000;border-radius:6px;padding:6px 10px"><b>⚠</b> If there is an existing Edge function under a different name, every device that has ever enabled notifications already subscribed to push using that function's public key; it cannot be changed retroactively for an existing subscription. The function's name is cosmetic - what actually matters is whether the function that sends the push holds the private key that matches this public key.
 <ul>
-<li><b>If the existing function's own VAPID_PUBLIC_KEY secret already matches the value above exactly:</b> it's already correctly paired with what every device subscribed against. Simplest path: skip creating a new "attendance-reminders" function entirely — instead open the EXISTING function (whatever it's actually named) and replace its code with the "Step 2 — index.ts" block below, leaving its own already-correct VAPID secrets untouched. If keeping its existing name, also update every place below that assumes the literal name "attendance-reminders" (the Cron schedule's own URL, and this Readme's own diagnostic-message text) to match instead.</li>
+<li><b>If the existing function's own VAPID_PUBLIC_KEY secret already matches this app's own embedded public key (<code>BM3QmkSy0h5tpejQ2Fbyf6sG2a0fPQu8W32Frtyk3yIeNna_pyJ-ORnGIzwEhBuu46L2k3VZRyTmTJUnt4wHORo</code>) exactly:</b> it's already correctly paired with what every device subscribed against. Simplest path: skip creating a new "attendance-reminders" function entirely — instead open the EXISTING function (whatever it's actually named) and replace its code with the "Step 2 — index.ts" block below, leaving its own already-correct VAPID secrets untouched. If keeping its existing name, also update every place below that assumes the literal name "attendance-reminders" (the Cron schedule's own URL, and this Readme's own diagnostic-message text) to match instead.</li>
 <li><b>If the existing function's own VAPID_PUBLIC_KEY secret is DIFFERENT from the value above:</b> using its keys as-is would silently fail to deliver to any device already subscribed against THIS app's own embedded key — the private key wouldn't match what those devices actually hold. Reusing that function under ITS OWN existing keys only works if this app's own client-side VAPID_PUBLIC_KEY constant is FIRST updated to match, which requires every device to re-enable notifications afterward (an old subscription tied to the old key cannot be silently migrated). Simpler and safer, if there's no strong reason to keep the existing keys: deploy fresh under the keys and steps below instead, and either repurpose or delete the old function.</li>
 </ul>
-Not sure which case applies? Compare the existing function's own VAPID_PUBLIC_KEY secret value (Dashboard → Edge Functions → that function → Secrets) against the value quoted above — an exact match either way is what determines the safe path, not the function's name.</p>
+<b>If it's unclear which case applies:</b> this is a genuine platform limitation, not a workflow choice — Supabase secrets are write-only — the Dashboard/CLI let you SET or REPLACE a secret's value, but there is no way to read one back out once saved, so its current value can never actually be "compared" against anything, no matter which screen you check. If the original private key isn't independently known for certain (e.g. saved somewhere outside Supabase when it was first generated), don't guess — generate a brand-new MATCHING pair together (<code>npx web-push generate-vapid-keys</code>) and update BOTH halves together: this app's own embedded public key above, and the function's own VAPID_PUBLIC_KEY/VAPID_PRIVATE_KEY secrets. The one real, disclosed cost: every device that already enabled notifications under the OLD key must open Settings → Notifications & reminders and press Enable again afterward, since an existing subscription can't be silently migrated to a new key.<br><br><b>The index.ts code itself does not need to change when the VAPID keys change.</b> Confirmed directly from the code below (see its own <code>VAPID_PUBLIC_KEY</code>/<code>VAPID_PRIVATE_KEY</code> constants) — it only ever reads both values from Edge Function secrets (<code>Deno.env.get(...)</code>) at run time; the actual key VALUES live entirely in Supabase's own Secrets storage, never hardcoded in the function's source. Updating the two secrets (Dashboard → Edge Functions → attendance-reminders → Secrets, or <code>supabase secrets set</code>) is the complete fix — no redeploy of index.ts is required for a key rotation alone.</p>
 <p>Two equivalent ways to deploy the function below — pick whichever fits. Both end up in the exact same place (a deployed <code>attendance-reminders</code> function with its two secrets set and a 5-minute Cron schedule); neither is more "correct" than the other.</p>
 <p class="small" style="background:#eef6ec;border:1px solid #a8d5b0;border-left:4px solid #2c9e5f;border-radius:6px;padding:6px 10px">🖱️ <b>Option A — Dashboard only, no terminal/CLI/install required:</b></p>
 <ol class="small">
@@ -17344,24 +17816,59 @@ Not sure which case applies? Compare the existing function's own VAPID_PUBLIC_KE
 <li>Click <b>Deploy a new function</b> → <b>Via Editor</b>. Name it exactly <code>attendance-reminders</code> (lowercase, with the hyphen) — this exact name is what every other step below, and this app's own diagnostic, expect.</li>
 <li>Delete any starter/template code the editor pre-fills, then paste in the <b>entire</b> code block below ("Step 2 — index.ts") — every line, top to bottom.</li>
 <li>Click <b>Deploy function</b> (bottom of the editor). Deployment normally finishes in under a minute.</li>
-<li>Still in Edge Functions, open the <code>attendance-reminders</code> function you just created → go to its <b>Secrets</b>/<b>Settings</b> tab (Supabase also has a project-wide <i>Edge Functions → Secrets Management</i> page that works identically). Add two entries:
+<li>Still in Edge Functions, open the <code>attendance-reminders</code> function you just created → go to its <b>Secrets</b>/<b>Settings</b> tab (Supabase also has a project-wide <i>Edge Functions → Secrets Management</i> page that works identically). Add these entries:
   <ul>
-    <li>Key <code>VAPID_PUBLIC_KEY</code>, value <code>BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk</code> (copy exactly, this is not a placeholder).</li>
-    <li>Key <code>VAPID_PRIVATE_KEY</code>, value = the matching private key. Generating this one key is the one step that genuinely needs a terminal (a tiny one-off Node command, <code>npx web-push generate-vapid-keys</code>, unrelated to Supabase or this app's own deployment) — or ask whoever set up VAPID_PUBLIC_KEY originally for the matching private half, since the two must be a real, matching pair.</li>
+    <li>Key <code>VAPID_PUBLIC_KEY</code>, value <code>BM3QmkSy0h5tpejQ2Fbyf6sG2a0fPQu8W32Frtyk3yIeNna_pyJ-ORnGIzwEhBuu46L2k3VZRyTmTJUnt4wHORo</code> (copy exactly, this is not a placeholder).</li>
+    <li>Key <code>VAPID_PRIVATE_KEY</code>, value = the matching private key — see "Generating the VAPID key pair" just below for how.</li>
+    <li><mark style="background:#ffe08a">Optional</mark> — Key <code>CRON_SECRET</code>, value = any long random string you make up yourself (e.g. mash the keyboard for 20+ characters, or use a password generator). See "About CRON_SECRET" just below for what this does.</li>
   </ul>
+  <details style="margin-left:18px;margin-top:6px"><summary style="cursor:pointer" class="small"><b>Generating the VAPID key pair</b></summary>
+  <p class="small" style="margin-top:6px"><b>Browser-based generator</b> (no install, fastest): search "VAPID key generator" and use any reputable, HTTPS-secured result. A VAPID key pair only authorizes push-notification identity — it is not a payment credential or account password — so this is genuinely fine for this use case. The one caveat: this trusts that specific site to not log/retain the private key it generates; use the Node.js method below instead if that matters for this hotel's own security posture.</p>
+  <p class="small" style="margin-top:6px"><b>Node.js + npx</b> (runs entirely on this device, nothing sent over the network):</p>
+  <ol class="small">
+  <li>Install <a href="https://nodejs.org" target="_blank" rel="noopener">Node.js</a> (the "LTS" version) if it isn't already on this computer — a one-time install. <code>npx</code> comes bundled automatically with Node.js.</li>
+  <li>Open a terminal — <b>Windows:</b> PowerShell or Command Prompt (search "PowerShell" in the Start menu). <b>Mac:</b> the Terminal app (search "Terminal" in Spotlight). <b>Linux:</b> whichever terminal is already on the system.</li>
+  <li>Type <code>npx web-push generate-vapid-keys</code> and press Enter. The first run may briefly ask to confirm installing the <code>web-push</code> package — type "y" and press Enter if asked; this only happens once.</li>
+  </ol>
+  <p class="small muted" style="margin-top:6px">Either way, the result is a Public Key and a Private Key — copy each into the matching Supabase secret (VAPID_PUBLIC_KEY / VAPID_PRIVATE_KEY) and copy the public key into this app's own <code>VAPID_PUBLIC_KEY</code> constant, exactly as described above. This step is separate from the Supabase SQL Editor and from this app's own code — never paste either key into those.</p>
+  </details>
+  <details style="margin-left:18px;margin-top:6px"><summary style="cursor:pointer" class="small"><b>About CRON_SECRET</b></summary>
+  <p class="small" style="margin-top:6px">CRON_SECRET is optional — the function works fine without it. If set here (and matched in the <code>x-cron-secret</code> header of the cron job below — see "Creating the schedule via SQL"), the function requires that exact value on every call and returns 401 Unauthorized otherwise; its only purpose is blocking a stranger who finds this function's URL from triggering it manually, outside its real 5-minute schedule. Low risk either way — it only ever reads schedule/check-in data and sends legitimate attendance reminders — so skipping it is fine: just omit both the secret and the <code>x-cron-secret</code> line below. If set, treat the value like a password: any long, random string that's hard to guess works.</p>
+  </details>
   Click <b>Save</b>.</li>
-<li>Still on the <code>attendance-reminders</code> function's own page, open its <b>Cron</b> tab and schedule it to run every 5 minutes. If a Cron tab isn't available in this Supabase project's version of the Dashboard, run the single SQL statement in "Verifying the schedule" below instead (SQL Editor, still no terminal).</li>
+<li>Still on the <code>attendance-reminders</code> function's own page, open its <b>Cron</b> tab and schedule it to run every 5 minutes. If a Cron tab isn't available in this Supabase project's version of the Dashboard, run the SQL statement in "Creating the schedule via SQL" directly below instead (SQL Editor, still no terminal).</li>
 </ol>
+<p class="small" style="background:#eef3fb;border:1px solid #b7c8e6;border-left:4px solid #1b4b8a;border-radius:6px;padding:6px 10px">📋 <b>Creating the schedule via SQL</b> (only needed if step 6 above has no Cron tab to use — skip this if it does):</p>
+<pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#1b4b8a">-- 📋 Supabase SQL Editor — run once to create the 5-minute schedule</b>
+create extension if not exists pg_cron;
+create extension if not exists pg_net;
+
+select cron.schedule(
+  'attendance-reminders',
+  '*/5 * * * *',
+  $$
+  select net.http_post(
+    url := '${_readmeSupaUrl}/functions/v1/attendance-reminders',
+    headers := jsonb_build_object(
+      'Content-Type', 'application/json',
+      'Authorization', 'Bearer ${_readmeSupaKey}',
+      'x-cron-secret', '&lt;YOUR-CRON_SECRET-VALUE, OR DELETE THIS LINE IF NOT SET&gt;'
+    ),
+    body := '{}'::jsonb
+  ) as request_id;
+  $$
+);</pre>
+<p class="small muted">The URL and key above are auto-filled from this project's own Settings → Live sync fields (or this app's own default project, if nothing is entered there) — the SAME values used when connecting from local to live. If this hotel's real project differs, update the URL/key in Settings first, then re-open this Readme tab to refresh this sample. A valid key is required or the Edge Function's own request-auth check rejects the call before this app's attendance logic ever runs. Drop the <code>x-cron-secret</code> line entirely if <code>CRON_SECRET</code> was never set as one of the function's own secrets — it's optional, see "About CRON_SECRET" above for exactly what it does. Re-running this same statement later (e.g. to fix a typo in the URL/key) safely replaces the existing schedule of the same name rather than creating a duplicate.</p>
+<p class="small muted" style="background:#eef3fb;border:1px solid #b7c8e6;border-left:4px solid #1b4b8a;border-radius:6px;padding:6px 10px"><b>Verifying the schedule is genuinely running</b> (whether created via the Cron tab above or the SQL statement just above): the subscription/registration checks elsewhere on this page only ever confirm THIS device's own subscription reached the database \u2014 none of them can tell you whether the cron schedule was ever actually created, or whether the function is failing silently. Settings \u2192 Notifications & reminders \u2192 Diagnostics \u2192 Check background push status now includes a "Server-side function actually running on schedule?" row, reading the <code>function_heartbeat</code> table the function itself updates on every single invocation (regardless of whether any real attendance issue exists that day to notify about) \u2014 a stale or missing heartbeat there is the concrete, checkable signal that the cron step above still needs attention, distinct from a hotel simply having clean attendance that day.</p>
 <p class="small" style="background:#fff6d6;border:1px solid #e0c060;border-left:4px solid #c9891b;border-radius:6px;padding:6px 10px">💻 <b>Option B — Supabase CLI</b> (for anyone who prefers a terminal):</p>
 <pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#c9891b"># \u26a0\ufe0f TERMINAL / COMMAND LINE ONLY \u2014 do NOT paste into the Supabase SQL Editor</b>
 supabase functions new attendance-reminders
 # paste the index.ts content below into supabase/functions/attendance-reminders/index.ts
-supabase secrets set VAPID_PUBLIC_KEY="BDqEqGOEiDMby59TECHcuZ5pRWkLlEDUgUKLl6YOg9q5IzJro1TilSRLbOlKVDCxif_VPQH7Nzhy6BeJ7LVLvfk"
+supabase secrets set VAPID_PUBLIC_KEY="BM3QmkSy0h5tpejQ2Fbyf6sG2a0fPQu8W32Frtyk3yIeNna_pyJ-ORnGIzwEhBuu46L2k3VZRyTmTJUnt4wHORo"
 supabase secrets set VAPID_PRIVATE_KEY="&lt;generate with: npx web-push generate-vapid-keys&gt;"
 supabase functions deploy attendance-reminders
 # Schedule it to run every 5 minutes (Supabase Dashboard \u2192 Edge Functions \u2192 attendance-reminders \u2192 Cron,
 # or via SQL: select cron.schedule('attendance-reminders','*/5 * * * *',$$select net.http_post(...)$$);)</pre>
-<p class="small muted"><b>Verifying the schedule is genuinely running</b> (a real, previously-confirmed gap): the subscription/registration checks elsewhere on this page only ever confirm THIS device's own subscription reached the database \u2014 none of them can tell you whether the cron schedule above was ever actually created, or whether the function is failing silently. Settings \u2192 Notifications & reminders \u2192 Diagnostics \u2192 Check background push status now includes a "Server-side function actually running on schedule?" row, reading the <code>function_heartbeat</code> table the function itself updates on every single invocation (regardless of whether any real attendance issue exists that day to notify about) \u2014 a stale or missing heartbeat there is the concrete, checkable signal that the cron step above still needs attention, distinct from a hotel simply having clean attendance that day.</p>
 <p class="small" style="background:#eef6ec;border:1px solid #a8d5b0;border-left:4px solid #2c9e5f;border-radius:6px;padding:6px 10px">📄 <b>Paste this entire block</b> — into the Dashboard's own browser code editor (Option A) or into the local <code>index.ts</code> file created above (Option B, a code editor e.g. VS Code) — never into the SQL Editor, never into a terminal.</p>
 <p class="small muted"><b>Step 2 — index.ts</b> (reads the same <code>assignments</code>/<code>checkins</code>/<code>push_subscriptions</code> tables this app's client already writes to; mirrors the client-side "missing"/"noshow"/"notout"/"upcoming" logic from attendanceStateFor() — including a genuine overnight-shift carryover check mirroring the client's own renderCarryoverBanner(), and a function_heartbeat update on every invocation so the diagnostic below can actually confirm this is running):</p>
 <pre style="background:#f4f6f8;border:1px solid var(--line);border-radius:8px;padding:10px;font-size:11px;overflow:auto;white-space:pre;margin-top:8px"><b style="color:#2c9e5f">// \u26a0\ufe0f PASTE INTO index.ts \u2014 do NOT paste into the Supabase SQL Editor</b>
@@ -17369,15 +17876,24 @@ supabase functions deploy attendance-reminders
 // This is the SERVER half of "Notifications &amp; reminders" (see the app's own Readme). The CLIENT half (service
 // worker registration, push subscription, in-app reminders while a tab is open) is already built into the app
 // itself and needs no further setup. This function is what lets a push notification arrive even when the app
-// is fully closed and the phone is locked — it runs on a schedule (see DEPLOY.md for how to schedule it),
+// is fully closed and the phone is locked — it runs on a schedule (see "Creating the schedule via SQL"/the Cron
+// tab instructions above for how to schedule it),
 // checks who is scheduled to work right now, cross-references who has actually clocked in (via the app's own
 // Clock in/out feature), and sends a real Web Push notification through each browser's own push service
-// (Google FCM / Apple APNs / Mozilla autopush) for the two things this covers:
+// (Google FCM / Apple APNs / Mozilla autopush) for the three things this covers:
 //   1. MANAGER alerts — a genuine apparent no-show (shift ended, no clock-in ever recorded), a shift currently
 //      in progress with no clock-in, or a missed clock-out — sent to every device registered for that specific
 //      department's manager alerts.
-//   2. WORKER reminders — an upcoming shift, or a clock-in/out reminder — sent to whichever single device a
+//   2. WORKER reminders — an upcoming shift, or a clock-in/out reminder (covers BOTH missing a clock-in AND
+//      missing a clock-out — see workerFlags' own comment below for the fix closing the prior gap where only
+//      clock-in was ever reaching a worker's device in the background) — sent to whichever single device a
 //      specific worker has registered as "remind me about my own shifts."
+//   3. Special-consideration leave-request alerts — a pending leave request a worker flagged as needing special
+//      consideration (e.g. it would breach an auto-deny threshold) — sent to every device registered for that
+//      request's own department's manager alerts, reading the same "leave_requests" table the app's client
+//      already syncs to Supabase. This was previously ONLY implemented in the client's own in-app polling loop
+//      (runReminderCheck(), requiring a manager's own tab to be open) — added here so it also reaches a
+//      manager's device via background push, the same as the other manager alerts above.
 //
 // NOT covered by this function (a genuine, disclosed scope limit, not an oversight): Housekeeping's
 // room/floor assignment reminder. That data (FLOORS, the floor/zone assignment per person per week) is stored
@@ -17421,13 +17937,13 @@ supabase functions deploy attendance-reminders
 import { createClient } from "npm:@supabase/supabase-js@2";
 import webpush from "npm:web-push@3.6.7";
 
-// ---------- Configuration (all read from Edge Function secrets — see DEPLOY.md for how to set these) ----------
+// ---------- Configuration (all read from Edge Function secrets — see "Secrets"/"Settings" step above for how to set these) ----------
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!; // auto-provided by Supabase to every Edge Function — never needs to be set manually
 const VAPID_PUBLIC_KEY = Deno.env.get("VAPID_PUBLIC_KEY")!;   // must be the SAME public key already embedded in the app itself (VAPID_PUBLIC_KEY constant)
 const VAPID_PRIVATE_KEY = Deno.env.get("VAPID_PRIVATE_KEY")!; // the matching PRIVATE half — never put this in the app's own client-side file
 const VAPID_SUBJECT = Deno.env.get("VAPID_SUBJECT") || "mailto:admin@example.com"; // a real contact email/URL the push services can reach if they need to
-const CRON_SECRET = Deno.env.get("CRON_SECRET") || ""; // optional shared secret — see DEPLOY.md's own note on why this matters
+const CRON_SECRET = Deno.env.get("CRON_SECRET") || ""; // optional shared secret — see "About CRON_SECRET" above for what this does
 // This app's own client-side defaults (CLOCKIN_LATE_GRACE_MINUTES_DEFAULT / CLOCKIN_EARLY_GRACE_MINUTES_DEFAULT)
 // are NOT synced to Supabase today (they live only in each browser's local CFG), so this function uses its own
 // configurable copies instead of trying to read a value that genuinely isn't available server-side. Override
@@ -17611,19 +18127,86 @@ async function sendPush(sub: any, title: string, body: string): Promise&lt;boole
   }
 }
 
+// Maps each internal condition name this function already computes to the SAME notif_types key the client-side
+// Settings checkboxes/notifTypeEnabled() helper use (see the migration SQL's own "notif_types" column comment) —
+// a per-subscription opt-out, so a device that unchecked e.g. "No clock-in once shift starts" in Settings
+// genuinely stops receiving that specific push type in the background too, not just in-app. Absent key
+// (or an entirely absent/'{}' notif_types column on an older row) defaults to enabled, matching the client's own
+// "absent = enabled" convention exactly, so an existing subscription created before this feature shipped keeps
+// receiving every type unchanged.
+// "Delete mgr option for shift passed no clock in" \u2014 "noshow" (a shift that has already ended with no
+// clock-in ever recorded) intentionally has NO entry here anymore, and is excluded from managerConditions below
+// entirely. A manager already receives the "missing" alert (shift CURRENTLY in progress, no clock-in) for this
+// exact same unresolved shift before it ever reaches "noshow" \u2014 a second, later alert for the identical
+// underlying issue was judged redundant escalation, not a genuinely distinct event. The client-side app's own
+// Settings UI dropped the matching checkbox for the same reason (see renderNotificationsSettingsBlock()'s own
+// comment). Worker-facing "noshow" framing (remapped to "missing" wording for a worker's own device) is UNCHANGED
+// and unaffected \u2014 this removal is manager-side only.
+const MANAGER_NOTIF_TYPE_KEY: Record&lt;string, string&gt; = { missing: "mgrMissing", notout: "mgrNotout" };
+// "notout" added here — see workerFlags' own comment at this function's main call site for the full "why" (a
+// worker's own missed-clock-out reminder was, until now, only ever being filtered OUT before it could reach a
+// device in the background, even though the client's in-app engine (runReminderCheck()) has always sent this
+// exact reminder while a tab is open). Maps to the SAME "clockout" notif_types key the client-side Settings
+// checkbox and CFG._notifTypes already use for this exact reminder, so a worker who opted out of clock-out
+// reminders in Settings stays opted out here too, not just in-app.
+const WORKER_NOTIF_TYPE_KEY: Record&lt;string, string&gt; = { upcoming: "upcoming", missing: "clockin", noshow: "clockin", notout: "clockout" };
+function subWantsNotifType(sub: any, key: string): boolean {
+  const nt = sub?.notif_types;
+  return !nt || nt[key] !== false;
+}
+
 const CONDITION_TEXT: Record&lt;string, (name: string, dept: string, detail: string) =&gt; { title: string; body: string }&gt; = {
+  // "noshow" is kept here for documentation/possible future re-use, but is currently NEVER actually indexed by
+  // either audience: managerConditions excludes it entirely (see that filter's own comment), and the worker path
+  // always remaps it to "missing" wording BEFORE indexing this map (see workerCondition below) \u2014 a worker
+  // never needs "you were a no-show" framing for their own device.
   noshow: (name, dept) =&gt; ({ title: "No clock-in recorded", body: \`\${name}'s shift has ended with no clock-in (\${dept}).\` }),
   missing: (name, dept) =&gt; ({ title: "Not clocked in — shift in progress", body: \`\${name}'s shift is currently running with no clock-in recorded (\${dept}).\` }),
   notout: (name, dept) =&gt; ({ title: "Missing clock-out", body: \`\${name} clocked in but never clocked out (\${dept}).\` }),
   upcoming: (name, _dept, detail) =&gt; ({ title: "Upcoming shift", body: \`\${name} is scheduled \${detail} today — you can clock in now.\` }),
 };
 
+// Real, previously-disclosed scope gap, now closed: this manager-facing alert (a pending leave request flagged
+// "specialConsideration" — e.g. it would breach an auto-deny threshold) was ONLY ever sent from the CLIENT's own
+// in-app polling loop (runReminderCheck(), see that function's own comment), meaning a manager had to have this
+// app open in a live tab to ever see it — the exact same "works in-app, silent in the background" gap this whole
+// server-side function exists to close for every OTHER manager alert. Reads the same \`leave_requests\` table
+// (id, data jsonb) the app's client already syncs to Supabase; \`data\` mirrors the client's own LEAVE_REQUESTS[id]
+// shape directly (dept/status/specialConsideration/code/from/to/name/specialConsiderationReason — see
+// submitLeaveRequest()'s own object literal in the client source for the authoritative shape). De-duped per
+// REQUEST ID (not per day), matching the client's own reasoning exactly: fires once regardless of how many days a
+// request spans, and naturally stops re-firing once the request is decided (approved/denied) or un-flagged, since
+// only currently-pending, currently-flagged rows are ever queried here — no separate "clear" step is needed.
+async function checkSpecialConsiderationAlerts(dept: "FO" | "HSK", managerSubs: any[]) {
+  if (!managerSubs.length) return [] as any[];
+  const { data: rows, error } = await supabase.from("leave_requests").select("id, data");
+  if (error) { console.error("leave_requests query failed", dept, error); return [] as any[]; }
+  const out: any[] = [];
+  for (const row of rows ?? []) {
+    const r = (row as any)?.data ?? {};
+    if (r.dept !== dept || r.status !== "pending" || !r.specialConsideration) continue;
+    const key = \`mgr:\${dept}:specialconsid:\${(row as any).id}\`;
+    if (await alreadyNotified(key)) continue;
+    const dateRange = r.to && r.to !== r.from ? \`\${r.from}→\${r.to}\` : r.from;
+    const title = "Special consideration requested";
+    const body = \`\${r.name} is requesting special consideration for \${r.code} \${dateRange} (\${dept}).\${r.specialConsiderationReason ? " " + r.specialConsiderationReason : ""}\`;
+    let sentAny = false;
+    for (const sub of managerSubs) {
+      if (!subWantsNotifType(sub, "mgrSpecialConsid")) continue; // this device opted out of this specific issue type
+      if (await sendPush(sub, title, body)) sentAny = true;
+    }
+    if (sentAny) await markNotified(key);
+    out.push({ dept, id: (row as any).id, name: r.name, condition: "specialconsid", detail: \`\${r.code} \${dateRange}\`, audience: "manager", sent: sentAny });
+  }
+  return out;
+}
+
 Deno.serve(async (req) =&gt; {
   // A simple shared-secret check — anyone who knows this function's URL can otherwise trigger it at will. This
   // is not meant as strong security (this function only ever READS schedule/checkin data and sends
   // notifications — it can't modify or expose anything sensitive on its own) but it does stop random internet
-  // traffic from needlessly running it outside its own schedule. See DEPLOY.md for how CRON_SECRET is set and
-  // passed by the scheduled job.
+  // traffic from needlessly running it outside its own schedule. See "About CRON_SECRET" above for
+  // how this is set (as a secret here) and passed by the scheduled job (the x-cron-secret header in the cron SQL).
   if (CRON_SECRET) {
     const provided = req.headers.get("x-cron-secret");
     if (provided !== CRON_SECRET) {
@@ -17641,26 +18224,48 @@ Deno.serve(async (req) =&gt; {
   for (const dept of ["FO", "HSK"] as const) {
     const flagged = await evaluateDept(dept);
 
+    // Fetched ONCE per department, unconditionally — used by BOTH the ordinary attendance alerts below AND
+    // checkSpecialConsiderationAlerts() (see that function's own comment). Previously this query only ran
+    // INSIDE the "if (managerConditions.length)" branch, meaning a hotel with perfectly clean attendance that
+    // cycle (no attendance flags at all) never fetched manager subs, and therefore never had anywhere to send a
+    // pending special-consideration alert to — fetching it here, unconditionally, closes that gap too.
+    const { data: managerSubsRaw } = await supabase
+      .from("push_subscriptions").select("*").contains("manager_depts", [dept]);
+    const managerSubs = managerSubsRaw ?? [];
+
     // Manager-facing: only the escalated conditions (noshow, missing, notout) — matching the app's own
     // in-app manager-alert scope exactly (an ordinary "upcoming"/worker-only reminder is never sent to a manager).
-    const managerConditions = flagged.filter((f) =&gt; f.condition !== "upcoming");
-    if (managerConditions.length) {
-      const { data: managerSubs } = await supabase
-        .from("push_subscriptions").select("*").contains("manager_depts", [dept]);
+    // "noshow" excluded here too (see MANAGER_NOTIF_TYPE_KEY's own comment above for the full "why" this manager
+    // alert was removed) — a manager only ever sees "missing"/"notout" now, matching the client-side Settings UI.
+    const managerConditions = flagged.filter((f) =&gt; f.condition !== "upcoming" &amp;&amp; f.condition !== "noshow");
+    if (managerConditions.length && managerSubs.length) {
       for (const f of managerConditions) {
         const key = \`mgr:\${dept}:\${f.week}:\${f.dayIdx}:\${f.name}:\${f.condition}\`;
         if (await alreadyNotified(key)) continue;
         const { title, body } = CONDITION_TEXT[f.condition](f.name, dept, f.detail);
         let sentAny = false;
-        for (const sub of managerSubs ?? []) { if (await sendPush(sub, title, body)) sentAny = true; }
+        const _mgrTypeKey = MANAGER_NOTIF_TYPE_KEY[f.condition];
+        for (const sub of managerSubs) {
+          if (_mgrTypeKey && !subWantsNotifType(sub, _mgrTypeKey)) continue; // this device opted out of this specific issue type
+          if (await sendPush(sub, title, body)) sentAny = true;
+        }
         if (sentAny) await markNotified(key);
         results.push({ dept, ...f, audience: "manager", sent: sentAny });
       }
     }
 
-    // Worker-facing: "upcoming shift" and the two clock-in-missing states, sent ONLY to the single device (if
-    // any) registered under that exact person's own name.
-    const workerFlags = flagged.filter((f) =&gt; ["upcoming","missing","noshow"].includes(f.condition));
+    // Special-consideration leave-request alerts (manager-facing) — see checkSpecialConsiderationAlerts()'s own
+    // comment for the full "why this needed its own separate query, previously missing entirely server-side".
+    results.push(...(await checkSpecialConsiderationAlerts(dept, managerSubs)));
+
+    // Worker-facing: "upcoming shift" and BOTH clock-in-missing states, PLUS "notout" (missed clock-out) — the
+    // latter was a genuine, disclosed scope gap: this filter previously excluded "notout" entirely, so a worker's
+    // own missed-clock-out reminder (which the CLIENT's in-app engine has always sent — see runReminderCheck()'s
+    // own "Clock-out reminder" block) never reached their device via background push, even though the
+    // CONDITION_TEXT entry for it already existed and was already correctly used for the MANAGER-facing version
+    // of this same condition just above. Sent ONLY to the single device (if any) registered under that exact
+    // person's own name.
+    const workerFlags = flagged.filter((f) =&gt; ["upcoming","missing","noshow","notout"].includes(f.condition));
     for (const f of workerFlags) {
       const { data: workerSubs } = await supabase.from("push_subscriptions").select("*").eq("name", f.name);
       if (!workerSubs?.length) continue;
@@ -17669,7 +18274,11 @@ Deno.serve(async (req) =&gt; {
       if (await alreadyNotified(key)) continue;
       const { title, body } = CONDITION_TEXT[workerCondition](f.name, dept, f.detail);
       let sentAny = false;
-      for (const sub of workerSubs) { if (await sendPush(sub, title, body)) sentAny = true; }
+      const _wkrTypeKey = WORKER_NOTIF_TYPE_KEY[f.condition];
+      for (const sub of workerSubs) {
+        if (_wkrTypeKey && !subWantsNotifType(sub, _wkrTypeKey)) continue; // this device opted out of this specific issue type
+        if (await sendPush(sub, title, body)) sentAny = true;
+      }
       if (sentAny) await markNotified(key);
       results.push({ dept, ...f, audience: "worker", sent: sentAny });
     }
@@ -17680,18 +18289,21 @@ Deno.serve(async (req) =&gt; {
   });
 });
 </pre>
-</details>
 
-<details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Step-by-step: fixing "notifications don't arrive once the site is closed"</b></summary>
-<p>Work through these in order — each one rules out a genuinely different, independent failure point; skipping ahead risks fixing the wrong thing.</p>
-<ol>
-<li><b>Is this page being opened as a file (file://), rather than hosted (http/https)?</b> Check the browser's own address bar — if it starts with <code>file:///</code> instead of <code>http://</code> or <code>https://</code>, this is almost certainly the cause, and every step below is blocked by it: Service Workers (and therefore background push) are unsupported on a <code>file://</code> origin in every major browser, with no workaround. Host this file somewhere real — even a simple local static server (e.g. <code>npx serve</code> from this file's own folder, or Python's <code>python -m http.server</code>), or a real host like GitHub Pages — then reopen it via that server's <code>http://</code> or <code>https://</code> address instead. Settings → Notifications & reminders → Diagnostics → Check background push status now surfaces this exact condition directly if it's the cause, rather than silently doing nothing.</li>
-<li><b>Was notification permission actually granted?</b> Settings → Notifications & reminders shows a status pill at the top — "Blocked" means the browser itself denied/revoked permission for this site; re-enable it in the browser's own site settings (commonly the padlock/info icon next to the address bar), then try Enable again.</li>
-<li><b>Is this device actually connected to the shared live copy?</b> Background push requires a live Supabase connection to register — check the header's own sync-status dot, or Settings → Sync & data. A device that's only ever run in local mode has nothing to register against.</li>
-<li><b>Run Check background push status</b> (Settings → Notifications & reminders → Diagnostics). Read every row top to bottom — it's built to isolate exactly which single link in the chain is broken (permission → service worker → local subscription → server-side registration → server-side schedule), rather than a single opaque pass/fail.</li>
-<li><b>Has the server-side attendance-reminders function actually been deployed, with its own cron schedule created?</b> The "Server-side function actually running on schedule?" row (added specifically to close this exact gap) reads a heartbeat the function itself updates every time it runs — a stale or missing heartbeat here means either the function was never deployed, or its Cron schedule (Supabase Dashboard → Edge Functions → attendance-reminders → Cron) was never actually created/enabled, even if the function itself deployed successfully.</li>
-<li><b>If the SQL setup step failed with a syntax error</b> (e.g. "syntax error at or near..."), the SQL as written in this Readme has been verified, byte-for-byte, to contain no such error — see this section's own "REALTIME" comment for the most likely external cause (a copy/paste tool auto-escaping <code>$</code> characters) and its fix (paste as plain text).</li>
-</ol>
+<details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Troubleshooting</b></summary>
+<p class="small muted">Go top-to-bottom — each row rules out one independent failure point; skipping ahead risks fixing the wrong thing.</p>
+<div class="tblwrap" style="overflow:auto;border-radius:8px">
+<table class="autoTable leftAlignCells">
+<tr><th style="text-align:center">#</th><th style="text-align:center">Check</th><th style="text-align:center">Fix</th></tr>
+<tr><td>1</td><td>Address bar starts with <code>file:///</code> instead of <code>http://</code>/<code>https://</code></td><td>Host the file somewhere real (e.g. <code>npx serve</code> from this folder, Python's <code>python -m http.server</code>, or GitHub Pages) — Service Workers/background push are unsupported on <code>file://</code> in every browser, no workaround. Diagnostics surfaces this directly if it's the cause.</td></tr>
+<tr><td>2</td><td>Notification permission status (Settings → Notifications & reminders, top status pill)</td><td>"Blocked" means the browser denied/revoked it — re-enable in the browser's own site settings (padlock/info icon next to the address bar), then press Enable again.</td></tr>
+<tr><td>3</td><td>Connected to the shared live copy</td><td>Background push needs a live Supabase connection to register — check the header's sync-status dot, or Settings → Sync & data. Local-only mode has nothing to register against.</td></tr>
+<tr><td>4</td><td>Run <b>Check background push status</b> (Diagnostics)</td><td>Read every row top to bottom — isolates exactly which link is broken (permission → service worker → local subscription → server registration → server schedule) instead of one opaque pass/fail.</td></tr>
+<tr><td>5</td><td>Server-side function deployed with a cron schedule created</td><td>The "Server-side function actually running on schedule?" diagnostic row reads a heartbeat the function updates on every run — stale/missing means either never deployed, or its Cron schedule (Dashboard → Edge Functions → attendance-reminders → Cron) was never created/enabled.</td></tr>
+<tr><td>6</td><td>SQL setup step failed with a syntax error (e.g. "syntax error at or near...")</td><td>The SQL as written has been verified byte-for-byte error-free — the usual external cause is a copy/paste tool auto-escaping <code>$</code> characters; paste as plain text instead.</td></tr>
+</table>
+</div>
+</details>
 </details>
 
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Before going live (reset test data)</b></summary>
@@ -18417,7 +19029,18 @@ function _renderSettingsInner(){
        discovered and fixed this EXACT class of bug once before (see .btn30's own CSS comment), just never applied that
        same fix to this specific row of buttons. Applied the same proven .btn30 class (explicit height:30px + line-height:1
        + flex-centering) here now, matching Connect/Backup/Reports/Load-historical-data to the identical fixed height. -->
-  <div class="cfgrow"><button class="brand btn30" onclick="dataMenu()">\u2b07 Export\u2026</button> <button class="btn30" onclick="backupMenu()">\ud83d\udcbe Backup &amp; versions\u2026</button> <button class="btn30" onclick="reportsMenu()" title="Interactive, on-screen reports \u2014 nothing downloads directly; each report has its own Export to Excel button for that.">\ud83d\udcca Reports\u2026</button> <button class="btn30" onclick="runManualHistoricalLoad()" title="Re-applies the parsed Excel history for any week that currently has no data at all in either department; never overwrites an existing schedule">\ud83d\udcc5 Load historical Excel data</button></div>
+  <!-- "Settings restructure to add an import button next to export that shows pop up and within that the actual
+       hours from paycom, punch times from paycom, actual hours from paycom, excel schedule" — a new "Import…"
+       button (matching Export's own uiDialog button-list style exactly) now sits directly next to Export,
+       consolidating the 3 Paycom-import options (moved OUT of Backup & versions… — see that menu's own comment
+       for why they never really belonged there in the first place) plus the Excel schedule/demand wizard, which
+       previously had its own standalone always-visible button.
+       "Load historical Excel data" button removed from the UI (per direct request — all historical weeks
+       are already fully loaded, so it currently has no practical use to trigger). runManualHistoricalLoad()
+       and loadHistoricalSchedule() below are intentionally left fully intact and callable, unchanged —
+       only this one button is gone — so the same one-time, no-file-needed re-apply is still available to
+       wire back up (here, or elsewhere) if a further historical Excel import is ever needed later. -->
+  <div class="cfgrow"><button class="brand btn30" onclick="dataMenu()">\u2b07 Export\u2026</button> <button class="brand btn30" onclick="importMenu()">\u2b06 Import\u2026</button> <button class="btn30" onclick="backupMenu()">\ud83d\udcbe Backup &amp; versions\u2026</button> <button class="btn30" onclick="reportsMenu()" title="Interactive, on-screen reports \u2014 nothing downloads directly; each report has its own Export to Excel button for that.">\ud83d\udcca Reports\u2026</button></div>
     <!-- Paycom Employee ID type and Earning Code mapping now live inside the export setup modal itself
        (paycomExportSetupModal(), shown from Export… → "For Paycom's Schedule Import (CSV)") rather than as a
        standalone, persistent Settings section — the only place these two settings are actually used is that
@@ -18433,7 +19056,7 @@ function _renderSettingsInner(){
        useful at a glance otherwise. Open/closed state persists through the shared CFG._settingsCatOpen object
        (key: 'notifications'), matching every other section's own identical mechanism, rather than a separate,
        one-off CFG._notifSettingsOpen boolean. -->
-  <details style="margin:0 0 6px 0" ${settingsSectionOpen('notifications')?"open":""} ontoggle="toggleSettingsSection('notifications',this.open)"><summary style="cursor:pointer"><b>Notifications &amp; reminders</b> <span class="small muted">\u2014 ${CFG._notifEnabled?("Enabled on this device"+(CFG._notifName?" (as "+esc(CFG._notifName)+")":"")):"Not enabled on this device"}</span></summary>
+  <details style="margin:0 0 6px 0" ${settingsSectionOpen('notifications')?"open":""} ontoggle="toggleSettingsSection('notifications',this.open)"><summary style="cursor:pointer"><b>Notifications &amp; reminders</b> <span class="small muted">\u2014 ${CFG._notifEnabled?("Enabled on this device"+((CFG._notifName||(CFG._notifManagerDepts||[]).length)?" (as "+[CFG._notifName?esc(CFG._notifName):null].concat((CFG._notifManagerDepts||[]).map(dp=>"Manager \u2014 "+esc(CFG[dp].label))).filter(Boolean).join(" + ")+")":"")):"Not enabled on this device"}</span></summary>
   ${renderNotificationsSettingsBlock()}
   </details>
   <div class="lockOverlayWrap">${_canEditGlobal?"":'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked \u2014 click to enter your PIN"></div>'}
@@ -18482,7 +19105,27 @@ function _renderSettingsInner(){
        lets the row reflow normally, keeping the checkbox+text+input glued together and only wrapping the
        trailing description text to its own line if genuinely needed) — confirmed via the same real-browser
        render at 380px/900px that this now matches "Unpaid break:"'s own already-correct behavior at both widths. -->
-  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.overstaffEnabled!==false?"checked":""} onchange="setOverstaffEnabled(this.checked)"> Flag overstaffed when <input class="sfield" type="number" min="0" style="width:44px" value="${CFG.overstaffMargin!=null?CFG.overstaffMargin:OVERSTAFF_MARGIN_DEFAULT}" onchange="setOverstaffMargin(this.value)"> or more staff scheduled than needed</label>
+  <!-- "'flag overstaffed' text should align with middle of input field": the bare text nodes flanking the number
+       input (not wrapped in any element) were left to the browser's own default anonymous-flex-item box instead
+       of an explicit line-height — inconsistent with the SAME "text — input — text" rows elsewhere in this file
+       (e.g. the Front Desk Agents "if Arrivals ≥"/"if Departures ≥" connectors) that already wrap each text run in
+       its own <span>, guaranteeing a real, consistent line-height for align-items:center to center against. Now
+       matches that same established pattern — visually identical text, just genuinely centered against the
+       input's own 30px height rather than left to each browser's own default. -->
+  <!-- "'flag overstaffed' text still not vertically aligned with middle of input field" — the REAL root cause,
+       found by actually tracing CSS cascade/specificity rather than re-guessing at the markup a second time: a
+       global rule — .cfgrow label:has(input[type=checkbox]){align-items:flex-start!important;...} (added earlier
+       for a DIFFERENT, genuinely multi-line checkbox label, see that rule's own comment) — matches ANY label
+       containing a checkbox ANYWHERE inside it, at ANY depth. This label's own leading checkbox (the
+       enable/disable toggle) means it's ALSO caught by that same blanket rule, and because that rule carries
+       !important while this label's own inline align-items:center did NOT, CSS's cascade rules put the
+       !important external rule in a strictly higher-priority bucket regardless of inline vs. selector-based
+       origin — so the earlier centering fix was silently, completely overridden the whole time; the visual
+       symptom never actually changed. Adding !important to THIS label's own inline align-items:center moves it
+       into the SAME priority bucket as the external rule — and per the cascade's own tie-breaking rule within
+       that bucket, an inline style always wins over any selector-based rule, checkbox or not, finally letting
+       the intended centering take effect. -->
+  <label class="small" style="display:flex;flex-wrap:wrap;align-items:center!important;gap:6px"><input type="checkbox" class="cbx" ${CFG.overstaffEnabled!==false?"checked":""} onchange="setOverstaffEnabled(this.checked)"> <span>Flag overstaffed when</span> <input class="sfield" type="number" min="0" style="width:44px" value="${CFG.overstaffMargin!=null?CFG.overstaffMargin:OVERSTAFF_MARGIN_DEFAULT}" onchange="setOverstaffMargin(this.value)"> <span>or more staff scheduled than needed</span></label>
   <label style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG.dontFlagUnderstaffIfRosterShort?"checked":""} onchange="setUnderstaffFloorFlag(this.checked)"> <span class="small">Flag understaffed only if roster has enough active staff to meet the minimum</span></label>
     <!-- Moved here from "Shift & hours rules" — CFG.otDisplayMode doesn't govern any scheduling RULE (it never
        changes a computed hours/coverage number); it only controls how the already-computed overtime figure is
@@ -20480,7 +21123,14 @@ function clearAbsentMark(dept,iso,name){
   if(ABSENT_MARKS[dept]&&ABSENT_MARKS[dept][iso])delete ABSENT_MARKS[dept][iso][name];
   save("hotel_absentmarks",ABSENT_MARKS);
 }
-function logChange(action,detail){try{AUDIT.push({ts:new Date().toISOString(),user:(CURRENT_USER?CURRENT_USER.name:"?"),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
+// Optional 3rd param `asUser`: lets a caller that already resolved WHO actually performed an action (e.g.
+// checkInStaff()/clockOutStaff()'s own `by`, which correctly falls back to the staff member's own name for a
+// genuine self-service clock-in/out with no manager signed in) record that real name here instead of silently
+// falling through to CURRENT_USER — which is null, and therefore shows as a bare, uninformative "?" in the change
+// log's own User column, for every ordinary self-service clock-in/out (see those two call sites for the fix this
+// enables). Every OTHER caller (schedule edits, settings changes, imports, etc.) is unaffected and keeps using
+// CURRENT_USER exactly as before, since those actions are only ever reachable while signed in via EDIT mode.
+function logChange(action,detail,asUser){try{AUDIT.push({ts:new Date().toISOString(),user:(asUser||(CURRENT_USER?CURRENT_USER.name:"?")),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
 // "set up separate pins for FO vs HSK so that I can demonstrate per dept access": each user record can now
 // optionally carry a `dept` scope ("FO", "HSK", or "" / omitted = both, the existing default behavior — so every
 // EXISTING saved user, which has no `dept` field at all, continues to work for both departments exactly as before,
@@ -21233,7 +21883,7 @@ async function checkInStaff(nmE,day,ctx){
   // The previously-disclosed "LOCAL-ONLY for now" limitation is now closed: see pushCheckin()'s own comment for the
   // new "checkins" table + subscribe handler this now syncs through, mirroring pushCell()'s existing pattern
   // exactly. Still saves locally first (unchanged), now ALSO pushes.
-  save("hotel_checkins",CHECKINS);pushCheckin(_dept,wk,nm);logChange("checkin",nm+" clocked in for "+DOW[day]+(by!==nm?" (by "+by+")":""));
+  save("hotel_checkins",CHECKINS);pushCheckin(_dept,wk,nm);logChange("checkin",nm+" clocked in for "+DOW[day]+(by!==nm?" (by "+by+")":""),by);
   render();
 }
 // The clock-OUT counterpart, directly answering "should Clock out also show?" — yes. Only available once a clock-IN
@@ -21285,11 +21935,11 @@ async function clockOutStaff(nmE,day,ctx){
   // distinctly in the change log so this auto-backfill is always visible/ auditable, never silent.
   const now=new Date().toISOString();
   const _autoIn=!rec[day];
-  if(_autoIn){rec[day]={ts:now,by};logChange("checkin",nm+" auto-clocked in for "+DOW[day]+" (clock-out pressed with no existing clock-in — likely a stale button state)"+(by!==nm?" (by "+by+")":""));}
+  if(_autoIn){rec[day]={ts:now,by};logChange("checkin",nm+" auto-clocked in for "+DOW[day]+" (clock-out pressed with no existing clock-in — likely a stale button state)"+(by!==nm?" (by "+by+")":""),by);}
   rec[day].outTs=now;rec[day].outBy=by;
   if(_geoOut.ok)rec[day].geoOut={lat:_geoOut.lat,lng:_geoOut.lng,distanceM:_geoOut.distanceM,withinRadius:_geoOut.withinRadius};
   if(_attestOut.ok)rec[day].attestOut=_attestOut.answeredYes;
-  save("hotel_checkins",CHECKINS);pushCheckin(_dept,wk,nm);logChange("checkin",nm+" clocked out for "+DOW[day]+(by!==nm?" (by "+by+")":""));
+  save("hotel_checkins",CHECKINS);pushCheckin(_dept,wk,nm);logChange("checkin",nm+" clocked out for "+DOW[day]+(by!==nm?" (by "+by+")":""),by);
   // A completed clock in/out pair now exists for this day — see maybeAutoComputeActualFromClock()'s own comment for
   // the full opt-in design (Settings toggle, never overwrites a real manual entry). A no-op entirely when that
   // setting is off, matching this app's own established independence between the two systems by default.
@@ -21943,9 +22593,24 @@ async function dataMenu(){
   // "For Paycom's Schedule Import (CSV)" — this app only ever produces (exports) this file; the file itself is
   // then uploaded separately, by the user, into Paycom's own Schedule Import screen (Time Management). No import
   // FROM Paycom happens via this menu item at all — that direction is handled by the separate "Import actual
-  // hours from Paycom" options in Backup & versions…, which are unaffected by this rename.
+  // hours from Paycom" options, now under the dedicated Import… button/menu (see importMenu() directly below).
   const pick=await uiDialog("Export as:",["Cancel","JSON","Excel","Payroll & Time (CSV)","Room Assignments (CSV)","For Paycom's Schedule Import (CSV)","Change log (CSV)"]);
   if(pick==="JSON")exportJSON();else if(pick==="Excel")exportXLSX();else if(pick==="Payroll & Time (CSV)")exportPayroll();else if(pick==="Room Assignments (CSV)")exportRoomAssignments();else if(pick==="For Paycom's Schedule Import (CSV)")exportPaycomScheduleImport();else if(pick==="Change log (CSV)")exportAudit();
+}
+// Consolidates every "pick a file to bring data INTO this app" action into one menu, matching Export's own
+// uiDialog button-list style exactly (see dataMenu()'s own comment above). Three of these four options previously
+// lived inside Backup & versions… — a genuine category mismatch that had grown over several rounds of adding
+// Paycom import options one at a time to whichever menu happened to exist first: none of the three are actually
+// backup/versioning actions (they don't create a snapshot or touch the change log), they're file imports, exactly
+// like "Schedule/demand from Excel" (the 4th option, moved here from its own standalone button). "Import full
+// backup (JSON)" deliberately stays in Backup & versions… instead of here — see that menu's own comment for why
+// it's a genuinely different kind of action (a full app-state restore, not a narrow, additive data import).
+async function importMenu(){
+  const pick=await uiDialog("Import:",["Cancel","Actual hours from Paycom (CSV)","Actual hours from Paycom (Excel)","Punch times from Paycom (Time Between Shifts)","Schedule/demand from Excel\u2026"]);
+  if(pick==="Actual hours from Paycom (CSV)")document.getElementById("impPaycom").click();
+  else if(pick==="Actual hours from Paycom (Excel)")document.getElementById("impPaycomXlsx").click();
+  else if(pick==="Punch times from Paycom (Time Between Shifts)")document.getElementById("impPaycomPunches").click();
+  else if(pick==="Schedule/demand from Excel\u2026")openExcelImportWizard();
 }
 /* SUPABASE BATCH USER PROVISIONING ---------- */
 // "How tedious/complicated is it to create supabase access for every worker? Can it work with without phone
@@ -22014,6 +22679,9 @@ async function importBatchUsersFile(event){
   const file=event.target.files[0];if(!file)return;
   event.target.value="";
   let rows=[];
+  // Same guard/reasoning as excelImportPickFile()'s own comment above — an .xlsx file here specifically needs
+  // the CDN-loaded XLSX library; a plain .csv file does not and is unaffected by this check.
+  if(/\.xlsx?$/i.test(file.name)&&!window.XLSX){uiAlert("Excel library didn't load (need internet) — this .xlsx file can't be read until it does. A .csv file works without this library, if available instead.");return;}
   try{
     if(/\.xlsx?$/i.test(file.name)){
       const buf=await file.arrayBuffer();
@@ -22112,32 +22780,36 @@ function downloadBatchUserResultsCSV(){
 // the import mechanism in the abstract no longer serves a real, ongoing purpose -- genuine test coverage now
 // comes from this hotel's own real files instead.
 async function backupMenu(){
-  // \u2014 "Import actual hours from Paycom (Excel, real export format)" added, alongside the existing generic CSV
-  // option, now that a genuine Paycom Time Detail Report export has been examined directly (see
-  // PAYCOM_XLSX_ALIASES' own comment for the full "different export shape" reasoning). The original CSV option is
-  // kept for anyone with a manually-constructed simple CSV in the OLD generic shape \u2014 this new option is
-  // specifically for the REAL .xlsx export.
+  // "Settings restructure to add an import button..." \u2014 the 3 Paycom-import options (Actual hours CSV/Excel,
+  // Punch times) that used to live in THIS menu have moved to the new, dedicated Import\u2026 button/menu (see
+  // importMenu(), right next to Export\u2026) \u2014 they were never genuinely backup/versioning actions to begin with
+  // (none of them create a snapshot or touch the change log; they're file imports, the same category as the
+  // Excel schedule/demand wizard that also now lives in that same new menu). This menu is left holding only the
+  // items that genuinely ARE about backup/versioning: a full-state restore, manual snapshots, version history,
+  // and the change log.
   //
-  // \u2014 "Import punch times from Paycom (Time Between Shifts)" added, feeding PAYCOM_PUNCHES (see that store's
-  // own comment for the full "precedence over this app's own Clock in/out feature" reasoning) \u2014 genuinely
-  // separate from "Import actual hours from Paycom," which feeds worked-HOURS totals, not per-punch in/out TIMES; a
-  // hotel may reasonably want one, the other, or both.
+  // "Explain again what the full backup (json) is? Is this relic of when settings was json separate from html?"
+  // \u2014 No, it's not a leftover from any earlier file-layout; it's a deliberate, still-current feature: a single
+  // JSON file containing this app's ENTIRE working data set \u2014 CFG (roster/rules/shifts/settings), ASSIGN (every
+  // week's schedule), DEMAND (occupancy/arrivals/departures/OOO/etc.), and LEAVE_REQUESTS \u2014 see exportJSON()'s
+  // own object literal for the authoritative list of exactly what's included. It exists as a portable, complete
+  // backup/restore mechanism independent of Supabase \u2014 useful for a local-only install with no live sync
+  // configured, or as a point-in-time snapshot to restore from if something goes wrong. Importing one OVERWRITES
+  // the corresponding in-browser data wholesale (see importJSON()) \u2014 a genuinely different, much larger-blast-
+  // radius action than the narrow, additive Paycom imports (which only ever ADD actual-hours/punch data on top of
+  // an existing schedule, touching nothing else), which is exactly why it stays in THIS menu rather than joining
+  // them in Import\u2026.
   //
-  // "Clean up former staff from schedules…" and "Re-sort roster by role now" are on-demand utilities that
+  // "Clean up former staff from schedules\u2026" and "Re-sort roster by role now" are on-demand utilities that
   // retroactively repair schedule cells or roster ordering left over from staff deleted before the underlying
-  // employed-check/retroactive-clearing/name-based-tracking fixes existed elsewhere in this app — those other
+  // employed-check/retroactive-clearing/name-based-tracking fixes existed elsewhere in this app \u2014 those other
   // fixes only take effect for actions taken after they load, so these two utilities close that gap directly,
-  // without needing to guess which specific person is affected.
-  // TRIMMED "backup pop up is too cluttered, at least delete the resort and clean up former buttons". "Clean up
-  // former staff from schedules…" and "Re-sort roster by role now" are removed from this menu — both are rare,
-  // one-off maintenance actions rather than routine backup/versioning tasks, and their presence here (alongside 8
-  // other options) was exactly what made this list feel dense. Their underlying functions
+  // without needing to guess which specific person is affected. Removed from this menu in an earlier round as
+  // rare, one-off maintenance actions that made this list feel dense \u2014 their underlying functions
   // (cleanupFormerStaffSchedules(), resortRosterByRoleWithConfirm(), both further below) are deliberately LEFT IN
-  // PLACE, just no longer reachable from this specific menu — removing dead code is a separate decision from
-  // decluttering a menu, and either function can be re-exposed (here or elsewhere) later with a one-line change if
-  // a real need for them resurfaces.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Import full backup (JSON)","Import actual hours from Paycom (Excel)","Import punch times from Paycom (Time Between Shifts)","Import actual hours from Paycom (CSV)","Save version now","View version history","View change log"]);
-  if(pick==="Import full backup (JSON)")document.getElementById("imp").click();else if(pick==="Import actual hours from Paycom (Excel)")document.getElementById("impPaycomXlsx").click();else if(pick==="Import punch times from Paycom (Time Between Shifts)")document.getElementById("impPaycomPunches").click();else if(pick==="Import actual hours from Paycom (CSV)")document.getElementById("impPaycom").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();
+  // PLACE, just no longer reachable from this specific menu.
+  const pick=await uiDialog("Backup & versions:",["Cancel","Import full backup (JSON)","Save version now","View version history","View change log"]);
+  if(pick==="Import full backup (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" root cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -22953,8 +23625,16 @@ async function removeUser(i){if(!(await uiConfirm("Remove "+USERS[i].name+"?")))
 // Same reasoning as showHistory() just above — "Backup & versions… → View change log" is reachable from the
 // header on any tab, not just Settings, so this always opens in its own modal rather than writing into an
 // in-page target element that depends on which tab/section happens to be open and visible right now.
+// "freeze header of change log when scrolling down": the table's own thead th{position:sticky;top:0} rule (the
+// same established convention every OTHER table in this app already relies on) needs a bounded-height ancestor
+// that ACTUALLY scrolls to stick against — previously this div only had overflow:auto with no height limit of its
+// own, so it simply grew to fit all 200 rows and the OUTER modal (openGenericViewModal()'s own overflow:auto) was
+// left doing the real scrolling instead; a sticky header only ever sticks relative to its own nearest scrolling
+// ancestor, so it silently scrolled away with everything else. Giving this div its own real, bounded max-height
+// makes IT the actual scrolling container, so its header now genuinely freezes in place while the 200 rows scroll
+// beneath it, exactly like every other scrollable table in this app already does.
 function showAudit(){const rows=(AUDIT||[]).slice(-200).reverse();
-  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px"><table class="autoTable"><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
+  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table class="autoTable"><tr><th>When</th><th style="white-space:nowrap">User</th><th style="white-space:nowrap">Dept</th><th>Change</th></tr>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td style="white-space:nowrap">${esc(r.user)}</td><td style="white-space:nowrap">${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
   openGenericViewModal("Change log (most recent 200)",_html);
 }
 function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hotel_audit_log.csv";a.click();}
@@ -23458,74 +24138,71 @@ async function claimShiftBidFromForm(dept,id){
 function renderNotificationsSettingsBlock(){
   const perm=(typeof Notification!=="undefined")?Notification.permission:"unsupported";
   const enabled=!!CFG._notifEnabled;
-  const opts=allActiveStaffOptions();
-  const curName=CFG._notifName||"";
+  // Re-synced fresh from CFG on every render — see _notifIdentSyncFromCfg()'s own comment for why this matches
+  // the prior design's existing "reflect last-saved state on open" convention, not a new behavior.
+  _notifIdentSyncFromCfg();
+  const curName=_notifIdentNames()[0]||"";
+  const mgrDepts=_notifIdentMgrDepts();
+  const roomApplicable=_notifRoomAssignApplicable();
   const statusLine=perm==="unsupported"
     ?`<span class="pill err">Not supported</span> <span class="small muted">This browser doesn't support notifications.</span>`
     :perm==="denied"
-    ?`<span class="pill err">Blocked</span> <span class="small muted">Notifications were denied in browser settings \u2014 re-enable them for this site to use reminders.</span>`
+    ?`<span class="pill err">Blocked</span> <span class="small muted">Notifications were denied in browser settings — re-enable them for this site to use reminders.</span>`
     :enabled
     ?`<span class="pill ok">Enabled on this device</span>`
     :`<span class="small muted">Not yet enabled on this device.</span>`;
   // The heading itself is now the <summary> at this function's own call site (see the new <details> wrapper there),
   // so it's no longer duplicated here — this div now only carries the descriptive subtitle, indented to sit
   // visually inside the collapsible section rather than repeating the same bold title twice.
-  return `<div class="cfgrow" style="background:#f4f6f8;border-radius:6px;padding:8px 10px;margin-top:8px"><span class="small muted">Shift reminders for a worker, and/or attendance alerts for a manager, on this device. See Readme for full detail and cross-platform notes.</span></div>
-  <div class="cfgrow">${statusLine}</div>
-  <div class="mrow" style="align-items:center">
-    <!-- "settings notif text overflows from border" (part of a full-app overflow sweep — see this label's own
-     sibling below for the matching fix, and the sweep's other fixes elsewhere in this file). Root cause: this label
-     is display:flex with NO flex-wrap of its own (unlike its OWN parent .mrow, which does wrap) — so its two
-     children (the "Remind me..." text, and the <select>) were forced onto one single, non-wrapping row. The select
-     also carried a hardcoded min-width:220px it could never shrink below, regardless of available space. On a
-     narrow phone, once the label's own text ate up most of the row, the select's fixed 220px floor had nowhere left
-     to fit and was pushed past the card's own right edge — a genuine horizontal overflow, not just a cramped fit.
-     flex-wrap:wrap lets the select drop to its own new line when needed (matching every other multi-child label in
-     this Settings tab); min-width lowered and max-width:100% added so the select itself can also shrink to fit a
-     genuinely narrow screen rather than overflowing on that line too. -->
-    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Remind me about my own shifts, as:
-    <select class="sfield small" id="notifName" style="min-width:160px;max-width:100%" autocomplete="off">
-      <option value="">(no personal reminders \u2014 manager alerts only)</option>
-      ${opts.map(o=>`<option value="${esc(o.name)}" ${o.name===curName?"selected":""}>${esc(o.name)}${o.altName?" (also: "+esc(o.altName)+")":""} (${esc(roleDisplayNameProper(o.role))}, ${esc(CFG[o.dept].label)})</option>`).join("")}
-    </select></label>
+  return `<div class="cfgrow">${statusLine}</div>
+    <!-- Manager entries are checkboxes (multi-select, one per department); personal name is a real radio group
+       (single-select, "None" included) — see toggleNotifIdentityDropdown()'s own comment for the full "why
+       single-select for names" reasoning (this device's own push subscription can only ever represent one
+       person's reminders at a time, so allowing multiple names to appear selected was always misleading). -->
+  <div class="mrow" style="align-items:flex-start">
+    <div class="small" style="display:flex;flex-direction:column;gap:2px">
+      <span>Remind me about shifts, as:</span>
+      <button type="button" id="notifIdentBtn" class="sfield small" style="text-align:left;min-width:220px;max-width:100%;cursor:pointer;display:flex;align-items:center;justify-content:space-between;gap:8px" onclick="toggleNotifIdentityDropdown(event)">
+        <span id="notifIdentSummary">${_notifIdentSummaryText()}</span><span aria-hidden="true" style="opacity:.6">▾</span>
+      </button>
+    </div>
   </div>
-    <!-- "modify notification feature of app to send room assignments to hsk workers". Reuses the SAME "Remind me about my
-       own shifts, as" identity selection above \u2014 no separate name picker needed \u2014 and the SAME once-per-day
-       de-duplication/delivery mechanism (maybeLocalNotify()) every other reminder in this app already uses. Scoped
-       specifically to HSK (checked directly in runReminderCheck() below) since floor/zone room assignments
-       (FLOORS[week][name], see floorOf()) are only ever a meaningful, populated concept for HSK's own Room
-       Attendants/Supervisors roles \u2014 FO has no equivalent per-shift room/zone assignment at all. Off by default (a
-       genuinely new, opt-in notification category, not silently bundled into the existing "Enable notifications" toggle
-       the moment someone already has it on for other reminders). -->
-  <div class="mrow" style="align-items:center">
-        <!-- SCOPED fix (see input.cbx's own CSS comment for the full "blanket rule caused a regression elsewhere, reverted to
-         this scoped fix instead" story) — this ONE label genuinely wraps onto 2 lines on a narrow screen (a long,
-         full-sentence checkbox label), so align-items:flex-start is applied HERE ONLY, pinning the checkbox to the first
-         line rather than floating between two wrapped lines — every OTHER checkbox label in the app keeps its own correct,
-         unmodified align-items:center. -->
-        <!-- "vertically align also notify me of my room assignment with checkbox". Root cause: align-items:flex-start pins the
-         checkbox to the TOP of the label's own box, with a hand-tuned margin-top:2px trying to nudge it back down to
-         visually center against the first line of text — an approximate, fragile guess that only happens to look right at
-         one specific font-size/line-height combination. Switched to align-items:center (this app's own standard convention
-         for every other checkbox+label pairing) — genuinely centers the checkbox against the label's own text regardless
-         of font metrics, with no manual offset to maintain. -->
-    <label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifRoomAssign" ${CFG._notifRoomAssignment?"checked":""}> Also notify me of my room/floor assignment for today (Housekeeping only)</label>
+    <!-- WORKER block — visible only while a real staff name is selected above. Renamed "Worker alerts" (was
+       "Notify me about (as a worker):") and "Shift started and I haven't clocked in"/"Shift ended and I haven't
+       clocked out" shortened to "Shift started without clock-in"/"Shift ended without clock-out" per direct
+       request. Room/floor assignment: wording shortened (no longer "Also notify me of my ... for today"), and its
+       OWN row (id="notifRoomAssignRow") is independently hidden unless the current selection is HSK-relevant (a
+       selected HSK staff name, or the HSK manager entry) — see _notifRoomAssignApplicable()'s own comment for why
+       this is a genuinely HSK-only concept. Every label here has an explicit flex-wrap:nowrap: this block's own
+       parent divs are NOT .cfgrow/.mrow, so the app's shared ".cfgrow/.mrow label:has(checkbox){flex-wrap:nowrap}"
+       rule never reached these specific rows — the real root cause of the checkbox appearing to break onto its
+       own line above the label text (confirmed directly, not just guessed at from the screenshot). -->
+  <div id="notifWorkerBlock" style="display:${curName?"":"none"}">
+    <div class="small" style="display:flex;flex-direction:column;gap:4px;margin-top:4px">
+      <span style="font-weight:600">Worker alerts</span>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeUpcoming" ${notifTypeEnabled("upcoming")?"checked":""}> Upcoming shift (reminder to clock in)</label>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeClockin" ${notifTypeEnabled("clockin")?"checked":""}> Shift started without clock-in</label>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeClockout" ${notifTypeEnabled("clockout")?"checked":""}> Shift ended without clock-out</label>
+      <label id="notifRoomAssignRow" style="display:${roomApplicable?"flex":"none"};flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifRoomAssign" ${CFG._notifRoomAssignment?"checked":""}> Room/floor assignment (Housekeeping only)</label>
+    </div>
   </div>
-    <!-- CFG._notifManagerDepts is an array of the SPECIFIC department(s) this device wants manager alerts for
-       (not a single global boolean) — two independent checkboxes below, one per department, so a
-       manager/scheduler only gets alerts for the department(s) actually relevant to them. -->
-  <div class="mrow" style="align-items:center">
-    <!-- Same "text overflows from border" root cause/fix as the label just above (display:flex with no wrap of its
-     own, this time holding a long sentence PLUS two nested checkbox-labels as children) — flex-wrap:wrap added so
-     the FO/HSK checkboxes can drop to their own line under the sentence on a narrow phone instead of being forced
-     off the right edge. -->
-    <label class="small" style="display:flex;flex-wrap:wrap;align-items:center;gap:6px">Also alert me as a manager/scheduler if a worker doesn't clock in/out as scheduled for:
-      <label class="small" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" id="notifMgrFO" ${(CFG._notifManagerDepts||[]).includes("FO")?"checked":""}> ${esc(CFG.FO.label)}</label>
-      <label class="small" style="display:inline-flex;align-items:center;gap:4px"><input type="checkbox" class="cbx" id="notifMgrHSK" ${(CFG._notifManagerDepts||[]).includes("HSK")?"checked":""}> ${esc(CFG.HSK.label)}</label>
-    </label>
+    <!-- MANAGER block — visible only while at least one "Manager — <dept>" entry is selected above. Renamed
+       "Manager alerts" (was "Alert me about (as a manager):"), and the first checkbox's wording now matches the
+       worker-facing "Shift started without clock-in" phrase EXACTLY (previously "No clock-in once shift starts")
+       per direct request to use identical language for both audiences — see attendanceStateFor()'s own comment
+       for why "shift started" and "shift in progress" were already confirmed to describe the identical instant,
+       not two different ones. Second checkbox similarly reworded to "Shift ended without clock-out" for the same
+       worker/manager wording-parity reason. -->
+  <div id="notifMgrBlock" style="display:${mgrDepts.length?"":"none"}">
+    <div class="small" style="display:flex;flex-direction:column;gap:4px">
+      <span style="font-weight:600">Manager alerts</span>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeMgrMissing" ${notifTypeEnabled("mgrMissing")?"checked":""}> Shift started without clock-in</label>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeMgrNotout" ${notifTypeEnabled("mgrNotout")?"checked":""}> Shift ended without clock-out</label>
+      <label style="display:flex;flex-wrap:nowrap;align-items:center;gap:6px"><input type="checkbox" class="cbx" id="notifTypeMgrSpecialConsid" ${notifTypeEnabled("mgrSpecialConsid")?"checked":""}> Special consideration requested for leave</label>
+    </div>
   </div>
-  <div class="cfgrow">
-    <button class="brand" onclick="enableNotifications(el('notifName').value,[el('notifMgrFO').checked?'FO':null,el('notifMgrHSK').checked?'HSK':null].filter(Boolean),el('notifRoomAssign').checked)">${enabled?"Update":"Enable"} notifications on this device</button>
+  <div class="cfgrow" style="margin-top:6px">
+    <button class="brand" onclick="_submitNotifSettings()">${enabled?"Update":"Enable"} notifications on this device</button>
     ${enabled?'<button onclick="disableNotifications()">Disable on this device</button>':""}
   </div>
     <!-- Three separate diagnostic tools, each isolating a DIFFERENT stage of the notification pipeline, so they are
@@ -23767,12 +24444,14 @@ function diagnoseReminders(){
   // the LIVE form elements directly (falling back to the saved CFG values only if the form itself isn't
   // currently rendered, e.g. a future programmatic call) — an unsaved change to the dropdown/checkboxes is
   // immediately reflected the next time Diagnose is clicked, with no need to click Update first.
-  const _nameEl=el("notifName"),_mgrFoEl=el("notifMgrFO"),_mgrHskEl=el("notifMgrHSK");
-  const myName=_nameEl?_nameEl.value:CFG._notifName;
-  const mgrDepts=_nameEl?[_mgrFoEl&&_mgrFoEl.checked?"FO":null,_mgrHskEl&&_mgrHskEl.checked?"HSK":null].filter(Boolean):(CFG._notifManagerDepts||[]);
+  // Reads the SAME live _notifIdentSelected Set the Enable/Update button itself reads (via
+  // _submitNotifSettings()), which is already kept current on every checkbox/radio change (see
+  // _onNotifIdentMgrToggle()/_onNotifIdentNameSelect()), so this needs no separate DOM-reading fallback.
+  const myName=_notifIdentNames()[0]||"";
+  const mgrDepts=_notifIdentMgrDepts();
   if(!myName){
     if(mgrDepts.length){box.innerHTML=_diagnoseManagerAlertsHtml(mgrDepts);return;}
-    box.innerHTML=`<div class="mflag">No personal reminder name is selected above, and no manager-alert department is checked \u2014 pick a name in "Remind me about my own shifts, as:", or check at least one department under "Also alert me as a manager/scheduler", then run this again.</div>`;return;
+    box.innerHTML=`<div class="mflag">No personal name is selected above, and no manager department is checked \u2014 select a name and/or a "Manager \u2014 ..." department in "Remind me about shifts, as:", then run this again.</div>`;return;
   }
   const{wk,dayIdx}=todaysWeekAndDayIdx();
   let found=null;
@@ -23808,7 +24487,7 @@ function diagnoseReminders(){
     if(dp==="HSK"){
       const roomAssignment=floorOfForWeek(s.n,mondayOfWeekStartThu(new Date()));
       const wouldRoom=CFG._notifRoomAssignment&&wouldUpcoming&&!!roomAssignment;
-      rows.push(`<tr><td>Room/floor assignment feature</td><td>${CFG._notifRoomAssignment?"Enabled on this device":"<b>Disabled</b> \u2014 check \u201cAlso notify me of my room/floor assignment\u201d above first"}</td></tr>`);
+      rows.push(`<tr><td>Room/floor assignment feature</td><td>${CFG._notifRoomAssignment?"Enabled on this device":"<b>Disabled</b> \u2014 check \u201cRoom/floor assignment (Housekeeping only)\u201d in the Worker alerts list above first"}</td></tr>`);
       rows.push(`<tr><td>Today's floor/zone assignment</td><td>${roomAssignment?esc(roomAssignment):"<span class='muted'>(none set for today)</span>"}</td></tr>`);
       rows.push(`<tr><td>Would room-assignment notify fire right now?</td><td>${wouldRoom?"<b>Yes</b>":"No"}</td></tr>`);
     }else{
