@@ -3879,7 +3879,8 @@ function openExcelImportWizard(){
   const bg=document.createElement("div");bg.className="modalbg";bg.id="xlImportModal";bg.style.display="flex";
   bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%;max-height:88vh;overflow:auto">
     <h2>⬆ Import schedule/demand from Excel</h2>
-    <p class="small">Upload an Excel file using the same layout as this hotel's own FO/HSK schedule workbooks (a <b>Date</b> row, <b>Occupancy/Arrivals/Departures</b> rows — plus, for Housekeeping, <b>OOO/House-use/Unassigned rooms</b> — then a two-row block per staff member). Only cells that are still genuinely empty get filled in; anything already entered here is always left untouched, and any staff name that doesn't match the current roster is reported for you to review rather than guessed at.</p>
+    <!-- "make concise" -->
+    <p class="small">Uses this hotel's own FO/HSK schedule workbook layout (Date row, Occupancy/Arrivals/Departures — plus OOO/House-use/Unassigned rooms for Housekeeping — then a two-row block per staff member). Never overwrites existing data; unmatched names are flagged for you to review.</p>
     <div class="mrow" style="align-items:center;flex-wrap:wrap;gap:8px">
       <label class="small">Department: <select id="xlImportDept" class="sfield"><option value="FO">${esc(CFG.FO.label)}</option><option value="HSK">${esc(CFG.HSK.label)}</option></select></label>
       <button class="btn30" onclick="document.getElementById('xlImportFile').click()">📂 Choose file…</button>
@@ -6622,6 +6623,18 @@ function render(){
   // codebase's other scroll-preservation fixes already rely on for a freshly-replaced element to have real
   // dimensions to clamp/scroll against.
   if(_gridWrap)requestAnimationFrame(()=>{_gridWrap.scrollLeft=_gridSx;_gridWrap.scrollTop=_gridSy;});
+  // "I clicked undo but the redo button remains greyed out which doesn't make sense" — _refreshUndoRedoButtons()
+  // was previously only ever called from a handful of specific choke points (save()'s own batch-commit, the end
+  // of _undoRestore(), a live-reconnect handler) — never unconditionally from render() itself. Any OTHER path
+  // that can legitimately change UNDO_STACK/REDO_STACK without passing through one of those exact choke points
+  // (e.g. autoStampBirthdaysQuiet(), called on every schedule render(), can itself trigger a genuine tracked
+  // save() the very next time this function runs for an ordinary reason) left the buttons' disabled state and
+  // tooltip stale relative to the arrays' own CURRENT contents until the next one of those specific choke points
+  // happened to fire. Calling this unconditionally here, at the very end of EVERY render() pass, guarantees the
+  // buttons can never drift out of sync with the real UNDO_STACK/REDO_STACK state for more than one render — the
+  // single simplest guarantee against this entire class of "stale button" bug, regardless of which exact code
+  // path caused the stacks to change.
+  _refreshUndoRedoButtons();
 }
 // Directly answers the question: "can the app reliably remove the dot when In and Out are on another line from the
 // est hours?" YES, but only via a real post-render layout measurement — there is no pure- CSS way to conditionally
@@ -11207,18 +11220,64 @@ function humanizeAvailDates(obj){
   if(!obj||!Object.keys(obj).length)return "(none)";
   return Object.values(obj).map(a=>"\u2022 "+_humanizeOneAvailDateEntry(a)).join("\n");
 }
-// The recurring WEEKLY pattern (avail[dow]={off,from,to,reason}) \u2014 keyed by real day names already (Mon/Tue/...),
+// The recurring WEEKLY pattern (avail[dow]={off,from,to,reason}) — keyed by real day names already (Mon/Tue/...),
 // so the only real readability gap versus humanizeDiffValue()'s generic object branch is the per-day shape itself
-// (off:true/false + a time window) \u2014 rendered here as "Mon: Off all day" / "Wed: Unavailable 15:00\u201318:00"
+// (off:true/false + a time window) — rendered here as "Mon: Off all day" / "Wed: Unavailable 15:00–18:00"
 // instead of raw "off: Yes; from: 00:00; to: 23:59" field-by-field punctuation.
 function humanizeWeeklyAvail(obj){
   if(!obj||!Object.keys(obj).length)return "(none)";
   return Object.keys(obj).map(d=>{
     const a=obj[d]||{};
     let detail=a.off?"Off all day":("Unavailable "+(a.from||"?")+"\u2013"+(a.to||"?"));
-    if(a.reason)detail+=" \u2014 "+a.reason;
+    if(a.reason)detail+=" — "+a.reason;
     return "\u2022 "+d+": "+detail;
   }).join("\n");
+}
+// "redundant to have 'your device Sept 13' and 'live copy Sept 13' [listed separately] ... sort by ... date as
+// ONE bullet point with your device and live copy in one bullet" — root cause: the field-level diff above only
+// ever compared the WHOLE availDates/avail object as one blob (JSON.stringify(l.availDates)!==JSON.stringify(
+// r.availDates)) — the instant ANY single entry inside that object differed, humanizeAvailDates()/
+// humanizeWeeklyAvail() then dumped EVERY entry from BOTH sides in full, including entries that are byte-for-byte
+// IDENTICAL between yours and live (e.g. an unrelated, unchanged Sept 13 entry sitting alongside a genuinely
+// different Sept 16 one) — showing that identical entry redundantly on both lines even though it isn't
+// actually part of what changed. Fixed by moving the diff down to the individual ENTRY level: each function below
+// builds a real per-key comparison (keyed by availDates' own internal id, or by weekday name for avail), skips any
+// entry whose content is identical on both sides, and merges a genuinely-differing entry into ONE bullet showing
+// both values together — never two separate, redundant lines. Chronologically sorted (by the entry's own
+// `from` date for availDates; by actual weekday order, not object key order, for avail) per the same "sort by ...
+// date" request.
+function _diffAvailDatesEntries(localObj,liveObj){
+  localObj=localObj||{};liveObj=liveObj||{};
+  const allKeys=new Set([...Object.keys(localObj),...Object.keys(liveObj)]);
+  const rows=[];
+  allKeys.forEach(k=>{
+    const l=localObj[k],r=liveObj[k];
+    if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical on both sides — not a real difference, skip entirely
+    const sortDate=(l&&l.from)||(r&&r.from)||"";
+    if(l&&!r)rows.push({sortDate,text:"\u2022 "+_humanizeOneAvailDateEntry(l)+" (added on your device, not yet on live)"});
+    else if(!l&&r)rows.push({sortDate,text:"\u2022 "+_humanizeOneAvailDateEntry(r)+" (exists on live, not on your device)"});
+    else rows.push({sortDate,text:"\u2022 Your device: "+_humanizeOneAvailDateEntry(l)+" — Live copy: "+_humanizeOneAvailDateEntry(r)});
+  });
+  if(!rows.length)return null; // every entry matched — nothing genuinely differs here after all
+  rows.sort((a,b)=>a.sortDate<b.sortDate?-1:a.sortDate>b.sortDate?1:0);
+  return rows.map(x=>x.text).join("\n");
+}
+function _diffWeeklyAvailEntries(localObj,liveObj){
+  localObj=localObj||{};liveObj=liveObj||{};
+  const allKeys=new Set([...Object.keys(localObj),...Object.keys(liveObj)]);
+  const _fmtDay=(d,a)=>{if(!a)return null;let detail=a.off?"Off all day":("Unavailable "+(a.from||"?")+"\u2013"+(a.to||"?"));if(a.reason)detail+=" — "+a.reason;return d+": "+detail;};
+  const rows=[];
+  allKeys.forEach(d=>{
+    const l=localObj[d],r=liveObj[d];
+    if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical — skip
+    const lTxt=_fmtDay(d,l),rTxt=_fmtDay(d,r);
+    if(l&&!r)rows.push({d,text:"\u2022 "+lTxt+" (added on your device, not yet on live)"});
+    else if(!l&&r)rows.push({d,text:"\u2022 "+rTxt+" (exists on live, not on your device)"});
+    else rows.push({d,text:"\u2022 "+d+" — Your device: "+lTxt.split(": ")[1]+" / Live copy: "+rTxt.split(": ")[1]});
+  });
+  if(!rows.length)return null;
+  rows.sort((a,b)=>DOW.indexOf(a.d)-DOW.indexOf(b.d));
+  return rows.map(x=>x.text).join("\n");
 }
 function analyzeCfgChanges(localDepts,liveDepts){
   const changes=[];const conflicts=[];
@@ -11245,7 +11304,14 @@ function analyzeCfgChanges(localDepts,liveDepts){
     const locStaff=loc.staff||[];const liveStaff=live.staff||[];
     const locByName=new Map(locStaff.map(s=>[s.n,s]));const liveByName=new Map(liveStaff.map(s=>[s.n,s]));
     const allNames=new Set([...locByName.keys(),...liveByName.keys()]);
-    allNames.forEach(name=>{
+    // "sort by category ... > dept/person > date" — category ordering is already handled by the outer
+    // grouping (_CONFLICT_CATEGORY_ORDER, applied where this output is displayed), and department ordering is
+    // already sequential (this whole function runs once per department, FO before HSK, via the ["FO","HSK"]
+    // loop above). The one real gap was PERSON ordering within a department: a bare Set iterates in whatever
+    // insertion order locStaff/liveStaff happened to be in (roster/edit order), not a stable, predictable one.
+    // Sorted alphabetically by name here so every run produces the same, scannable person order.
+    const sortedNames=Array.from(allNames).sort((a,b)=>a<b?-1:a>b?1:0);
+    sortedNames.forEach(name=>{
       const l=locByName.get(name),r=liveByName.get(name);
       if(l&&!r){
         changes.push(`${deptLabel} roster: "${name}" exists only on your device \u2014 new, not yet on live.`);
@@ -11256,35 +11322,32 @@ function analyzeCfgChanges(localDepts,liveDepts){
         const diffFields=STAFF_FIELDS.filter(f=>JSON.stringify(l[f]??null)!==JSON.stringify(r[f]??null));
         if(diffFields.length){
           // Friendly field label (STAFF_FIELD_LABELS, falling back to the raw key itself only if a future field
-          // is ever added here without a matching label) + a shape-aware humanizer for the two fields whose raw
-          // internal structure the generic humanizeDiffValue() can't correctly interpret on its own (see
-          // STAFF_FIELD_LABELS' own comment above for the full "D2026-09-10" root-cause writeup this fixes).
-          const _humanizeField=(f,v)=>{
-            if(f==="availDates")return humanizeAvailDates(v);
-            if(f==="avail")return humanizeWeeklyAvail(v);
-            return humanizeDiffValue(v);
-          };
-          // "'differs - specific dates off/availability' is redundant, delete" — two separate trims: (1) the
-          // word "differs" itself is redundant with simply being IN this changes/conflicts list at all (nothing
-          // reaches this line unless something already differs); (2) for availDates/avail specifically, the
-          // generic "<field label>: yours=X, live=Y" wrapper repeated a field name that adds nothing once the
-          // itemized entries below it (now genuinely multi-line \u2014 see _renderCategoryItemsList()'s own
-          // "missing line breaks" fix) already read unambiguously as availability/date entries on their own
-          // ("Off all day [PTO]", etc.). Every OTHER (non-availability) field keeps its label \u2014 only these
-          // two, whose own humanized value is already self-descriptive, drop it. "Your device:"/"Live copy:"
-          // (replacing the terser "yours="/"live=") is kept for these two specifically since they're now real
-          // multi-line blocks, not a short inline value \u2014 a bare "yours=" immediately before a line break
-          // reads oddly, while a real label sitting on its own line does not.
+          // is ever added here without a matching label) for every ordinary field; availDates/avail instead go
+          // through the entry-level diffs below (see _diffAvailDatesEntries()/_diffWeeklyAvailEntries()'s own
+          // comment for the full "redundant Sept 13/Sept 13" root-cause writeup this closes) — a field-level
+          // JSON.stringify difference doesn't necessarily mean every individual entry inside it differs, so those
+          // two fields are diffed and rendered entry-by-entry instead of as one wholesale before/after dump.
           const _simpleClauses=[],_availLines=[];
           diffFields.forEach(f=>{
-            if(f==="availDates"||f==="avail"){
-              _availLines.push(`\n  Your device: ${_humanizeField(f,l[f]??null)}\n  Live copy: ${_humanizeField(f,r[f]??null)}`);
+            if(f==="availDates"){
+              const d=_diffAvailDatesEntries(l[f],r[f]);
+              if(d)_availLines.push("\n"+d);
+            }else if(f==="avail"){
+              const d=_diffWeeklyAvailEntries(l[f],r[f]);
+              if(d)_availLines.push("\n"+d);
             }else{
-              _simpleClauses.push(`${STAFF_FIELD_LABELS[f]||f}: yours=${_humanizeField(f,l[f]??null)}, live=${_humanizeField(f,r[f]??null)}`);
+              _simpleClauses.push(`${STAFF_FIELD_LABELS[f]||f}: yours=${humanizeDiffValue(l[f]??null)}, live=${humanizeDiffValue(r[f]??null)}`);
             }
           });
-          const line=`${deptLabel} roster: "${name}" \u2014 `+_simpleClauses.join("; ")+(_simpleClauses.length&&_availLines.length?"; ":"")+_availLines.join("");
-          changes.push(line);conflicts.push(line);
+          // Both entry-level diffs can legitimately return null (STAFF_FIELDS' own JSON.stringify check can flag
+          // the field as "different" purely due to key-insertion-order differences in an otherwise IDENTICAL set
+          // of entries — JSON.stringify is order-sensitive, this app's own actual data is not) — in that
+          // case there's genuinely nothing left to report for this person once the non-availability fields (if
+          // any) are also empty, so this whole entry is correctly skipped rather than pushing an empty line.
+          if(_simpleClauses.length||_availLines.length){
+            const line=`${deptLabel} roster: "${name}" \u2014 `+_simpleClauses.join("; ")+(_simpleClauses.length&&_availLines.length?"; ":"")+_availLines.join("");
+            changes.push(line);conflicts.push(line);
+          }
         }
       }
     });
@@ -24712,7 +24775,13 @@ function renderNotificationsSettingsBlock(){
     <button onclick="checkBackgroundPushStatus()" title="Confirms whether this device\u2019s background push subscription actually reached the shared database \u2014 a foreground test cannot tell you this, since it never touches the server">\ud83d\udce1 Check background push status</button>
     </div>
   </details>`:""}
-  <div id="reminderDiag"></div>
+  <!-- "align left side of check background push status table with the sub-bullet bar for diagnostics" — this
+       div is a SIBLING of #notifDiagDetails above (not nested inside it), so it never inherited that element's
+       own margin-left:18px+padding-left:10px indent (the "sub-bullet bar" this refers to) at all \u2014 tables
+       rendered into it (checkBackgroundPushStatus()/diagnoseReminders()) started flush with the outer container's
+       own left edge instead, visibly misaligned against the Diagnostics section directly above. Matched here so
+       both consistently line up. -->
+  <div id="reminderDiag" style="margin-left:18px;padding-left:10px;"></div>
     <!-- "still not getting notification" after repeated same-day tests \u2014 added to isolate two, easily-confused failure
        modes that look IDENTICAL from the outside ("nothing appeared") but have completely different causes and fixes: (1)
        the notification DELIVERY pathway itself (permission, service worker, OS-level display) genuinely not working on
