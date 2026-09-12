@@ -216,7 +216,21 @@
      guarantees EVERY header button (Prev/Next, Connect, View-only, and any future one) is pixel-identical regardless
      of which glyphs its own label happens to contain. */
   header button{height:27px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1;}
+    /* "even in desktop view the undo/redo buttons should be greyed out if not applicable... they're not right
+       now" — this rule WAS already being applied correctly (UNDO_STACK/REDO_STACK-driven `disabled`, refreshed on
+       every save()/undo/redo — see _refreshUndoRedoButtons()'s own comment), confirmed directly by re-tracing
+       every call site; the real gap is CONTRAST, not logic. .ghostw (the shared style for every header button,
+       including Undo/Redo) is already a deliberately subtle "ghost" look — white text/icon on a transparent
+       background with only a translucent border, meant to sit quietly in the dark header. Uniformly dropping
+       THAT already-subtle look to opacity:.35 barely reads as different at a glance — a real, enabled ghost
+       button and a disabled one looked nearly identical side-by-side, exactly matching "they're not [greyed
+       out]" even though the underlying disabled STATE was always correct. Strengthened specifically for
+       Undo/Redo (kept general for every OTHER .weeknav button, e.g. Prev/Next/Today, whose own disabled state is
+       rare and was never reported as a problem): lower opacity plus an explicit grayscale filter, so the disabled
+       state is unmistakably duller/flatter than the enabled ghost look, regardless of the dark background behind
+       it. */
   button.weeknav:disabled{opacity:.35;cursor:not-allowed;}
+  #btnUndo:disabled,#btnRedo:disabled{opacity:.25;filter:grayscale(1);}
   .deptbtn{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;}
     /* NATIVE MOBILE UI (opt-in — see nativeMobileActive()'s own JS comment for the full design) ---------- Every rule
      below is scoped under body.native-mobile so a classic-view device's CSS is byte-for-byte unaffected regardless of
@@ -661,9 +675,18 @@
        column is ALSO expected to wrap"): table-layout:fixed with an explicit, guaranteed split between the two
        columns means NEITHER one can ever balloon past its own fixed share, regardless of how long any individual
        row's text happens to be — both columns wrap normally instead. */
-  table.checkResultTbl{table-layout:fixed;}
-  table.checkResultTbl th:first-child,table.checkResultTbl td:first-child{width:44%;white-space:normal;overflow-wrap:break-word;}
-  table.checkResultTbl th:last-child,table.checkResultTbl td:last-child{width:56%;white-space:normal;overflow-wrap:break-word;}
+    /* STILL reported squished/too-tall after the first attempt (percentage widths: 44%/56%) — that fix only
+       repeated the exact bug fzOffsets()'s own comment already documents elsewhere: table-layout:fixed with NO
+       min-width still lets the browser shrink the WHOLE table (and both percentage columns along with it) down to
+       fit a narrow container, rather than ever triggering the wrapping .tblwrap's own overflow:auto to scroll
+       horizontally. Switched to this app's own proven fix for exactly this class of bug (see
+       _renderStaleActualTables()'s identical usage for the Actual hours overrides report): explicit PIXEL column
+       widths + min-width equal to their sum, so this table can never be squeezed narrower than that — a screen
+       narrower than the total now correctly scrolls horizontally via .tblwrap instead of shrinking every column
+       (and therefore every row's own text) down to an unreadable sliver. */
+  table.checkResultTbl{table-layout:fixed;min-width:420px;width:100%;}
+  table.checkResultTbl th:first-child,table.checkResultTbl td:first-child{width:160px;white-space:normal;overflow-wrap:break-word;}
+  table.checkResultTbl th:last-child,table.checkResultTbl td:last-child{width:260px;white-space:normal;overflow-wrap:break-word;}
   tr:first-child th,tr:first-child td{border-top:1px solid var(--line);}
   th:first-child,td:first-child{border-left:1px solid var(--line);}
   #grid tr td:last-child,#grid tr th:last-child{border-right:1px solid var(--line);}
@@ -3956,23 +3979,34 @@ function renderExcelImportSheetPicker(){
       <label class="small">to <input type="date" id="xlToDate" class="sfield" value="${esc(maxWk)}"></label>
       <button class="mini" onclick="applyExcelImportDateFilter()">Apply range</button>
     </div>
-    <!-- "not sure what the purpose of the sheet and week starts table is? Is it supposed to correct the
-         automatically recognized date that is covered by the sheet?" — yes, exactly that; added a short, direct
-         explanation rather than leaving it to be inferred from the controls alone. -->
-    <p class="small muted" style="margin-top:6px">Each row is one sheet/tab from the file. The checkbox picks whether that sheet is included; <b>Week starts</b> is this app's own auto-detected Monday for that sheet (read from its Date row) — correct it here if it's wrong, or fill it in yourself for a sheet with no auto-detected date at all.</p>
+    <!-- "make concise" — shortened per direct request; still answers "what is this table for?" (yes, it corrects
+         the auto-detected date) without restating the controls' own already-visible labels. -->
+    <p class="small muted" style="margin-top:6px">One row per sheet. Correct <b>Week starts</b> here if this app's auto-detected date is wrong, or fill it in for a sheet with none.</p>
     <div class="tblwrap" style="overflow:auto;max-height:320px;border:1px solid var(--line);border-radius:8px;margin-top:8px">
     <table class="autoTable"><tr><th></th><th>Sheet</th><th style="white-space:nowrap">Week starts</th></tr>
     ${_xlImportSheets.map((s,i)=>`<tr><td><input type="checkbox" class="cbx" id="xlSheetChk${i}" ${s.include?"checked":""}></td><td style="text-align:left">${esc(s.name)}</td><td><input type="date" class="sfield" style="width:150px" id="xlSheetDate${i}" value="${s.weekStartGuess?weekKey(s.weekStartGuess):""}" onchange="_xlImportSheets[${i}].weekStartGuess=this.value?new Date(this.value+'T00:00:00'):null;if(this.value)el('xlSheetChk${i}').checked=true;"></td></tr>`).join("")}
     </table></div>
-    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="btn30" onclick="previewExcelImport()" title="See exactly what would be written — which schedule cells and Demand fields, and which names in the file didn't match the roster — before anything is actually saved">\ud83d\udd0d Preview…</button> <button class="brand btn30" onclick="runExcelImport()">Import selected week(s)</button></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="btn30" onclick="previewExcelImport()" title="See exactly what would be written — which schedule cells and Demand fields, and which names in the file didn't match the roster — before anything is actually saved">🔍 Preview…</button> <button class="brand btn30" onclick="runExcelImport()">Import selected date(s)</button></div>
     <div id="xlImportResult" style="margin-top:10px"></div>`;
 }
 function applyExcelImportDateFilter(){
   const from=el("xlFromDate").value?new Date(el("xlFromDate").value+"T00:00:00"):null;
   const to=el("xlToDate").value?new Date(el("xlToDate").value+"T00:00:00"):null;
+  // "I set the range for 7/23-7/23... needs to be able to accept non-week ranges (eg 7/25-8/1 which is part of
+  // two schedule weeks)" — root cause: this only ever compared a sheet's own week-START date against [from,to],
+  // so a week that starts BEFORE `from` but still genuinely overlaps the requested range (e.g. a week running
+  // Thu 7/23\u2013Wed 7/29 against a typed range of 7/25\u20138/1) was silently excluded \u2014 only whichever
+  // week's own start happened to fall inside [from,to] got checked, missing any OTHER week the range only
+  // partially overlaps. Fixed with a genuine date-interval overlap test (weekEnd>=from && weekStart<=to) instead
+  // of a start-date-only comparison, so ANY week this range touches even partially \u2014 spanning one week, part
+  // of one week, or parts of two/more consecutive weeks \u2014 gets correctly selected. The underlying import
+  // itself still always processes a whole sheet/week at a time (that's the file's own data granularity \u2014 see
+  // this wizard's own intro paragraph), so a partial-week request still pulls in the FULL week(s) it overlaps;
+  // this fix only makes sure NONE of those overlapping weeks are missed.
   _xlImportSheets.forEach((s,i)=>{
     const chk=el("xlSheetChk"+i);if(!chk||!s.weekStartGuess)return;
-    const inRange=(!from||s.weekStartGuess>=from)&&(!to||s.weekStartGuess<=to);
+    const weekStart=s.weekStartGuess;const weekEnd=new Date(weekStart.getTime()+6*86400000);
+    const inRange=(!from||weekEnd>=from)&&(!to||weekStart<=to);
     chk.checked=inRange;
   });
 }
@@ -4107,48 +4141,85 @@ function _applyExcelImportPlan(dept,plan){
   return{weeksLoaded:plan.weeks.length,cellsWritten,cellsSkippedExisting,demandFieldsWritten,demandFieldsSkipped,strayOnesCleaned:plan.strayOnesCleaned};
 }
 // One week's read-only preview table: every parsed name/day cell from the file, not just the ones that would
-// actually be written — directly answers "what the schedule was in the excel." A cell already covered by
-// existing live data is shown struck-through/muted (left untouched, per this import's own "never overwrite"
-// rule); everything else is bold (a genuinely new value about to be written).
+// actually be written — directly answers "what the schedule was in the excel."
+//
+// "Mon-Sun columns and day-cell columns too narrow in narrow screen making one-letter wide... freeze header row
+// and name column, also follow actual hours overrides report format" — switched to this app's own shared,
+// proven frozen-table system (see fzOffsets()/fzCellAttrs()'s own comment, and _renderStaleActualTables()'s
+// identical usage for the Actual hours overrides report this was asked to match): explicit per-column pixel
+// widths via <colgroup> + table-layout:fixed + the table's own min-width set to their exact sum (never a bare
+// width:100% alone, which is what let columns get squeezed below their own declared width in the first place),
+// Name frozen via the shared .fz/.fz-edge classes, and a real <thead> so the header row genuinely freezes too
+// (this app's global `thead th{position:sticky;top:0}` rule).
+//
+// "when I test import a schedule with 0 cells to write, it shows crossed out as though importing would
+// overwrite, which doesn't make intuitive sense" — strikethrough universally reads as "this is being removed/
+// invalidated," which is the OPPOSITE of what an already-filled, skipped cell actually means here (it's being
+// LEFT ALONE, protected from any change). Replaced strikethrough with a plain muted grey style plus an explicit
+// "(kept)" word, so the read is unambiguous regardless of how many (even ALL) of a week's cells turn out to
+// already be filled: green/bold = a new value WILL be written; grey "(kept)" = nothing happens to this cell.
 function _excelPreviewWeekTable(weekEntry){
   if(!weekEntry.rows.length)return `<div class="small muted" style="margin:4px 0">No staff rows recognized for this week.</div>`;
+  const _fzWidths=[130]; // Name — frozen, matching the Actual hours overrides report's own established convention
+  const _colWidths=[..._fzWidths,...DOW.map(()=>64)]; // + Mon..Sun
+  const _tableWidth=fzOffsets(_colWidths).total;
+  const _colgroup="<colgroup>"+_colWidths.map(w=>`<col style="width:${w}px">`).join("")+"</colgroup>";
+  const _h0=fzCellAttrs(_fzWidths,0);
   const dayHeaders=DOW.map(d=>`<th>${esc(d)}</th>`).join("");
   const rowsHtml=weekEntry.rows.map(row=>{
+    const _c0=fzCellAttrs(_fzWidths,0,"#fff");
     const cellsHtml=[0,1,2,3,4,5,6].map(dayIdx=>{
       const val=row.cellsAll[dayIdx];
-      if(val==null)return `<td class="small muted">—</td>`;
+      if(val==null)return `<td class="small muted" style="text-align:center">\u2014</td>`;
       const isSkipped=row.skippedDays.includes(dayIdx);
       return isSkipped
-        ?`<td class="small muted" style="text-decoration:line-through" title="Already has a value in the live schedule — left untouched">${esc(val)}</td>`
-        :`<td class="small" style="font-weight:600">${esc(val)}</td>`;
+        ?`<td class="small muted" style="text-align:center" title="Live schedule already has a value here \u2014 this import leaves it untouched">${esc(val)} <span style="font-size:10px">(kept)</span></td>`
+        :`<td class="small" style="text-align:center;font-weight:600;color:#0e7c46">${esc(val)}</td>`;
     }).join("");
-    return `<tr><td style="text-align:left;white-space:nowrap">${esc(row.name)}</td>${cellsHtml}</tr>`;
+    return `<tr><td class="small ${_c0.cls}" style="text-align:left;white-space:nowrap;${_c0.style}">${esc(row.name)}</td>${cellsHtml}</tr>`;
   }).join("");
-  return `<div class="tblwrap" style="overflow:auto;max-height:240px;border:1px solid var(--line);border-radius:8px;margin-top:4px"><table class="autoTable"><tr><th>Name</th>${dayHeaders}</tr>${rowsHtml}</table></div>
-    <div class="small muted" style="margin-top:2px">Bold = new value to be written. Struck-through = already has a value in the live schedule (left untouched).</div>`;
+  return `<div class="tblwrap" style="overflow:auto;max-height:280px;border:1px solid var(--line);border-radius:8px;margin-top:4px"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th class="${_h0.cls}" style="${_h0.style}">Name</th>${dayHeaders}</tr></thead><tbody>${rowsHtml}</tbody></table></div>
+    <div class="small muted" style="margin-top:2px"><span style="color:#0e7c46;font-weight:600">Green bold</span> = new value to be written. <span class="muted">Grey \u201c(kept)\u201d</span> = live schedule already has a value here; left untouched.</div>`;
 }
 // "make it so user can see names that didn't match roster... and allow them to select name from roster to match
 // or skip" — same reconciliation pattern this app already established for Paycom imports (see
 // openPaycomNameReconciliation()'s own comment), scoped here to just THIS preview/import session rather than a
 // permanent, saved alias: each unmatched name gets a dropdown of every current roster person in this department,
-// plus an explicit "Skip" option. Picking one calls _xlSetNameOverride(), which re-runs the preview so the
-// reconciled name immediately moves from this table into the real schedule preview above it.
+// plus an explicit "Skip" option. Picking one calls _xlSetNameOverride(), which re-runs the SAME planner the
+// schedule preview above reads — see that function's own comment for direct confirmation this always keeps the
+// two tables in sync.
+//
+// Also switched to the same frozen-header/frozen-first-column format as the schedule preview table above (see
+// that function's own comment for the full "why").
 function renderExcelUnmatchedNames(dept,unmatchedNames){
   if(!unmatchedNames||!unmatchedNames.size)return "";
   const allStaffNames=(CFG[dept].staff||[]).map(s=>s.n);
+  const _fzWidths=[170]; // Name in file — frozen, same convention as the schedule preview table above
+  const _colWidths=[..._fzWidths,90,230]; // + Day cells / Maps to
+  const _tableWidth=fzOffsets(_colWidths).total;
+  const _colgroup="<colgroup>"+_colWidths.map(w=>`<col style="width:${w}px">`).join("")+"</colgroup>";
+  const _h0=fzCellAttrs(_fzWidths,0);
   const rows=Array.from(unmatchedNames.entries()).sort((a,b)=>b[1]-a[1]).map(([fileName,count])=>{
     const curMap=_xlNameOverrides[fileName];
     const fnEsc=esc(fileName).replace(/'/g,"&#39;");
-    const opts=`<option value="">Skip — don't import</option>`+allStaffNames.map(n=>`<option value="${esc(n)}" ${curMap===n?"selected":""}>${esc(n)}</option>`).join("");
-    return `<tr><td class="small" style="text-align:left">${esc(fileName)}</td><td class="small" style="text-align:center">${count}</td><td><select class="sfield small" onchange="_xlSetNameOverride('${fnEsc}',this.value)">${opts}</select></td></tr>`;
+    const opts=`<option value="">Skip \u2014 don't import</option>`+allStaffNames.map(n=>`<option value="${esc(n)}" ${curMap===n?"selected":""}>${esc(n)}</option>`).join("");
+    const _c0=fzCellAttrs(_fzWidths,0,"#fff");
+    return `<tr><td class="small ${_c0.cls}" style="text-align:left;${_c0.style}">${esc(fileName)}</td><td class="small" style="text-align:center">${count}</td><td><select class="sfield small" style="width:100%" onchange="_xlSetNameOverride('${fnEsc}',this.value)">${opts}</select></td></tr>`;
   }).join("");
-  return `<div style="margin-top:10px"><b style="color:#b30000">${unmatchedNames.size} name(s) in the file didn't match anyone on the current ${esc(CFG[dept].label)} roster</b> — map each to the correct person below, or leave as Skip to exclude them from this import (shown by day-cell count, most-affected first):
-    <div class="tblwrap" style="overflow:auto;max-height:220px;border:1px solid var(--line);border-radius:8px;margin-top:6px"><table class="autoTable"><tr><th style="text-align:center">Name in file</th><th>Day cells</th><th>Maps to</th></tr>${rows}</table></div>
+  return `<div style="margin-top:10px"><b style="color:#b30000">${unmatchedNames.size} name(s) in the file didn't match anyone on the current ${esc(CFG[dept].label)} roster</b> \u2014 map each to the correct person below, or leave as Skip to exclude them from this import (shown by day-cell count, most-affected first):
+    <div class="tblwrap" style="overflow:auto;max-height:220px;border:1px solid var(--line);border-radius:8px;margin-top:6px"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th class="${_h0.cls}" style="${_h0.style}">Name in file</th><th>Day cells</th><th>Maps to</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 }
+// "if user maps name in the mapping table, is the preview table updated to show that?" — yes: previewExcelImport()
+// re-runs the SAME _planExcelImport(dept,_xlNameOverrides) call with the just-updated override map, so a freshly
+// mapped name is immediately resolved to its roster identity and its row moves out of THIS table and into the
+// per-week schedule preview above — there is only ever one parsing pass feeding both tables, so they can never
+// show conflicting information. flashNote() added here purely so the (otherwise easy-to-miss, since the whole
+// panel re-renders at once) change is confirmed explicitly.
 function _xlSetNameOverride(fileName,rosterName){
   _xlNameOverrides[fileName]=rosterName||"";
-  previewExcelImport(); // re-run so the reconciled name moves out of Unmatched and into the schedule preview above
+  previewExcelImport();
+  flashNote(rosterName?("Mapped \u201c"+fileName+"\u201d \u2192 "+rosterName+" \u2014 schedule preview above updated."):("\u201c"+fileName+"\u201d marked Skip \u2014 will not be imported."));
 }
 // Read-only dry run — calls the SAME _planExcelImport() runExcelImport() itself calls, so nothing shown here
 // can ever drift out of sync with what a real Import would actually do.
@@ -4164,7 +4235,7 @@ function previewExcelImport(){
   resultEl.innerHTML=`<div style="font-weight:600;margin-bottom:4px">Preview — nothing has been imported yet</div>
     ${weekBlocks||"<div class='small muted'>No dated/checked weeks to preview — check at least one sheet with a valid Week starts date above.</div>"}
     ${renderExcelUnmatchedNames(dept,plan.unmatchedNames)}
-    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">✅ Import selected week(s)</button></div>`;
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px"><button class="brand" onclick="runExcelImport()">✅ Import selected date(s)</button></div>`;
 }
 async function runExcelImport(){
   const dept=el("xlImportDept").value;
@@ -11032,6 +11103,54 @@ const APP_WIDE_SETTING_LABELS={
   accrual:"PTO accrual settings",autoComputeActualFromClock:"Auto-compute actual hours from clock",
   hideUnavailInfoFromViewers:"Hide availability info from viewers"
 };
+// "changes since you were away doesn't use human eyes language, says things like -availdadtes:yours = none live =
+// d2026-09-10 etc" — two separate, compounding problems in the roster diff line below: (1) the raw camelCase
+// FIELD KEY itself (e.g. "availDates") was used directly as the line's own label, with no friendly name lookup —
+// unlike SHARED_APP_CFG_KEYS' own settings, which already get a proper label via APP_WIDE_SETTING_LABELS just
+// above; (2) even once labeled, availDates' own VALUE is an object keyed by an internal, machine-only id
+// (e.g. "D2026-09-10_2026-09-10", built by addSpecDate()/setCell()'s own auto-leave-detection — see those
+// functions' own comments) — humanizeDiffValue()'s generic object branch has no way to know these keys are
+// meaningless to a human and rendered them verbatim, exactly matching the reported raw "D2026-09-10" text.
+// STAFF_FIELD_LABELS gives every editable staff field the same kind of friendly name APP_WIDE_SETTING_LABELS
+// already provides for settings; humanizeAvailDates()/humanizeWeeklyAvail() below are shape-aware humanizers for
+// the two fields whose raw internal structure (an id-keyed map for specific-date overrides; a day-name-keyed map
+// for the recurring weekly pattern) generically-generic humanizeDiffValue() could never correctly interpret.
+const STAFF_FIELD_LABELS={
+  role:"Role",type:"Type",rate:"Rate",employed:"Employed",inactiveSince:"Inactive since",hireDate:"Hire date",
+  birthday:"Birthday",guestRating:"Guest rating",performanceScore:"Performance score",priorityOverride:"Priority override",
+  paycomEmployeeId:"Paycom Employee ID",paycomBadgeNumber:"Paycom Badge No.",note:"Note",altName:"Alternate name",
+  avail:"Weekly availability",availDates:"Specific dates off/availability",off:"Recurring days off",noGY:"No graveyard shifts",oncall:"On-call"
+};
+// One specific-date override (availDates' own per-entry shape: {from,to,part,startTime,endTime,code,reason,
+// autoFromSchedule}) rendered as a genuine, readable sentence instead of raw object punctuation.
+function _humanizeOneAvailDateEntry(a){
+  if(!a)return "";
+  const fmtD=iso=>{try{return new Date(iso+"T00:00:00").toLocaleDateString(undefined,{month:"short",day:"numeric",year:"numeric"});}catch(e){return iso;}};
+  const dateLabel=(a.from===a.to)?fmtD(a.from):(fmtD(a.from)+"\u2013"+fmtD(a.to));
+  let detail;
+  if(a.part&&(a.startTime||a.endTime))detail="Unavailable "+(a.startTime||"?")+"\u2013"+(a.endTime||"?");
+  else detail="Off all day"+(a.code?" ("+a.code+")":"");
+  if(a.reason)detail+=" \u2014 "+a.reason;
+  if(a.autoFromSchedule)detail+=" [auto, from schedule]";
+  return dateLabel+": "+detail;
+}
+function humanizeAvailDates(obj){
+  if(!obj||!Object.keys(obj).length)return "(none)";
+  return Object.values(obj).map(a=>"\u2022 "+_humanizeOneAvailDateEntry(a)).join("\n");
+}
+// The recurring WEEKLY pattern (avail[dow]={off,from,to,reason}) \u2014 keyed by real day names already (Mon/Tue/...),
+// so the only real readability gap versus humanizeDiffValue()'s generic object branch is the per-day shape itself
+// (off:true/false + a time window) \u2014 rendered here as "Mon: Off all day" / "Wed: Unavailable 15:00\u201318:00"
+// instead of raw "off: Yes; from: 00:00; to: 23:59" field-by-field punctuation.
+function humanizeWeeklyAvail(obj){
+  if(!obj||!Object.keys(obj).length)return "(none)";
+  return Object.keys(obj).map(d=>{
+    const a=obj[d]||{};
+    let detail=a.off?"Off all day":("Unavailable "+(a.from||"?")+"\u2013"+(a.to||"?"));
+    if(a.reason)detail+=" \u2014 "+a.reason;
+    return "\u2022 "+d+": "+detail;
+  }).join("\n");
+}
 function analyzeCfgChanges(localDepts,liveDepts){
   const changes=[];const conflicts=[];
   // "go local to live list of conflicts/changes went missing again" — traced this specific re-occurrence to a
@@ -11067,7 +11186,16 @@ function analyzeCfgChanges(localDepts,liveDepts){
       }else if(l&&r){
         const diffFields=STAFF_FIELDS.filter(f=>JSON.stringify(l[f]??null)!==JSON.stringify(r[f]??null));
         if(diffFields.length){
-          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${f}: yours=${humanizeDiffValue(l[f]??null)}, live=${humanizeDiffValue(r[f]??null)}`).join("; ");
+          // Friendly field label (STAFF_FIELD_LABELS, falling back to the raw key itself only if a future field
+          // is ever added here without a matching label) + a shape-aware humanizer for the two fields whose raw
+          // internal structure the generic humanizeDiffValue() can't correctly interpret on its own (see
+          // STAFF_FIELD_LABELS' own comment above for the full "D2026-09-10" root-cause writeup this fixes).
+          const _humanizeField=(f,v)=>{
+            if(f==="availDates")return humanizeAvailDates(v);
+            if(f==="avail")return humanizeWeeklyAvail(v);
+            return humanizeDiffValue(v);
+          };
+          const line=`${deptLabel} roster: "${name}" differs \u2014 `+diffFields.map(f=>`${STAFF_FIELD_LABELS[f]||f}: yours=${_humanizeField(f,l[f]??null)}, live=${_humanizeField(f,r[f]??null)}`).join("; ");
           changes.push(line);conflicts.push(line);
         }
       }
@@ -23846,17 +23974,21 @@ async function removeUser(i){if(!(await uiConfirm("Remove "+USERS[i].name+"?")))
 // bounded-height container from the earlier fix was necessary, but not sufficient. Wrapping this exact same
 // header row in a real <thead> (no other markup changes) is what actually applies the sticky rule now.
 function showAudit(){const rows=(AUDIT||[]).slice(-200).reverse();
-  // "Change column is squished, becomes too tall when screen is narrowed" — table.autoTable's own general rule
-  // only pins the FIRST column ("When") to nowrap, intentionally leaving every other column free to wrap (see
-  // that rule's own comment: a short, fixed-meaning first column paired with genuinely variable-length siblings
-  // should be the only one exempted). This table's markup additionally forced BOTH "User" and "Dept" to nowrap
-  // via their own inline styles — three of four columns nowrap, not one — so on a narrow screen those three
-  // together consumed most of the available width, squeezing the sole wrap-enabled "Change" column down to a
-  // sliver and forcing its own text to wrap across many lines (tall rows). "User"/"Dept" hold short values (a
-  // name; "FO"/"HSK") that don't need forced nowrap the way a fixed-format timestamp does — removed here so a
-  // narrow screen wraps THOSE first if genuinely needed, instead of taking width away from "Change", the one
-  // column that actually holds long, variable-length text.
-  const _html=rows.length?('<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table class="autoTable"><thead><tr><th>When</th><th>User</th><th>Dept</th><th>Change</th></tr></thead>'+rows.map(r=>`<tr><td>${new Date(r.ts).toLocaleString()}</td><td>${esc(r.user)}</td><td>${r.dept}</td><td style='text-align:left'>${esc(r.detail)}</td></tr>`).join("")+"</table></div>"):"<span class='muted'>No changes logged yet.</span>";
+  // "both user and dept columns are squished now in narrow screen. follow actual hours overrides format" — the
+  // PREVIOUS fix (removing forced nowrap from User/Dept) only relocated the squeeze rather than fixing it: with
+  // table-layout:fixed and NO explicit per-column widths, a browser simply divides available width EVENLY across
+  // all 4 columns regardless of content — on a narrow screen that still leaves User/Dept themselves too narrow
+  // for their own short values. Switched to this app's own shared, proven fix for exactly this class of bug (see
+  // fzOffsets()'s own comment, and _renderStaleActualTables()'s identical usage for the Actual hours overrides
+  // report): explicit per-column pixel widths via <colgroup>, table-layout:fixed, and the table's own width set to
+  // min-width:<sum>px + width:100% (never a bare width:100% alone, which is what let the browser squeeze
+  // declared widths below their own minimum in the first place) — so no column can ever be squeezed narrower
+  // than its own declared width, and .tblwrap's existing overflow:auto scrolls horizontally on a screen narrower
+  // than that total instead.
+  const _colWidths=[150,110,55,340]; // When / User / Dept / Change
+  const _tableWidth=fzOffsets(_colWidths).total;
+  const _colgroup="<colgroup>"+_colWidths.map(w=>`<col style="width:${w}px">`).join("")+"</colgroup>";
+  const _html=rows.length?(`<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th>When</th><th>User</th><th>Dept</th><th style="text-align:left">Change</th></tr></thead><tbody>`+rows.map(r=>`<tr><td class="small" style="white-space:nowrap">${esc(new Date(r.ts).toLocaleString())}</td><td class="small" style="overflow-wrap:break-word">${esc(r.user)}</td><td class="small" style="text-align:center">${esc(r.dept)}</td><td class="small" style="text-align:left;overflow-wrap:break-word">${esc(r.detail)}</td></tr>`).join("")+"</tbody></table></div>"):"<span class='muted'>No changes logged yet.</span>";
   openGenericViewModal("Change log (most recent 200)",_html);
 }
 function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download="hotel_audit_log.csv";a.click();}
@@ -24122,9 +24254,9 @@ async function approveShiftBid(dept,id){
   _markAssignDirty(dept,bid.week,bid.claimedBy);_markAssignDirty(dept,bid.week,bid.fromName);
   save("hotel_assign",ASSIGN);
   if(DB){pushWeekAll(dept,bid.week);}
-  bid.status="approved";bid.decidedAt=new Date().toISOString();bid.decidedBy=(CURRENT_USER&&CURRENT_USER.name)||"scheduler";
+  bid.status="approved";bid.decidedAt=new Date().toISOString();bid.decidedBy=_actingUserNameForDept(dept);
   save("hotel_shiftbids",SHIFT_BIDS);
-  logChange("shiftbid",bid.fromName+"'s "+bid.dayLabel+" ("+bid.val+") reassigned to "+bid.claimedBy+" via shift bid approval");
+  logChange("shiftbid",bid.fromName+"'s "+bid.dayLabel+" ("+bid.val+") reassigned to "+bid.claimedBy+" via shift bid approval",bid.decidedBy);
   render();renderLeaveTab();
 }
 // Revoke for an approved bid, mirroring revokeLeaveApproval()'s own exact pattern: undoes the real ASSIGN effect
@@ -24158,9 +24290,10 @@ async function revokeShiftBidApproval(dept,id){
     save("hotel_assign",ASSIGN);
     if(DB)pushWeekAll(dept,bid.week);
   }
+  const _revokedBy=_actingUserNameForDept(dept);
   bid.status="claimed";bid.decidedAt=null;bid.decidedBy=null;
   save("hotel_shiftbids",SHIFT_BIDS);
-  logChange("shiftbid","Approval revoked for "+bid.fromName+"'s "+bid.dayLabel+" ("+bid.val+") \u2014 returned to awaiting-approval");
+  logChange("shiftbid","Approval revoked for "+bid.fromName+"'s "+bid.dayLabel+" ("+bid.val+") \u2014 returned to awaiting-approval",_revokedBy);
   render();renderLeaveTab();
 }
 async function denyShiftBid(dept,id){
@@ -24774,6 +24907,27 @@ function canDecideLeaveRequest(r){
   if(SUPA_USER)return !!supaCanEdit(r.dept); // Supabase session active — per-department (or manager) grant is authoritative
   if(EDIT&&EDIT_DEPT===r.dept)return true; // PIN-based: currently-active edit session for this exact department
   return !!EDITMEM[r.dept]; // PIN-based: previously-unlocked, still-valid access to this department (even if not the active tab right now)
+}
+// "there is still a ? for user in change log" — root cause, confirmed directly from canDecideLeaveRequest() just
+// above (and its own call sites' comments, e.g. approveShiftBid()'s "a manager deciding a bid from the Leave
+// Requests tab may not have that specific department's edit mode toggled on at that exact moment"): a Leave
+// Requests/shift-bid decision is explicitly allowed for a department that is NOT the currently-active EDIT_DEPT —
+// but every one of those decision functions still read the single GLOBAL CURRENT_USER variable to attribute the
+// decision, which only ever reflects whichever department happens to be the ACTIVE one right now. Deciding on a
+// different, merely previously-unlocked department (the exact case this access check exists to allow) left
+// CURRENT_USER either null or naming the WRONG (currently-active) department's own user — producing the reported
+// bare "?" (or a misattributed name) in the change log/decidedBy field. Fixed with one shared resolver every
+// decision function below now calls instead of reading CURRENT_USER directly: prefers this EXACT department's own
+// EDITMEM entry (the real user who unlocked THAT department, regardless of which tab is active right now) over
+// the possibly-unrelated global CURRENT_USER, and only falls through to CURRENT_USER/SUPA_USER/"scheduler" if this
+// department genuinely has no EDITMEM entry of its own (e.g. a fresh Supabase session that never touched EDITMEM).
+function _actingUserNameForDept(dept){
+  const mm=EDITMEM[dept];
+  if(mm&&mm!==true)return mm.name||mm.email||"scheduler";
+  if(EDIT&&EDIT_DEPT===dept&&CURRENT_USER)return CURRENT_USER.name;
+  if(SUPA_USER)return SUPA_USER.email;
+  if(CURRENT_USER)return CURRENT_USER.name;
+  return "scheduler";
 }
 // Builds the Name <option> list for a specific department only, active staff only — used both for the initial
 // render AND to re-populate the Name dropdown whenever Department changes (see refreshLeaveNameOptions below).
@@ -26621,7 +26775,7 @@ async function approveLeaveRequest(id){
   // (an optional field).
   const _reasonNote=req.reason?("\n\nReason: "+(req.reasonTier?("Tier "+req.reasonTier+" \u00b7 "):"")+req.reason):"";
   if(!(await uiConfirm(_pastCaution+"Approve "+req.name+"\u2019s "+req.code+" request ("+req.from+(req.to!==req.from?"\u2192"+req.to:"")+")?"+_reasonNote+conflictMsg+_sameDayOffNote)))return;
-  req.status="approved";req.decidedAt=new Date().toISOString();req.decidedBy=(CURRENT_USER?CURRENT_USER.name:"?");
+  req.status="approved";req.decidedAt=new Date().toISOString();req.decidedBy=_actingUserNameForDept(req.dept);
   stampApprovedLeave(req);
   save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);
   renderLeaveTab();render();
@@ -26657,7 +26811,7 @@ async function denyLeaveRequest(id){
   // Same tier/reason surfacing as approveLeaveRequest() \u2014 see that function's own matching comment.
   const _reasonNoteD=req.reason?("\n\nReason: "+(req.reasonTier?("Tier "+req.reasonTier+" \u00b7 "):"")+req.reason):"";
   if(!(await uiConfirm(_pastCautionD+"Deny "+req.name+"\u2019s "+req.code+" request?"+_reasonNoteD+" The record stays visible (marked Denied) for transparency.")))return;
-  req.status="denied";req.decidedAt=new Date().toISOString();req.decidedBy=(CURRENT_USER?CURRENT_USER.name:"?");
+  req.status="denied";req.decidedAt=new Date().toISOString();req.decidedBy=_actingUserNameForDept(req.dept);
   save("hotel_leaverequests",LEAVE_REQUESTS);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
@@ -26693,7 +26847,7 @@ async function revokeLeaveApproval(id){
       if(row&&row[dow]===req.code)delete row[dow]; // safe to clear — exactly matches what approval stamped, no later manual edit to lose
     }
   }
-  req.status="pending";req.decidedAt=null;req.decidedBy=null;req.revokedAt=new Date().toISOString();req.revokedBy=(CURRENT_USER?CURRENT_USER.name:"?");
+  req.status="pending";req.decidedAt=null;req.decidedBy=null;req.revokedAt=new Date().toISOString();req.revokedBy=_actingUserNameForDept(req.dept);
   save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
@@ -26709,7 +26863,7 @@ async function revokeLeaveDenial(id){
   const req=LEAVE_REQUESTS[id];if(!req||req.status!=="denied")return;
   if(!canDecideLeaveRequest(req)){uiAlert("You do not have edit access to "+CFG[req.dept].label+" to reconsider this request.");return;}
   if(!(await uiConfirm("Reopen "+req.name+"\u2019s "+req.code+" request ("+req.from+(req.to!==req.from?"\u2192"+req.to:"")+") for a fresh decision? It will return to Pending.")))return;
-  req.status="pending";req.decidedAt=null;req.decidedBy=null;req.reconsideredAt=new Date().toISOString();req.reconsideredBy=(CURRENT_USER?CURRENT_USER.name:"?");
+  req.status="pending";req.decidedAt=null;req.decidedBy=null;req.reconsideredAt=new Date().toISOString();req.reconsideredBy=_actingUserNameForDept(req.dept);
   save("hotel_leaverequests",LEAVE_REQUESTS);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
