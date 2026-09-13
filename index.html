@@ -216,21 +216,16 @@
      guarantees EVERY header button (Prev/Next, Connect, View-only, and any future one) is pixel-identical regardless
      of which glyphs its own label happens to contain. */
   header button{height:27px;box-sizing:border-box;display:inline-flex;align-items:center;justify-content:center;line-height:1;}
-    /* "even in desktop view the undo/redo buttons should be greyed out if not applicable... they're not right
-       now" — this rule WAS already being applied correctly (UNDO_STACK/REDO_STACK-driven `disabled`, refreshed on
-       every save()/undo/redo — see _refreshUndoRedoButtons()'s own comment), confirmed directly by re-tracing
-       every call site; the real gap is CONTRAST, not logic. .ghostw (the shared style for every header button,
-       including Undo/Redo) is already a deliberately subtle "ghost" look — white text/icon on a transparent
-       background with only a translucent border, meant to sit quietly in the dark header. Uniformly dropping
-       THAT already-subtle look to opacity:.35 barely reads as different at a glance — a real, enabled ghost
-       button and a disabled one looked nearly identical side-by-side, exactly matching "they're not [greyed
-       out]" even though the underlying disabled STATE was always correct. Strengthened specifically for
-       Undo/Redo (kept general for every OTHER .weeknav button, e.g. Prev/Next/Today, whose own disabled state is
-       rare and was never reported as a problem): lower opacity plus an explicit grayscale filter, so the disabled
-       state is unmistakably duller/flatter than the enabled ghost look, regardless of the dark background behind
-       it. */
+    /* "even in desktop view the undo/redo buttons should be greyed out if not applicable" — CORRECTION to this
+       comment's own earlier claim: an earlier pass here asserted the underlying disabled STATE was "always
+       correct" and only the CONTRAST needed strengthening. That was wrong — direct simulation later isolated a
+       real, separate state bug (syncNav()'s own blanket ".weeknav" loop overwriting Undo/Redo's disabled flag;
+       see the static markup's own comment, right where these two buttons no longer carry that class, for the
+       full root-cause trace). This CSS contrast fix was still independently worth keeping — a real, enabled
+       ghost-style button and a disabled one WERE genuinely hard to tell apart at a glance — it just wasn't the
+       whole story. */
   button.weeknav:disabled{opacity:.35;cursor:not-allowed;}
-  #btnUndo:disabled,#btnRedo:disabled{opacity:.25;filter:grayscale(1);}
+  #btnUndo:disabled,#btnRedo:disabled{opacity:.25;filter:grayscale(1);cursor:not-allowed;}
   .deptbtn{background:rgba(255,255,255,.14);color:#fff;border-color:transparent;}
     /* NATIVE MOBILE UI (opt-in — see nativeMobileActive()'s own JS comment for the full design) ---------- Every rule
      below is scoped under body.native-mobile so a classic-view device's CSS is byte-for-byte unaffected regardless of
@@ -684,17 +679,16 @@
        widths + min-width equal to their sum, so this table can never be squeezed narrower than that — a screen
        narrower than the total now correctly scrolls horizontally via .tblwrap instead of shrinking every column
        (and therefore every row's own text) down to an unreadable sliver. */
-    /* "STILL NOT FIXED... can't scroll right to see past check column" — traced the REAL reason this fix had
-       zero visible effect: this table also carries the .autoTable class (needed for its OTHER established
-       behaviors), and this app has a pre-existing, MORE SPECIFIC rule scoped to Settings —
-       `#settingsBody table.autoTable{table-layout:auto;min-width:0;}` (see that rule's own comment) — which, by
-       CSS specificity rules (ID+class+type beats a bare class+type selector), silently overrode table-layout
-       back to `auto` and min-width back to `0` every time this table rendered inside Settings, exactly where
-       every one of these 4 usages actually lives. The previous fix was never wrong on its own terms — it was
-       simply never able to WIN the cascade in its one real context. Re-declared here with the SAME
-       `#settingsBody`-scoped selector (equal specificity, and physically later in this stylesheet than the
-       conflicting rule, so it wins the tie) alongside the original bare selector, so this table is correctly
-       fixed-width both inside Settings and anywhere else it might ever be used. */
+    /* "STILL NOT FIXED... can't scroll right to see past check column" — this table also carries the
+       .autoTable class (needed for its other established behaviors), and this app has a pre-existing, more
+       specific rule scoped to Settings — `#settingsBody table.autoTable{table-layout:auto;min-width:0;}` (see
+       that rule's own comment) — which, by CSS specificity (ID+class+type beats a bare class+type selector),
+       overrode table-layout back to `auto` and min-width back to `0` every time this table rendered inside
+       Settings, which is where all 4 usages live. The earlier fix's own rule was correct on its own terms; it
+       was simply lower specificity than the conflicting rule in this one context. Re-declared here with the
+       same `#settingsBody`-scoped selector (equal specificity, and later in this stylesheet than the
+       conflicting rule, so it wins the tie) alongside the original bare selector, so this table is fixed-width
+       both inside Settings and anywhere else it's used. */
   table.checkResultTbl,#settingsBody table.checkResultTbl{table-layout:fixed;min-width:420px;width:100%;}
   table.checkResultTbl th:first-child,table.checkResultTbl td:first-child,
   #settingsBody table.checkResultTbl th:first-child,#settingsBody table.checkResultTbl td:first-child{width:160px;white-space:normal;overflow-wrap:break-word;}
@@ -851,14 +845,14 @@
      is active — only then do the percentage-based columns actually receive the full 100% they were assigned. */
   #grid.hidetotals col.hrc,#grid.hidetotals col.costc{width:0;}
   td.name{text-align:left;white-space:normal;overflow-wrap:anywhere;min-width:150px;}
-    /* ROOT-CAUSE FIX repeated across many rounds: "In view mode the HSK assignment in name column text is unbolded
-     except 'Other...'" / "in edit mode Other is bold and seems to be a diff color from rest of the assignments".
-     Every earlier round chased this by adding !important overrides onto the Floor/zone· Assignment dropdown's OWN
-     markup (floorSelect()) — but the TRUE root cause was always here: td.name{font- weight:600} bolded the ENTIRE
-     cell, including the Floor/zone/Assignment <div> nested inside it. A <select> doesn't inherit ancestor font-weight
-     (browser form-control default), so canonical dropdown values never picked up the bold — but a plain <a>/<span>
-     (the "Other…" collapsed display) DOES inherit ordinary text styling from its ancestor, so it silently
-     re-inherited this bold on every render unless every single call site remembered to fight it with its own
+    /* Root cause, after prior attempts targeted the wrong element: "In view mode the HSK assignment in name
+     column text is unbolded except 'Other...'" / "in edit mode Other is bold and seems to be a diff color from
+     rest of the assignments". Earlier attempts added !important overrides onto the Floor/zone/Assignment
+     dropdown's own markup (floorSelect()), but the actual source was here: td.name{font-weight:600} bolds the
+     entire cell, including the Floor/zone/Assignment <div> nested inside it. A <select> doesn't inherit ancestor
+     font-weight (browser form-control default), so canonical dropdown values never picked up the bold — but a
+     plain <a>/<span> (the "Other…" collapsed display) does inherit ordinary text styling from its ancestor, so
+     it re-inherited this bold on every render unless every call site remembered to override it with its own
      !important — an inherently fragile, whack-a-mole fix that kept "recurring" because the shared root (this rule)
      was never actually removed. FIX: bold now lives ONLY on the person's own name/type line via .staffnamewrap below
      — never on the whole cell — so nothing nested inside td.name (Floor/zone, Assignment, notes) can ever inherit
@@ -1751,8 +1745,8 @@
      child's own minimum content size"), completely independent of and NOT overridden by any max-width set on the
      fieldset OR on any of its descendants (.tblwrap's own max-width:100% has zero effect here, since the fieldset —
      the ACTUAL element refusing to shrink — has no max-width rule of its own at all: confirmed its computed max-width
-     is "none"). This is exactly why the exact same overflow kept reappearing across multiple rounds despite fixing
-     .tblwrap/.card each time — none of those fixes ever touched the real culprit. The fieldset's default min-width is
+     is "none"). This is why the same overflow kept reappearing despite repeated fixes to .tblwrap/.card — none of
+     those targeted the fieldset itself. The fieldset's default min-width is
      reset to 0 here, the standard, well-documented fix for this specific fieldset quirk — letting it (and therefore
      every child, including .tblwrap and the wide staff table) actually shrink to fit the page as intended, with the
      table's own overflow:auto wrapper taking over to provide horizontal scrolling for the wide content instead.
@@ -2420,8 +2414,25 @@
          buttons (matching this header's own compact weeknav style) so they don't push this already-tight header row into
          wrapping; disabled/greyed out automatically (via _refreshUndoRedoButtons()) whenever there's genuinely nothing to
          undo/redo. -->
-    <button class="ghostw weeknav" id="btnUndo" onclick="undoAction()" style="padding:5px 8px" title="Nothing to undo" disabled>↶</button>
-    <button class="ghostw weeknav" id="btnRedo" onclick="redoAction()" style="padding:5px 8px" title="Nothing to redo" disabled>↷</button>
+    <!-- "undo/redo mismatch STILL not fixed" — root cause isolated via a standalone Node simulation of the
+         control flow, run separately from this file, rather than re-reading the code again. Diagnosis: these
+         two buttons carried the same ".weeknav" class as Prev/Next/Today only to inherit shared disabled-state
+         CSS — but syncNav()'s own blanket `document.querySelectorAll(".weeknav").forEach(b=>{b.disabled=
+         _weekNavUseless;...})` loop (added after Undo/Redo already had this class) selects every ".weeknav"
+         element, Undo/Redo included, overwriting their disabled state with `_weekNavUseless` (true only on the
+         Leave/Readme tabs) — a value unrelated to UNDO_STACK/REDO_STACK. Confirmed via simulation: setDept()
+         calls `updateAuth()` (which runs render() internally, correctly refreshing Undo/Redo), then calls
+         syncNav() a second time on its own — per that call's own comment, "syncNav() doesn't need [a second]
+         render() either — it directly toggles existing elements' own style.display," which holds for the cards
+         it was originally written for, but not for Undo/Redo once their disabled logic started sharing the same
+         class: syncNav() runs last in that path, overwriting the just-correctly-set Undo/Redo state with a
+         value it was never designed to control. Undo/Redo are not week-navigation controls; removing "weeknav"
+         here excludes them from that selector at the root, so this class of interference cannot recur
+         regardless of future changes to syncNav() or setDept(). Disabled-state styling for these two buttons
+         comes entirely from the ID-scoped `#btnUndo:disabled,#btnRedo:disabled` CSS rule below, unaffected by
+         this class removal. -->
+    <button class="ghostw" id="btnUndo" onclick="undoAction()" style="padding:5px 8px" title="Nothing to undo" disabled>↶</button>
+    <button class="ghostw" id="btnRedo" onclick="redoAction()" style="padding:5px 8px" title="Nothing to redo" disabled>↷</button>
     <button class="ghostw weeknav" onclick="prevWeek()">◀ Prev</button>
         <!-- TIGHTENED alongside the header/.tag gap reductions above (see header's own CSS comment for the full "one line if
          it fits" measurement): 150px→128px; the real content ("Aug 13 – Aug
@@ -4586,6 +4597,7 @@ function undoAction(){
   REDO_STACK.push(cur);if(REDO_STACK.length>UNDO_MAX)REDO_STACK.shift();
   _undoRestore(prev);
   flashNote("Undid last change. ("+UNDO_STACK.length+" more to undo)");
+  _blurUndoRedoButtons(); // see that function's own comment for the "stale native tooltip" fix this closes
 }
 function redoAction(){
   flushPendingUndoBatch(); // ensures any not-yet-committed edit is safely captured first, so it's never silently lost/skipped by a redo
@@ -4595,11 +4607,30 @@ function redoAction(){
   UNDO_STACK.push(cur);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();
   _undoRestore(next);
   flashNote("Redid change. ("+REDO_STACK.length+" more to redo)");
+  _blurUndoRedoButtons();
 }
 function _refreshUndoRedoButtons(){
   const u=el("btnUndo"),r=el("btnRedo");
   if(u){u.disabled=!UNDO_STACK.length;u.title=UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step(s) available) — Ctrl+Z"):"Nothing to undo";}
   if(r){r.disabled=!REDO_STACK.length;r.title=REDO_STACK.length?("Redo ("+REDO_STACK.length+" step(s) available) — Ctrl+Y"):"Nothing to redo";}
+}
+// "toast doesn't match number when hovering over undo key" — confirmed this is a SEPARATE issue from the
+// disabled-state bug above (see the static markup's own comment for that one): the `title` attribute itself IS
+// already being set to the correct, current value the INSTANT this function runs (verified directly) — but a
+// browser's native title-attribute tooltip, once already visibly showing on screen, does not live-refresh its
+// displayed text just because the underlying attribute changed; it only re-reads the attribute on the NEXT fresh
+// hover (a mouseleave followed by a new mouseenter). Clicking a button while the mouse is still resting on it
+// (the ordinary way anyone clicks) can leave that PRE-click tooltip visibly on-screen with its now-stale text,
+// with no further mouse movement to ever trigger a fresh re-read — exactly the reported "toast says 2, hover
+// still says 3." This can't be fixed by setting the attribute more insistently (it's already correct); the only
+// way to force a stale, already-open native tooltip to actually close is to move focus/hover away from the
+// element that's showing it. Blurring the two buttons here, right after every refresh, achieves that — the next
+// genuine hover afterward starts completely fresh and reads the (already correct) current title text, with no
+// stale carryover possible.
+function _blurUndoRedoButtons(){
+  const u=el("btnUndo"),r=el("btnRedo");
+  if(u&&typeof u.blur==="function")u.blur();
+  if(r&&typeof r.blur==="function")r.blur();
 }
 function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
   if(!DB&&SYNCABLE_KEYS.includes(k)){if(typeof setPending==="function")setPending(true);else PENDING=true;if(typeof setStatus==="function"&&document.getElementById("syncStatus"))setStatus("local","#c7d0da");}
@@ -12487,10 +12518,10 @@ function esc(x){return String(x).replace(/[<>&]/g,c=>({"<":"&lt;",">":"&gt;","&"
 // cells, body row cells, colgroup), which is exactly how the offsets drifted out of sync with their own declared
 // widths in every earlier, table-specific attempt.
 //
-// Also: "Tables are a complete mess... Columns become too narrow" — found the TRUE, previously-misdiagnosed
-// root cause: a table with `table-layout:fixed` AND an explicit `width:100%` does NOT let its own declared <col>
-// widths overflow that 100% when they sum to more — browsers instead SQUEEZE every column proportionally down
-// to fit within that constrained total, regardless of each column's own declared px width. This is exactly what
+// Also: "Tables are a complete mess... Columns become too narrow" — the previously-misdiagnosed root cause: a
+// table with `table-layout:fixed` AND an explicit `width:100%` does not let its own declared <col> widths
+// overflow that 100% when they sum to more — browsers instead squeeze every column proportionally down to fit
+// within that constrained total, regardless of each column's own declared px width. This is exactly what
 // produced the reported vertical, letter-by-letter text wrapping: 2-3 frozen columns' combined fixed px width alone
 // could exceed a narrow phone's available space, forcing the REMAINING columns (Dept, Type, etc.) to be squeezed
 // down to a few unreadable pixels each — not a horizontal-scroll-overflow problem as first assumed, a
@@ -14520,11 +14551,11 @@ function initChecksDragSelect(){
   f.addEventListener("pointerup",endDrag);
   f.addEventListener("pointercancel",endDrag);
 }
-// "make all placeholder values throughout the app grey (eg mm/dd/yyyy), " — raised a third time despite the
-// input[type="date"]:invalid::-webkit-datetime-edit-* + required-attribute fix from an earlier round, confirmed via
-// direct audit to be 100% correctly applied to every one of this app's 29 real date inputs. Confirmed the TRUE
-// reason this can still fail: those "::-webkit-datetime-edit-*" pseudo-elements are, per their own name,
-// WEBKIT-SPECIFIC — supported in Chrome/Edge/Safari, but Firefox has NO equivalent CSS hook at all for styling
+// "make all placeholder values throughout the app grey (eg mm/dd/yyyy)" — raised again despite the
+// input[type="date"]:invalid::-webkit-datetime-edit-* + required-attribute fix applied earlier, confirmed via
+// direct audit to be correctly applied to every one of this app's 29 real date inputs. The reason this can still
+// fail: those "::-webkit-datetime-edit-*" pseudo-elements are, per their own name, WebKit-specific — supported
+// in Chrome/Edge/Safari, but Firefox has no equivalent CSS hook at all for styling
 // a native date input's own internal "mm/dd/yyyy" placeholder text differently from a real entered value; Firefox's
 // own native date-input rendering is an internal black box no CSS selector can reach. If the hotel's own staff use
 // Firefox (or any non-Chromium browser) for even some of their devices, the earlier CSS-only fix would have
@@ -21625,22 +21656,21 @@ function clearAbsentMark(dept,iso,name){
 // checkInStaff()/clockOutStaff()'s own `by`) record that real name here instead of relying on this function's
 // own fallback below.
 //
-// "there is still a ? for user" (re-reported after the checkInStaff/clockOutStaff/undo fix above) — traced ONE
-// MORE real, still-live source: setDept() itself can write a bare boolean `true` into EDITMEM[dept] (its own
-// `EDITMEM[EDIT_DEPT]=CURRENT_USER||true` fallback, for the rare case CURRENT_USER is unexpectedly null at the
-// moment of switching departments) — and unlockDeptForEdit()/setDept()'s own fast-path re-entry into that same
-// department (`CURRENT_USER=(mm&&mm!==true)?mm:CURRENT_USER`) then NEVER upgrades that bare `true` into a real
-// name; it just keeps EDIT mode active for that department indefinitely with no identity ever attached, for
-// every subsequent action until that department's access is fully re-granted from a fresh PIN entry. Every
-// caller that didn't pass its own `asUser` (setCell, timeoff, leave, copy-week, bulk-stamp, draft-week/range,
-// imports) was correspondingly relying on a bare `CURRENT_USER?CURRENT_USER.name:"?"` fallback, which produced
-// exactly this literal "?" whenever that gap was hit. Fixed at this ONE shared root instead of chasing
-// individual call sites again: the fallback now goes through _actingUserNameForDept(DEPT) — the SAME
-// resolver already used for shift-bid/leave-request decisions (see that function's own comment) — whose own
-// final fallback is the readable "scheduler", never a bare "?". Note: entries ALREADY WRITTEN to the change log
-// before this fix (or before the earlier checkInStaff/clockOutStaff/undo fix) are historical, immutable records
-// of what was actually captured at the time — no code change can retroactively relabel a "?" that's already
-// been saved; only NEW entries going forward are affected by this fix.
+// "there is still a ? for user" (reported again after the checkInStaff/clockOutStaff/undo fix above) — an
+// additional source: setDept() can write a bare boolean `true` into EDITMEM[dept] (its own
+// `EDITMEM[EDIT_DEPT]=CURRENT_USER||true` fallback, for the case CURRENT_USER is null at the moment of switching
+// departments) — and unlockDeptForEdit()/setDept()'s own fast-path re-entry into that same department
+// (`CURRENT_USER=(mm&&mm!==true)?mm:CURRENT_USER`) never upgrades that bare `true` into a real name; it keeps
+// EDIT mode active for that department with no identity attached, for every subsequent action until that
+// department's access is re-granted from a fresh PIN entry. Every caller that didn't pass its own `asUser`
+// (setCell, timeoff, leave, copy-week, bulk-stamp, draft-week/range, imports) relied on a bare
+// `CURRENT_USER?CURRENT_USER.name:"?"` fallback, which produced this literal "?" whenever that gap was hit.
+// Fixed at this one shared root instead of each individual call site: the fallback now goes through
+// _actingUserNameForDept(DEPT) — the same resolver already used for shift-bid/leave-request decisions (see that
+// function's own comment) — whose own final fallback is the readable "scheduler", never a bare "?". Entries
+// already written to the change log before this fix (or before the earlier checkInStaff/clockOutStaff/undo fix)
+// are historical records of what was actually captured at the time; no code change can relabel a "?" already
+// saved — only new entries going forward are affected by this fix.
 function logChange(action,detail,asUser){try{AUDIT.push({ts:new Date().toISOString(),user:(asUser||_actingUserNameForDept(DEPT)),dept:DEPT,action:action,detail:detail});if(AUDIT.length>2000)AUDIT=AUDIT.slice(-2000);save("hotel_audit",AUDIT);}catch(e){}}
 // "set up separate pins for FO vs HSK so that I can demonstrate per dept access": each user record can now
 // optionally carry a `dept` scope ("FO", "HSK", or "" / omitted = both, the existing default behavior — so every
