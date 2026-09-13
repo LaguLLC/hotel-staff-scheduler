@@ -4573,6 +4573,24 @@ function _undoRestore(snapStr){
   _undoApplying=true;
   try{
     CFG=s.CFG;ASSIGN=s.ASSIGN;DEMAND=s.DEMAND;ACTUAL=s.ACTUAL;ACTUALD=s.ACTUALD;ACTUALD_AUTOSRC=s.ACTUALD_AUTOSRC||{};LEAVES=s.LEAVES;LEAVE_REQUESTS=s.LEAVE_REQUESTS;
+    // Every ORDINARY schedule edit (setCell(), auto-fill, bid claims, etc.) calls _markAssignDirty() for the exact
+    // (dept,week,staff) key it touched, which is what protects that edit from being silently overwritten by a
+    // stale, already-in-flight pullAll() (see _assignDirtyStamp's own comment near its declaration). An undo/redo
+    // restore is exactly as real a local mutation as any of those — it can change MANY (dept,week,staff) keys at
+    // once — but this function never marked any of them dirty, so a routine reconnect-triggered pull landing
+    // shortly after an undo/redo had zero protection and could silently clobber the just-restored state right
+    // back to whatever the server still had, making the undo/redo look like it "did nothing" even though it had
+    // genuinely applied for a moment. Marking every (dept,week,staff) key present in the restored ASSIGN closes
+    // this the same way every other write path already is protected, with no special-casing needed here.
+    try{
+      const _now=Date.now();
+      Object.keys(ASSIGN||{}).forEach(dept=>{
+        Object.keys(ASSIGN[dept]||{}).forEach(wk=>{
+          Object.keys(ASSIGN[dept][wk]||{}).forEach(nm=>{_assignDirtyStamp[dept+"|"+wk+"|"+nm]=_now;});
+        });
+      });
+      _cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.appWide=_now;
+    }catch(eDirty){console.warn("undo/redo dirty-stamp marking skipped (non-fatal):",eDirty);}
     save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);save("hotel_actuald_autosrc",ACTUALD_AUTOSRC);save("hotel_leaves",LEAVES);save("hotel_leaverequests",LEAVE_REQUESTS);
     if(typeof MULTISEL!=="undefined"){MULTISEL.cells.clear();MULTISEL.active=false;MULTISEL.lastCell=null;}
     render();
