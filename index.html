@@ -2431,8 +2431,26 @@
          regardless of future changes to syncNav() or setDept(). Disabled-state styling for these two buttons
          comes entirely from the ID-scoped `#btnUndo:disabled,#btnRedo:disabled` CSS rule below, unaffected by
          this class removal. -->
-    <button class="ghostw" id="btnUndo" onclick="undoAction()" style="padding:5px 8px" title="Nothing to undo" disabled>↶</button>
-    <button class="ghostw" id="btnRedo" onclick="redoAction()" style="padding:5px 8px" title="Nothing to redo" disabled>↷</button>
+    <!-- "undo redo issue still wasn't fixed, still mismatch between toast and hover... even when I move my mouse
+         after clicking and go back to hover same number shows" — the previous fix (removing "weeknav" so
+         syncNav()'s own blanket disable-loop can't stomp these two buttons) is a real, independently-confirmed
+         fix for ONE genuine cause, verified via a standalone Node simulation of that exact interference — but
+         the user directly disproved the "just a stale browser tooltip" theory: a FRESH hover (mouse fully away,
+         then back) still shows a stale number, meaning the `title` ATTRIBUTE ITSELF is wrong at that moment, not
+         merely a cached tooltip. Belt-and-suspenders fix layered on top, covering two levels: (1) a defense-in-
+         depth guard added to save()'s own undo-tracking check (see that function's own comment, right where
+         `_pullingConfigNow` was added alongside `_syncApplying`) for the one path that COULD theoretically let a
+         live-sync CFG pull slip past the undo-exclusion checks if `_syncApplying` and `_pullingConfigNow` were
+         ever to fall out of sync with each other, even though no such path could be confirmed in current code;
+         (2) this markup's own onmouseenter/onfocus handler, added here: it force-recomputes both buttons'
+         title/disabled from whatever UNDO_STACK/REDO_STACK ACTUALLY hold at that exact instant, immediately
+         before either a mouse hover or a keyboard focus would ever display it — so regardless of what may have
+         changed either array in the meantime, or why, the very next hover is GUARANTEED to show the true, live
+         count, never a stale one carried over from an earlier click. This second layer fixes the user-visible
+         symptom unconditionally, independent of whichever exact mechanism is (or might still be) altering the
+         counts in the background. -->
+    <button class="ghostw" id="btnUndo" onclick="undoAction()" onmouseenter="_refreshUndoRedoButtons()" onfocus="_refreshUndoRedoButtons()" style="padding:5px 8px" title="Nothing to undo" disabled>↶</button>
+    <button class="ghostw" id="btnRedo" onclick="redoAction()" onmouseenter="_refreshUndoRedoButtons()" onfocus="_refreshUndoRedoButtons()" style="padding:5px 8px" title="Nothing to redo" disabled>↷</button>
     <button class="ghostw weeknav" onclick="prevWeek()">◀ Prev</button>
         <!-- TIGHTENED alongside the header/.tag gap reductions above (see header's own CSS comment for the full "one line if
          it fits" measurement): 150px→128px; the real content ("Aug 13 – Aug
@@ -4614,19 +4632,30 @@ function _refreshUndoRedoButtons(){
   if(u){u.disabled=!UNDO_STACK.length;u.title=UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step(s) available) — Ctrl+Z"):"Nothing to undo";}
   if(r){r.disabled=!REDO_STACK.length;r.title=REDO_STACK.length?("Redo ("+REDO_STACK.length+" step(s) available) — Ctrl+Y"):"Nothing to redo";}
 }
-// "toast doesn't match number when hovering over undo key" — confirmed this is a SEPARATE issue from the
-// disabled-state bug above (see the static markup's own comment for that one): the `title` attribute itself IS
-// already being set to the correct, current value the INSTANT this function runs (verified directly) — but a
-// browser's native title-attribute tooltip, once already visibly showing on screen, does not live-refresh its
-// displayed text just because the underlying attribute changed; it only re-reads the attribute on the NEXT fresh
-// hover (a mouseleave followed by a new mouseenter). Clicking a button while the mouse is still resting on it
-// (the ordinary way anyone clicks) can leave that PRE-click tooltip visibly on-screen with its now-stale text,
-// with no further mouse movement to ever trigger a fresh re-read — exactly the reported "toast says 2, hover
-// still says 3." This can't be fixed by setting the attribute more insistently (it's already correct); the only
-// way to force a stale, already-open native tooltip to actually close is to move focus/hover away from the
-// element that's showing it. Blurring the two buttons here, right after every refresh, achieves that — the next
-// genuine hover afterward starts completely fresh and reads the (already correct) current title text, with no
-// stale carryover possible.
+// Third, independent safety layer for "undo redo issue still wasn't fixed... redo still greyed out" — the
+// markup's own onmouseenter/onfocus refresh (see that comment for the full "fresh hover still shows stale
+// count" fix this pairs with) has one real gap of its own: a genuinely `disabled` HTML button does not
+// reliably dispatch mouseenter/mouseover in every browser (a well-documented web-platform quirk — disabled form
+// controls suppress most pointer/focus events, not just click), so if Redo is INCORRECTLY left disabled by
+// whatever is corrupting these counts, hovering over it may never fire that fix's own refresh at all, leaving a
+// genuinely-available Redo stuck looking permanently unavailable with no user-triggerable way to correct it.
+// This periodic, unconditional poll closes that gap independent of hover/focus/click entirely: every 800ms,
+// regardless of what the user is doing, both buttons' disabled/title are recomputed fresh from whatever
+// UNDO_STACK/REDO_STACK actually currently hold — self-healing any discrepancy, from any cause, within under a
+// second, without requiring the user to find a working way to trigger a refresh themselves. Deliberately NOT
+// disabled/paused based on VIEW or focus state — the whole point is to be an unconditional safety net that
+// cannot itself be skipped by whatever code path caused the original problem.
+setInterval(_refreshUndoRedoButtons,800);
+// "toast doesn't match number when hovering over undo key" — an earlier pass here theorized this was purely a
+// stale, already-open native tooltip (title text not live-refreshing until the next fresh hover), and blurring
+// the buttons was intended to force that. That theory was directly disproven: the user confirmed the stale
+// number still appears even after moving the mouse fully away and back for a genuinely fresh hover — meaning
+// the `title` attribute itself is wrong at that moment, not merely a cached tooltip rendering. The real fix now
+// lives in three places instead: the static markup's own onmouseenter/onfocus handlers (recompute immediately
+// before a fresh hover/focus can display anything), the periodic self-healing poll (see setInterval call below
+// this function's own definition), and a defense-in-depth guard added to save()'s own undo-tracking check (see
+// that function's own comment). Blurring is kept here as a harmless no-op layer on top — it no longer does the
+// primary work, but there is no reason to remove it.
 function _blurUndoRedoButtons(){
   const u=el("btnUndo"),r=el("btnRedo");
   if(u&&typeof u.blur==="function")u.blur();
@@ -4675,7 +4704,16 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
   // the future, it's caught, logged to the console for diagnosis, and save() proceeds to return normally
   // regardless.
   try{
-    if(!_undoApplying&&!_syncApplying&&UNDO_TRACKED_KEYS.includes(k)){
+    // Belt-and-suspenders addition for "undo/redo mismatch STILL not fixed" — every currently-known path that
+    // sets `_pullingConfigNow=true` (the live-sync app_config merge inside _pullAllInner(), and the local-vs-
+    // live "go live" choice handler) is, as far as could be traced, always ALSO covered by an enclosing
+    // `_syncApplying=true` scope, so this guard should be redundant today. It's added explicitly anyway,
+    // rather than relying on that enclosing-scope guarantee holding forever: `_pullingConfigNow` exists
+    // specifically to mark "CFG is being overwritten by an incoming sync/pull, not a real local edit" — the
+    // exact same category of event `_syncApplying` exists to exclude from undo tracking — so checking it here
+    // too costs nothing and closes off any path (present or future) where the two flags might ever end up out
+    // of sync with each other.
+    if(!_undoApplying&&!_syncApplying&&!_pullingConfigNow&&UNDO_TRACKED_KEYS.includes(k)){
       // See _lastSettledSnapshot's own comment above for the full root-cause writeup. The first save() of a new
       // batch now uses _lastSettledSnapshot (the state as of the end of the PREVIOUS batch — genuinely "before"
       // this one) instead of a fresh _undoSnapshot() call here (which, by this point, always reflects the CURRENT
