@@ -2109,7 +2109,16 @@
      (the staff roster and former-staff tables) — every other .tblwrap in the app, including this demand table's
      own, is now completely unaffected by this rule, exactly restoring native, uncontained scroll-chaining
      wherever there's truly nothing of this box's own to contain. */
-  .tblwrap:has(#staffRosterTable),.tblwrap:has(#formerStaffTable){overscroll-behavior:contain;}
+    /* CONFLICT WITH THE DECISION DIRECTLY ABOVE, stated explicitly rather than silently reversed: the rule above
+     chose overscroll-behavior:contain so that reaching this box's own top/bottom edge stops there, on the
+     reasoning that handing the gesture to the page "feels like the page suddenly jumping". The instruction now is
+     the opposite — "if the user scrolls to the top or bottom of a scrollable table/modal and keeps scrolling, the
+     page should shift instead of forcing them to find a margin where the table doesn't extend." Those two cannot
+     both hold; the second is the one being honoured. Reverted to the platform default (auto), which restores
+     native scroll chaining for touch and wheel alike. initScrollChainAtBoundary() (see its own comment) covers
+     the cases the CSS default alone does not: a trackpad gesture already target-locked to this element, and a
+     modal whose backdrop the browser will not chain into on its own. */
+  .tblwrap:has(#staffRosterTable),.tblwrap:has(#formerStaffTable){overscroll-behavior:auto;}
     /* The roster table is forced to min-width:900px (see #settingsBody table's own rule), so on a narrower
      screen this .tblwrap scrolls horizontally, showing a classic (reserved-space) scrollbar on its right edge.
      Classic scrollbars on Windows/desktop Linux commonly measure 15–17px wide, wider than the roster's own
@@ -4458,6 +4467,24 @@ let _undoApplying=false,_undoBatchTimer=null,_undoBatchPre=null;
 // pull is never mistaken for a trackable local action, while every genuine local edit (including one made
 // mid-sync) is completely unaffected.
 let _syncApplying=false;
+// "on SharePoint the undo/redo buttons work but when deployed they don't do anything ... redo greyed out even
+// after undo is clicked, and the hover tooltip and toast numbers don't match and don't decrease."
+//
+// Root cause, traced to a path that only ever fires on a LIVE-connected device and only on the HSK tab:
+// render() calls seedOutsourcedWeek() (and autoStampBirthdaysQuiet()), both of which call save() when they stamp
+// something. The realtime "assignments" handler applies an incoming row inside a _syncApplying scope, but then
+// calls render() OUTSIDE that scope. So the auto-stamp that render() triggers is seen by save() as an ordinary,
+// hands-on local edit: it opens a new undo batch, and when that batch commits it does REDO_STACK=[] — wiping the
+// redo entry the user's own undo had just created, and pushing a phantom step onto UNDO_STACK so the counts grow
+// instead of decreasing. On a local file (no DB, no realtime traffic) none of this happens, which is exactly why
+// the same build behaves correctly there.
+//
+// These stamps are automatic housekeeping, not user actions, so they are not undoable events. _autoMaintenance
+// mirrors _undoApplying/_syncApplying's own established pattern (capture prior value, set true, restore the
+// captured value in finally) so nested/overlapping calls can never clear it early.
+let _autoMaintenance=false;
+let _undoPushScope=null; // see _undoRestore() — the (dept,week)/demand/leave-request set a restore actually changed
+function runAutoMaintenance(fn){const _prev=_autoMaintenance;_autoMaintenance=true;try{return fn();}finally{_autoMaintenance=_prev;}}
 // "set a shift for Sept 12... export shows 0 shifts" — traced a genuine, real data-race distinct from every
 // earlier "from schedule"/text-display bug: pullAll()'s own assignments fetch (and the "sched" realtime channel's
 // own assignments echo-handler) both do a WHOLESALE `ASSIGN[dept][week][staff]=r.days` REPLACEMENT the instant
@@ -4570,6 +4597,24 @@ function _undoRestore(snapStr){
   // that's now blank again after restoring an OLDER snapshot) is never itself tracked as a brand-new undo step.
   // Without this, undoing one action could silently "spend" a step jumping past the undo and straight into a
   // second, auto-triggered change, which would be a confusing surprise.
+  // Snapshot of "what did this restore actually change" — computed BEFORE the globals are swapped, so the live
+  // push below (see its own comment) touches only the affected (dept,week) rows, demand weeks and leave records.
+  try{
+    const _scope={weeks:[],demandWeeks:[],leaveIds:[]};
+    ["FO","HSK"].forEach(dept=>{
+      const cur=(ASSIGN&&ASSIGN[dept])||{},nxt=(s.ASSIGN&&s.ASSIGN[dept])||{};
+      new Set([...Object.keys(cur),...Object.keys(nxt)]).forEach(wk=>{
+        if(JSON.stringify(cur[wk]||{})!==JSON.stringify(nxt[wk]||{}))_scope.weeks.push([dept,wk]);
+      });
+    });
+    new Set([...Object.keys(DEMAND||{}),...Object.keys(s.DEMAND||{})]).forEach(wk=>{
+      if(JSON.stringify((DEMAND||{})[wk]||{})!==JSON.stringify((s.DEMAND||{})[wk]||{}))_scope.demandWeeks.push(wk);
+    });
+    new Set([...Object.keys(LEAVE_REQUESTS||{}),...Object.keys(s.LEAVE_REQUESTS||{})]).forEach(id=>{
+      if(JSON.stringify((LEAVE_REQUESTS||{})[id]||null)!==JSON.stringify((s.LEAVE_REQUESTS||{})[id]||null))_scope.leaveIds.push(id);
+    });
+    _undoPushScope=_scope;
+  }catch(eScope){_undoPushScope=null;console.warn("undo/redo push-scope calc skipped (non-fatal):",eScope);}
   _undoApplying=true;
   try{
     CFG=s.CFG;ASSIGN=s.ASSIGN;DEMAND=s.DEMAND;ACTUAL=s.ACTUAL;ACTUALD=s.ACTUALD;ACTUALD_AUTOSRC=s.ACTUALD_AUTOSRC||{};LEAVES=s.LEAVES;LEAVE_REQUESTS=s.LEAVE_REQUESTS;
@@ -4599,6 +4644,25 @@ function _undoRestore(snapStr){
   // critical so that a FRESH edit made right after this undo/redo correctly treats the just-restored state as its
   // own "before," rather than some stale earlier snapshot from before the undo/redo happened.
   _lastSettledSnapshot=_undoSnapshot();
+  // "undo/redo work on the local copy but do nothing on the deployed one." Second, independent root cause:
+  // save() only auto-pushes hotel_cfg (via its own pushConfig() hook). hotel_assign/hotel_demand/
+  // hotel_leaverequests are pushed by their individual mutators (setCell -> pushWeek, etc.), and an undo/redo
+  // restore is not one of those mutators. So on a connected device the restore only ever landed in localStorage:
+  // Supabase kept the pre-undo values, and the next realtime echo or reconnect-triggered pull put them straight
+  // back — the undo applied for a moment and then silently reverted, which reads as "the button does nothing".
+  // The _assignDirtyStamp marking above only protects against a pull that was ALREADY IN FLIGHT; it cannot help
+  // against one that starts afterward. Pushing the restored state is what actually makes an undo durable.
+  // Scoped deliberately to what the restore ACTUALLY changed (captured as _undoPushScope just before the
+  // assignment above), not to everything in memory — a blanket re-push of every week for both departments would
+  // be one upsert per person per week on every single undo click.
+  if(DB&&_undoPushScope){
+    try{
+      (_undoPushScope.weeks||[]).forEach(([dept,wk])=>{try{pushWeekAll(dept,wk);}catch(e){}});
+      (_undoPushScope.demandWeeks||[]).forEach(wk=>{try{pushDemand(wk);}catch(e){}});
+      (_undoPushScope.leaveIds||[]).forEach(id=>{try{pushLeaveRequest(id);}catch(e){}});
+    }catch(ePush){console.warn("undo/redo live push skipped (non-fatal):",ePush);}
+  }
+  _undoPushScope=null;
   _refreshUndoRedoButtons();
 }
 // "have to click or press ctrl+Z twice to undo". Save()'s own undo-capture block (see that function's own comment
@@ -4632,6 +4696,9 @@ function undoAction(){
   const prev=UNDO_STACK.pop();
   REDO_STACK.push(cur);if(REDO_STACK.length>UNDO_MAX)REDO_STACK.shift();
   _undoRestore(prev);
+  // Recomputed immediately before the toast is composed, from the same stacks the tooltip reads, so the two can
+  // never quote different numbers for the same moment.
+  _refreshUndoRedoButtons();
   flashNote("Undid last change. ("+UNDO_STACK.length+" more to undo)");
   _blurUndoRedoButtons(); // see that function's own comment for the "stale native tooltip" fix this closes
 }
@@ -4642,6 +4709,7 @@ function redoAction(){
   const next=REDO_STACK.pop();
   UNDO_STACK.push(cur);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();
   _undoRestore(next);
+  _refreshUndoRedoButtons();
   flashNote("Redid change. ("+REDO_STACK.length+" more to redo)");
   _blurUndoRedoButtons();
 }
@@ -4649,6 +4717,15 @@ function _refreshUndoRedoButtons(){
   const u=el("btnUndo"),r=el("btnRedo");
   if(u){u.disabled=!UNDO_STACK.length;u.title=UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step(s) available) — Ctrl+Z"):"Nothing to undo";}
   if(r){r.disabled=!REDO_STACK.length;r.title=REDO_STACK.length?("Redo ("+REDO_STACK.length+" step(s) available) — Ctrl+Y"):"Nothing to redo";}
+  // The mobile drawer carries its OWN pair of Undo/Redo buttons (see the drawer's markup builder), whose
+  // disabled/opacity/title were baked in at build time and never refreshed by anything — so on a phone they kept
+  // showing whatever the counts happened to be when the drawer was last rebuilt. Refreshed from the same single
+  // source as the header pair, so the two can never disagree.
+  try{
+    const du=document.getElementById("mobUndoBtn"),dr=document.getElementById("mobRedoBtn");
+    if(du){du.disabled=!UNDO_STACK.length;du.style.opacity=UNDO_STACK.length?"":"0.4";du.title=UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step(s) available)"):"Nothing to undo";}
+    if(dr){dr.disabled=!REDO_STACK.length;dr.style.opacity=REDO_STACK.length?"":"0.4";dr.title=REDO_STACK.length?("Redo ("+REDO_STACK.length+" step(s) available)"):"Nothing to redo";}
+  }catch(e){}
 }
 // Third, independent safety layer for "undo redo issue still wasn't fixed... redo still greyed out" — the
 // markup's own onmouseenter/onfocus refresh (see that comment for the full "fresh hover still shows stale
@@ -4731,7 +4808,7 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
     // exact same category of event `_syncApplying` exists to exclude from undo tracking — so checking it here
     // too costs nothing and closes off any path (present or future) where the two flags might ever end up out
     // of sync with each other.
-    if(!_undoApplying&&!_syncApplying&&!_pullingConfigNow&&UNDO_TRACKED_KEYS.includes(k)){
+    if(!_undoApplying&&!_syncApplying&&!_pullingConfigNow&&!_autoMaintenance&&UNDO_TRACKED_KEYS.includes(k)){
       // See _lastSettledSnapshot's own comment above for the full root-cause writeup. The first save() of a new
       // batch now uses _lastSettledSnapshot (the state as of the end of the PREVIOUS batch — genuinely "before"
       // this one) instead of a fresh _undoSnapshot() call here (which, by this point, always reflects the CURRENT
@@ -5759,12 +5836,15 @@ function seedOutsourcedWeek(){ // stamp the constant Thu-Sun pattern (OFF Mon-We
       // employed===false here (the same convention already used everywhere else in this app) closes this
       // permanently — a removed crew member's row is never auto-stamped again, for any current or future week.
       if(s.employed===false)return;
+      if(isStaffTombstoned("HSK",s.n))return; // a permanently deleted name must never be auto-stamped back onto a week
       if(!outsourcedCrewEnabled(s.role))return; // crew toggled off — leave blank, do not auto-fill
       const row=ASSIGN.HSK[wk][s.n]; const hasAny=row&&Object.keys(row).length;
       const LEGACY={"9:AM":"09:00-17:00","11AM":"11:00-19:00","10am-5pm":"10:00-17:00","10am-6pm":"10:00-18:00"};
       if(hasAny){Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];_anyChange=true;}});return;}
       ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"};_anyChange=true; });
-    if(_anyChange)save("hotel_assign",ASSIGN);
+    // Wrapped so this automatic, render-triggered stamp is never captured as a user undo step — see
+    // _autoMaintenance's own comment for the full "redo greyed out on the deployed/live copy" root cause.
+    if(_anyChange)runAutoMaintenance(()=>save("hotel_assign",ASSIGN));
   }catch(e){console.warn("outsourced seed skipped",e);} }
 // See render()'s own comment at this function's call site for the full "pills about coverage missing in mobile
 // view" gap this closes. The ONE genuinely CUMULATIVE (running-weekly-total) piece of the desktop grid's own
@@ -5979,7 +6059,7 @@ function render(){
   // a manual button to a default-on Settings toggle" reasoning. Fully idempotent and a no-op after the first stamp
   // (a day is no longer blank once stamped), and already internally gated to EDIT-mode-and-unlocked-week, so this
   // is safe to call unconditionally on every render.
-  autoStampBirthdaysQuiet();
+  runAutoMaintenance(autoStampBirthdaysQuiet); // same reasoning as seedOutsourcedWeek() above — an automatic stamp, not a user action
   // "when date is hidden don't make it obvious like hidden" + "delete hide from view only checkbox". Two real
   // behavior changes from before: 1. A hidden week/date range no longer shows an explicit "this is being drafted,
   // check back soon" placeholder to view-only visitors — that message itself announced that something was
@@ -11135,7 +11215,7 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
         for(let d=0;d<7;d++){
           const lv=localDays[d],rv=liveDays[d];
           if((lv||"")===(rv||""))continue; // identical — nothing pending for this cell
-          const line=`${nm} — ${dept} ${DOW[d]} (${wk}): your copy has "${lv||"(blank)"}", live has "${rv||"(blank)"}"`;
+          const line=`${nm} — ${dept} ${DOW[d]} (${wk}): yours "${lv||"(blank)"}" | live "${rv||"(blank)"}"`;
           changes.push(line);
           if(rv!=null&&rv!==""&&lv!==rv)conflicts.push(line); // live wasn't blank AND differs — a genuine overwrite risk
         }
@@ -11153,7 +11233,7 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
         fields.forEach(f=>{
           const a=lv[f],b=rv[f];
           if((a==null?"":String(a))===(b==null?"":String(b)))return;
-          const line=`Demand ${wk} ${DOW[d]!=null?DOW[d]:d} — ${f}: your copy has "${a==null?"(blank)":a}", live has "${b==null?"(blank)":b}"`;
+          const line=`Demand ${wk} ${DOW[d]!=null?DOW[d]:d} — ${f}: yours "${a==null?"(blank)":a}" | live "${b==null?"(blank)":b}"`;
           changes.push(line);
           if(b!=null&&b!==""&&a!==b)conflicts.push(line);
         });
@@ -11174,12 +11254,16 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot){
       const nameForLine=(lv&&lv.name)||(rv&&rv.name)||id;
       const codeForLine=(lv&&lv.code)||(rv&&rv.code)||"?";
       const fromForLine=(lv&&lv.from)||(rv&&rv.from)||"?";
-      const line=`Leave request ${nameForLine} (${codeForLine}, ${fromForLine}) — ${(!lv&&rv)?"new on live, not yet on your copy":(lv&&rv)?"differs from live version":"new, not yet on live"}`;
+      const line=`Leave request ${nameForLine} (${codeForLine}, ${fromForLine}) — ${(!lv&&rv)?"live only":(lv&&rv)?"differs from live":"yours only"}`;
       changes.push(line);
       if(rv)conflicts.push(line);
     });
   }
-  return {changes,conflicts};
+  // Item 1 (redundancy): the same literal line can legitimately be produced twice (e.g. a week key present in
+  // both the local and live maps, walked once from each side of the UNION loops above). Identical text carries no
+  // extra information for a human reading the popup, so duplicates are collapsed here, at the single point every
+  // caller reads this from, rather than in each display surface separately.
+  return {changes:[...new Set(changes)],conflicts:[...new Set(conflicts)]};
 }
 // pushConfig()/pullAll() sync CFG.FO/CFG.HSK plus this explicit, curated list of other top-level CFG settings
 // (the Paycom Earning Code mapping, Clock in/out grace periods, auto-deny rules, overstaff/understaff flags,
@@ -11205,7 +11289,12 @@ const SHARED_APP_CFG_KEYS=[
   // and runGeofenceCheck()/runAttestation(), both reading CFG[dept].<key>), syncing as part of that department's
   // own existing CFG.FO/CFG.HSK payload, same as every other per-department setting. HideUnavailInfoFromViewers
   // stays here — that's a genuine app-wide display preference, not tied to either department.
-  "hideUnavailInfoFromViewers"
+  "hideUnavailInfoFromViewers",
+  // _deletedStaff is the one intentional exception to this list's own "no underscore-prefixed internal key"
+  // rule. Every other _xxx key is a per-device migration guard that would cause harm if shared; this one is the
+  // opposite — a deliberate, hotel-wide decision ("this person was permanently deleted") that is only effective
+  // if every device honours it, since every device independently re-runs seedRoster() at boot.
+  "_deletedStaff"
 ];
 // Closes a real, confirmed gap: the local-vs-live conflict popup already itemized ASSIGN/DEMAND/ LEAVE_REQUESTS
 // differences line-by-line (see analyzeUploadChanges() above), but CFG.FO/CFG.HSK (the staff roster, coverage
@@ -11309,7 +11398,10 @@ function _humanizeOneAvailDateEntry(a){
   const dateLabel=(a.from===a.to)?fmtD(a.from):(fmtD(a.from)+"–"+fmtD(a.to));
   let detail;
   if(a.part&&(a.startTime||a.endTime))detail="Unavailable "+(a.startTime||"?")+"–"+(a.endTime||"?");
-  else detail="Off all day"+(a.code?" ("+a.code+")":"");
+  // Item 1 (redundancy): a specific-date entry whose own code IS the generic day-off marker rendered as
+  // "Off all day (OFF)" — the parenthetical repeats the sentence it follows and adds nothing. The code is now
+  // only appended when it carries information the sentence doesn't already state (PTO, FMLA, LWOP, BDY, etc.).
+  else detail="Off all day"+((a.code&&!/^(off|r-off)$/i.test(String(a.code).trim()))?" ("+a.code+")":"");
   if(a.reason)detail+=" — "+a.reason;
   if(a.autoFromSchedule)detail+=" [auto, from schedule]";
   return dateLabel+": "+detail;
@@ -11352,9 +11444,11 @@ function _diffAvailDatesEntries(localObj,liveObj){
     const l=localObj[k],r=liveObj[k];
     if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical on both sides — not a real difference, skip entirely
     const sortDate=(l&&l.from)||(r&&r.from)||"";
-    if(l&&!r)rows.push({sortDate,text:"• "+_humanizeOneAvailDateEntry(l)+" (added on your device, not yet on live)"});
-    else if(!l&&r)rows.push({sortDate,text:"• "+_humanizeOneAvailDateEntry(r)+" (exists on live, not on your device)"});
-    else rows.push({sortDate,text:"• Your device: "+_humanizeOneAvailDateEntry(l)+" — Live copy: "+_humanizeOneAvailDateEntry(r)});
+    // Item 1 (wordiness): the three suffixes below were full clauses restating the section heading. Shortened to
+    // the two-word labels used consistently everywhere in this popup: "yours only" / "live only" / "yours … live …".
+    if(l&&!r)rows.push({sortDate,text:"• "+_humanizeOneAvailDateEntry(l)+" — yours only"});
+    else if(!l&&r)rows.push({sortDate,text:"• "+_humanizeOneAvailDateEntry(r)+" — live only"});
+    else rows.push({sortDate,text:"• "+_humanizeOneAvailDateEntry(l)+" | live: "+_humanizeOneAvailDateEntry(r)});
   });
   if(!rows.length)return null; // every entry matched — nothing genuinely differs here after all
   rows.sort((a,b)=>a.sortDate<b.sortDate?-1:a.sortDate>b.sortDate?1:0);
@@ -11369,9 +11463,9 @@ function _diffWeeklyAvailEntries(localObj,liveObj){
     const l=localObj[d],r=liveObj[d];
     if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical — skip
     const lTxt=_fmtDay(d,l),rTxt=_fmtDay(d,r);
-    if(l&&!r)rows.push({d,text:"• "+lTxt+" (added on your device, not yet on live)"});
-    else if(!l&&r)rows.push({d,text:"• "+rTxt+" (exists on live, not on your device)"});
-    else rows.push({d,text:"• "+d+" — Your device: "+lTxt.split(": ")[1]+" / Live copy: "+rTxt.split(": ")[1]});
+    if(l&&!r)rows.push({d,text:"• "+lTxt+" — yours only"});
+    else if(!l&&r)rows.push({d,text:"• "+rTxt+" — live only"});
+    else rows.push({d,text:"• "+d+": "+lTxt.split(": ")[1]+" | live: "+rTxt.split(": ")[1]});
   });
   if(!rows.length)return null;
   rows.sort((a,b)=>DOW.indexOf(a.d)-DOW.indexOf(b.d));
@@ -11412,9 +11506,9 @@ function analyzeCfgChanges(localDepts,liveDepts){
     sortedNames.forEach(name=>{
       const l=locByName.get(name),r=liveByName.get(name);
       if(l&&!r){
-        changes.push(`${deptLabel} roster: "${name}" exists only on your device — new, not yet on live.`);
+        changes.push(`${deptLabel} roster: "${name}" — yours only (not on live).`);
       }else if(!l&&r){
-        const line=`${deptLabel} roster: "${name}" exists only on live — choosing "Upload" would remove them from the roster; choosing "Go live" keeps them.`;
+        const line=`${deptLabel} roster: "${name}" — live only. Upload removes them; Go live keeps them.`;
         changes.push(line);conflicts.push(line);
       }else if(l&&r){
         const diffFields=STAFF_FIELDS.filter(f=>JSON.stringify(l[f]??null)!==JSON.stringify(r[f]??null));
@@ -11495,7 +11589,8 @@ function analyzeCfgChanges(localDepts,liveDepts){
       changes.push(line);if(r!==undefined&&r!==null)conflicts.push(line);
     }
   });
-  return {changes,conflicts};
+  // Same duplicate-collapse as analyzeUploadChanges() — see that function's own return for the reasoning.
+  return {changes:[...new Set(changes)],conflicts:[...new Set(conflicts)]};
 }
 // Central decision point, now with THREE distinct outcomes instead of a plain yes/no (see the buttons below): "Stay
 // local" (or dismissing the dialog) — does NOT go live at all; the Supabase connection just made is torn back
@@ -11866,6 +11961,7 @@ async function connect(){
   try{
     DB=window.supabase.createClient(url,key);
     save("hotel_supa",{url,key});
+    try{save("hotel_supa_optout",false);}catch(e){} // an explicit Connect clears any earlier "stay local" choice
     subscribe();
     // A real bug: this used to fire-and-forget maybeUploadOnConnect() (no await) and then IMMEDIATELY set
     // status to "live" and render() — so the UI showed "live" instantly, before the async confirm dialog even
@@ -11920,7 +12016,8 @@ async function maybeSyncExistingPushSubscription(){
 // any connection for that error to be about. A sync error only makes sense while DB is non-null (an actual
 // attempted operation failed); disconnecting always clears it now, restoring the invariant that SYNC_ERR can only
 // be set while a connection genuinely exists.
-function disconnect(){if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;localStorage.removeItem("hotel_supa");setStatus("local","#c7d0da");render();}
+function disconnect(){try{save("hotel_supa_optout",true);}catch(e){} // remembers a deliberate choice to work locally, so boot()'s first-run auto-connect never overrides it
+  if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;localStorage.removeItem("hotel_supa");setStatus("local","#c7d0da");render();}
 // Console errors and Settings-tab lag are two separate symptoms with no code path connecting them:
 // manifest.json/sw.js 404s are non-fatal (a failed, one-time fetch at page load, never retried); CHANNEL_ERROR/
 // "socket closed" on the realtime channels is reported via reportSyncError()/console.warn(), also a one-time log
@@ -17126,8 +17223,8 @@ function renderMobileDrawerContent(){
   // identical opacity/cursor treatment inline, conditioned on the same stack-length check already driving
   // `disabled`, so both states can never drift out of sync with each other.
   h+=`<div class="mrow" style="padding:6px 16px;gap:8px">`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${UNDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" onclick="undoAction()" ${UNDO_STACK.length?"":"disabled"} title="${UNDO_STACK.length?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo"}">↶ Undo</button>`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${REDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" onclick="redoAction()" ${REDO_STACK.length?"":"disabled"} title="${REDO_STACK.length?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo"}">↷ Redo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${UNDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" id="mobUndoBtn" onclick="undoAction()" ${UNDO_STACK.length?"":"disabled"} title="${UNDO_STACK.length?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo"}">↶ Undo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${REDO_STACK.length?"":";opacity:.4;cursor:not-allowed"}" id="mobRedoBtn" onclick="redoAction()" ${REDO_STACK.length?"":"disabled"} title="${REDO_STACK.length?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo"}">↷ Redo</button>`
     +`</div>`;
   h+=`<hr class="mob-drawer-sep">`;
   h+=`<div class="mob-drawer-label">Schedule</div>`;
@@ -17707,14 +17804,25 @@ function syncAppModeAuthBadge(){
   // — are already this app's own established short codes, used as CFG's own top-level keys throughout this file);
   // the complete, un-abbreviated sentence (matching exactly what the classic header's own #authBtn says) moves to
   // this element's title attribute instead of being dropped.
+  // "on my phone I log in and I can edit, but the padlock at the top shows a LOCKED padlock and 'HSK'."
+  // The badge was signalling edit state purely through the difference between U+1F513 (open padlock) and
+  // U+1F512 (closed padlock). At 11px on a phone those two glyphs are close to indistinguishable — on several
+  // mobile emoji fonts the open padlock still renders as a shackled padlock body — so the state was being read
+  // backwards even though the underlying EDIT value was correct all along. The glyph is no longer the only
+  // signal: unlocked states now also carry a word ("Edit") and a green tint, locked states a grey tint, so the
+  // badge is readable without relying on emoji rendering at all.
+  badge.style.fontWeight="600";
   if(EDIT){
-    badge.textContent="🔓 "+DEPT;
+    badge.textContent="🔓 Edit "+DEPT;
+    badge.style.background="rgba(44,158,95,.85)";badge.style.color="#fff";
     badge.title="Editing "+CFG[DEPT].label+(CURRENT_USER&&CURRENT_USER.name?" as "+CURRENT_USER.name:"")+". Tap to lock.";
   }else if(_partial.length){
-    badge.textContent="🔓 "+_partial.join(",");
+    badge.textContent="🔓 Edit "+_partial.join(",");
+    badge.style.background="rgba(44,158,95,.85)";badge.style.color="#fff";
     badge.title="Partial access — edit access is currently granted for "+_partial.map(d=>CFG[d].label).join(" and ")+" only; the department you're viewing right now may still be locked.";
   }else{
-    badge.textContent="🔒";
+    badge.textContent="🔒 View only";
+    badge.style.background="rgba(255,255,255,.16)";badge.style.color="";
     badge.title="View-only. Tap this badge, or any schedule cell, to unlock.";
   }
 }
@@ -19240,6 +19348,8 @@ async function bulkPermanentlyDeleteSelected(){
   const remoteAssignDeletes=[],remoteCheckinDeletes=[];
   for(const name of names){
     const st=D.staff.find(x=>x.n===name);if(!st)continue;
+    archiveStaffBeforeDelete(dept,name); // see permanentlyDeleteStaff() — same archive-then-tombstone order
+    addStaffTombstone(dept,name);
     const idx=D.staff.indexOf(st);if(idx>-1)D.staff.splice(idx,1);
     Object.keys(ASSIGN[dept]||{}).forEach(wk=>{const wkObj=ASSIGN[dept][wk];if(wkObj&&wkObj[name]!=null){delete wkObj[name];remoteAssignDeletes.push({wk,name});}});
     Object.keys(ACTUALD[dept]||{}).forEach(wk=>{const wkObj=ACTUALD[dept][wk];if(wkObj&&wkObj[name]!=null)delete wkObj[name];});
@@ -20842,6 +20952,20 @@ function _renderSettingsInner(){
     </tr>`;}).join("")}
     </table></div></details>`;
   }
+  // Recovery bin for the one irreversible action in this app — see archiveStaffBeforeDelete()/
+  // restoreDeletedStaff() for what is captured and how it is put back. Only rendered when this device actually
+  // holds an archived record, so it is invisible in normal use.
+  {
+    const _arch=Object.keys(DELETED_ARCHIVE||{}).map(k=>DELETED_ARCHIVE[k]).filter(r=>r&&r.dept===SETDEPT);
+    if(_arch.length){
+      _arch.sort((a,b)=>(a.deletedAt<b.deletedAt?1:-1));
+      h+=`<details style="margin-top:10px" ${settingsSectionOpen('deletedArchive')?"open":""} ontoggle="toggleSettingsSection('deletedArchive',this.open)"><summary class="small" style="cursor:pointer"><b>Permanently deleted (${_arch.length})</b> — restorable on this device</summary>
+      <div class="small muted" style="margin-top:4px">Restoring puts the person back in <b>Former staff</b> and merges their archived schedule weeks back in. A week that already has data for that name on this device is left as it is.</div>
+      <div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px;max-height:40vh"><table style="table-layout:auto"><tr><th>Name</th><th>Role</th><th>Deleted</th><th>Weeks archived</th><th></th></tr>
+      ${_arch.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc((r.staff&&r.staff.role)||"")}</td><td>${esc((r.deletedAt||"").slice(0,10))}</td><td style="text-align:center">${Object.keys(r.assign||{}).length}</td><td><button class="mini" onclick="restoreDeletedStaff('${esc(r.dept)}','${esc(r.name).replace(/'/g,"")}')">↩ Restore</button></td></tr>`).join("")}
+      </table></div></details>`;
+    }
+  }
   h+=`</fieldset></div>`;
   // Restores D.rules/D.coverage/D.staff/D.roles/D.shifts back to their LIVE values here, in ONE place, now that
   // every historically-versioned section (Rules & thresholds, Coverage minimums, Default shifts, Staff roster,
@@ -21202,6 +21326,87 @@ function initSettingsScrollBoundaryFix(){
 // replaced wholesale each render, so every element queried here is always brand-new with no listener of its own
 // yet — safe to bind unconditionally, with no risk of double-binding a stale handler to an element that no
 // longer exists.
+// "On both desktop and mobile, if the user scrolls to the top or bottom of a scrollable table/modal and keeps
+// trying to scroll, the page should shift instead of forcing them to find a margin where the table doesn't
+// extend."
+//
+// Three separate things had to be true for that to work, and only the first was in place:
+//  1. No overscroll-behavior:contain on the inner box (fixed in CSS above).
+//  2. Wheel: a trackpad/mouse gesture is target-locked to the element its first tick hit, so once that element is
+//     already at its own top/bottom the remaining ticks are still delivered to it and simply discarded. This
+//     walks up to the nearest ancestor that can still move in the gesture's direction (an outer scroll box, a
+//     modal backdrop, or the page itself) and applies the delta there.
+//  3. Touch: same idea for a finger drag, which the browser also locks to its initial target.
+//
+// Bound once, in the capture phase, at document level — so it applies to every scrollable region in the app
+// (schedule grid, roster tables, Checks panel, every modal) without each one needing its own handler, including
+// any added later. It only ever acts when the inner box genuinely cannot move any further in the direction being
+// requested; an ordinary mid-scroll tick is left completely untouched, and anything another handler has already
+// handled (e.g. the demand-table forwarder above) is skipped outright.
+function _canScrollY(elx,dir){
+  if(!elx||elx===document.body||elx===document.documentElement)return false;
+  if(!(elx instanceof Element))return false;
+  const cs=getComputedStyle(elx);
+  if(!(cs.overflowY==="auto"||cs.overflowY==="scroll"))return false;
+  if(elx.scrollHeight<=elx.clientHeight+1)return false;
+  if(dir<0)return elx.scrollTop>0;
+  return elx.scrollTop+elx.clientHeight<elx.scrollHeight-1;
+}
+function _pageScroller(){return document.scrollingElement||document.documentElement;}
+function _chainTargetFrom(startEl,dir){
+  let node=startEl;
+  while(node&&node!==document.body&&node!==document.documentElement){
+    if(_canScrollY(node,dir))return node;
+    node=node.parentElement;
+  }
+  const pg=_pageScroller();
+  if(!pg)return null;
+  if(dir<0&&pg.scrollTop>0)return pg;
+  if(dir>0&&pg.scrollTop+pg.clientHeight<pg.scrollHeight-1)return pg;
+  return null;
+}
+function initScrollChainAtBoundary(){
+  document.addEventListener("wheel",function(e){
+    if(e.defaultPrevented||!e.deltaY)return;
+    const dir=e.deltaY>0?1:-1;
+    // Where would the browser send this? The nearest scrollable ancestor of the element under the pointer.
+    let inner=e.target instanceof Element?e.target:null;
+    while(inner&&inner!==document.body&&inner!==document.documentElement){
+      const cs=getComputedStyle(inner);
+      if((cs.overflowY==="auto"||cs.overflowY==="scroll")&&inner.scrollHeight>inner.clientHeight+1)break;
+      inner=inner.parentElement;
+    }
+    if(!inner||inner===document.body||inner===document.documentElement)return; // no inner box involved — native page scroll is already correct
+    if(_canScrollY(inner,dir))return;  // still has room in this direction — leave it entirely alone
+    const outer=_chainTargetFrom(inner.parentElement,dir);
+    if(!outer)return;                  // nothing further out can move either — nothing to hand off to
+    e.preventDefault();
+    outer.scrollTop+=e.deltaY;
+  },{passive:false,capture:true});
+  // Touch equivalent. A finger drag is locked to its initial target in the same way, and the fixed, full-viewport
+  // .modalbg backdrop in particular will not chain on its own on iOS.
+  let _ty=null;
+  document.addEventListener("touchstart",function(e){_ty=(e.touches&&e.touches.length===1)?e.touches[0].clientY:null;},{passive:true,capture:true});
+  document.addEventListener("touchmove",function(e){
+    if(e.defaultPrevented||_ty==null||!e.touches||e.touches.length!==1)return;
+    const y=e.touches[0].clientY;const delta=_ty-y;             // positive = finger moved up = scrolling down
+    if(!delta)return;
+    const dir=delta>0?1:-1;
+    let inner=e.target instanceof Element?e.target:null;
+    while(inner&&inner!==document.body&&inner!==document.documentElement){
+      const cs=getComputedStyle(inner);
+      if((cs.overflowY==="auto"||cs.overflowY==="scroll")&&inner.scrollHeight>inner.clientHeight+1)break;
+      inner=inner.parentElement;
+    }
+    if(!inner||inner===document.body||inner===document.documentElement)return;
+    if(_canScrollY(inner,dir))return;
+    const outer=_chainTargetFrom(inner.parentElement,dir);
+    if(!outer)return;
+    e.preventDefault();
+    outer.scrollTop+=delta;
+    _ty=y;
+  },{passive:false,capture:true});
+}
 function initLockOverlayScrollForwarding(){
   document.querySelectorAll(".lockOverlay").forEach(overlay=>{
     const fieldset=overlay.nextElementSibling;if(!fieldset)return;
@@ -21595,6 +21800,10 @@ async function permanentlyDeleteStaff(name){
   // remains the one truly irreversible action in this app's staff-management flow.
   if(!(await uiConfirm("Permanently delete "+name+"? This removes their roster record and their entire schedule history, and cannot be undone.\n\nUse this only for a mistake (e.g. a duplicate or test entry). If "+name+" was a real employee, click Cancel and use Remove instead — that keeps their history in Former Staff.")))return;
   if(!(await uiConfirm("Are you sure? This will permanently delete "+name+" and cannot be reversed.")))return;
+  // Archive BEFORE any mutation (nothing below is recoverable afterward), then tombstone so no seeding path can
+  // silently re-create this record on the next boot — see the tombstone/archive comment above seedRoster().
+  archiveStaffBeforeDelete(dept,name);
+  addStaffTombstone(dept,name);
   const idx=CFG[dept].staff.indexOf(st);if(idx>-1)CFG[dept].staff.splice(idx,1);
   const remoteAssignDeletes=[],remoteCheckinDeletes=[];
   Object.keys(ASSIGN[dept]||{}).forEach(wk=>{const wkObj=ASSIGN[dept][wk];if(wkObj&&wkObj[name]!=null){delete wkObj[name];remoteAssignDeletes.push(wk);}});
@@ -29591,6 +29800,84 @@ function ensureCoverageForAllRoles(){try{
   });
   if(_any)try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
 }catch(e){console.warn("coverage completeness safeguard skipped",e);}}
+// ============================================================================================================
+// DELETED-STAFF TOMBSTONES + RESTORE ARCHIVE
+//
+// Root cause this closes (reported as "the HSK scheduler deleted the outsourced workers but they didn't
+// disappear from the schedule", and separately "going local->live says Justin Biven only exists on my device
+// even though I never added anyone to the roster"):
+//
+// seedRoster() below re-adds names from this file's own hardcoded seed lists whenever they are ABSENT from
+// CFG[dept].staff. Two of its three blocks — the Outsourced (J4 Janitorial) list and the HSK Managers list —
+// run UNCONDITIONALLY on every single boot, with no one-time guard flag at all. The third (apply(FO,...)/
+// apply(HSK,...)) is guarded by CFG._rosterSeeded, which is a purely LOCAL flag: it is deliberately excluded
+// from SHARED_APP_CFG_KEYS, so any device/browser profile that has not set it yet re-runs the full seed
+// against a roster it just pulled from live.
+//
+// "Absent from the roster" is exactly the state a PERMANENT DELETE leaves behind. So a permanent delete was
+// self-reversing: the record came back on the next boot (or on any other device's next boot) as a brand-new,
+// employed:true entry — which is also why it then reappeared in the Checks panel's own "Could assign"
+// autosuggest list even though it had just been deleted, and why a device that re-seeded a name the live copy
+// no longer has reports that name as a local-only roster addition in the local-to-live popup.
+//
+// A tombstone records "this name was deliberately, permanently deleted from this department" so every seeding
+// path can tell a genuine deletion apart from a name that simply hasn't been seeded yet. It is added to
+// SHARED_APP_CFG_KEYS (see that list) so the decision reaches every device, not just the one that made it.
+function _tombstones(dept){CFG._deletedStaff=CFG._deletedStaff||{};CFG._deletedStaff[dept]=CFG._deletedStaff[dept]||{};return CFG._deletedStaff[dept];}
+function isStaffTombstoned(dept,name){try{return !!_tombstones(dept)[name];}catch(e){return false;}}
+function addStaffTombstone(dept,name){try{_tombstones(dept)[name]=(new Date()).toISOString().slice(0,10);}catch(e){}}
+function clearStaffTombstone(dept,name){try{delete _tombstones(dept)[name];}catch(e){}}
+// Restore archive. permanentlyDeleteStaff()/bulkPermanentlyDeleteSelected() are the only genuinely irreversible
+// actions in this app; they hard-delete the roster record AND every ASSIGN/ACTUALD/FLOORS/ACCRUALS/CHECKINS row
+// that person ever had, locally and remotely. Everything they are about to destroy is copied here FIRST, to a
+// separate localStorage key that no sync path ever touches, so the exact request "restore the workers into
+// Former staff without losing the schedules already made" is satisfiable from inside the app. Device-local by
+// design: this is a recovery bin, not shared state, and it must survive even a bad pull.
+let DELETED_ARCHIVE=load("hotel_deleted_archive",{});
+function _archiveKey(dept,name){return dept+"|"+name;}
+function archiveStaffBeforeDelete(dept,name){
+  try{
+    const st=(CFG[dept].staff||[]).find(x=>x.n===name);
+    const rec={dept,name,deletedAt:new Date().toISOString(),staff:st?JSON.parse(JSON.stringify(st)):null,assign:{},actuald:{},floors:{},accrual:null,checkins:{}};
+    Object.keys(ASSIGN[dept]||{}).forEach(wk=>{const w=ASSIGN[dept][wk];if(w&&w[name]!=null)rec.assign[wk]=JSON.parse(JSON.stringify(w[name]));});
+    Object.keys(ACTUALD[dept]||{}).forEach(wk=>{const w=ACTUALD[dept][wk];if(w&&w[name]!=null)rec.actuald[wk]=JSON.parse(JSON.stringify(w[name]));});
+    Object.keys(FLOORS||{}).forEach(wk=>{const w=FLOORS[wk];if(w&&w[name]!=null)rec.floors[wk]=JSON.parse(JSON.stringify(w[name]));});
+    if(ACCRUALS[dept]&&ACCRUALS[dept][name]!=null)rec.accrual=JSON.parse(JSON.stringify(ACCRUALS[dept][name]));
+    Object.keys(CHECKINS[dept]||{}).forEach(wk=>{const w=CHECKINS[dept][wk];if(w&&w[name]!=null)rec.checkins[wk]=JSON.parse(JSON.stringify(w[name]));});
+    DELETED_ARCHIVE[_archiveKey(dept,name)]=rec;
+    save("hotel_deleted_archive",DELETED_ARCHIVE);
+  }catch(e){console.warn("delete archive skipped (non-fatal):",e);}
+}
+// Puts the person back as employed:false — i.e. straight into the Former staff section, NOT onto active
+// schedules — while merging every archived week back into ASSIGN/ACTUALD/FLOORS/ACCRUALS/CHECKINS. A week that
+// already has data for this name on this device is left alone (never overwritten by the older archived copy),
+// matching this app's established "never silently clobber existing data" convention. The tombstone is cleared so
+// the seed lists stop being blocked for that name, and each restored week is pushed to the live copy if
+// connected, so the restore reaches every device rather than only this one.
+async function restoreDeletedStaff(dept,name){
+  const rec=DELETED_ARCHIVE[_archiveKey(dept,name)];
+  if(!rec){uiAlert("No archived copy of "+name+" is stored on this device.");return;}
+  if(!(await uiConfirm("Restore "+name+" to Former staff, along with "+Object.keys(rec.assign||{}).length+" archived schedule week(s)?\n\nThey will NOT be added back to active schedules — re-employ them afterward if that is intended.")))return;
+  CFG[dept].staff=CFG[dept].staff||[];
+  if(!CFG[dept].staff.some(x=>x.n===name)){
+    const st=rec.staff?JSON.parse(JSON.stringify(rec.staff)):{n:name,role:"",type:"FT"};
+    st.employed=false;if(!st.inactiveSince)st.inactiveSince=(rec.deletedAt||"").slice(0,10)||weekKey(new Date());
+    CFG[dept].staff.push(st);
+  }
+  const restoredWks=[];
+  Object.keys(rec.assign||{}).forEach(wk=>{ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};if(ASSIGN[dept][wk][name]==null||!Object.keys(ASSIGN[dept][wk][name]).length){ASSIGN[dept][wk][name]=JSON.parse(JSON.stringify(rec.assign[wk]));restoredWks.push(wk);}});
+  Object.keys(rec.actuald||{}).forEach(wk=>{ACTUALD[dept]=ACTUALD[dept]||{};ACTUALD[dept][wk]=ACTUALD[dept][wk]||{};if(ACTUALD[dept][wk][name]==null)ACTUALD[dept][wk][name]=JSON.parse(JSON.stringify(rec.actuald[wk]));});
+  Object.keys(rec.floors||{}).forEach(wk=>{FLOORS[wk]=FLOORS[wk]||{};if(FLOORS[wk][name]==null)FLOORS[wk][name]=JSON.parse(JSON.stringify(rec.floors[wk]));});
+  if(rec.accrual!=null){ACCRUALS[dept]=ACCRUALS[dept]||{};if(ACCRUALS[dept][name]==null)ACCRUALS[dept][name]=JSON.parse(JSON.stringify(rec.accrual));}
+  Object.keys(rec.checkins||{}).forEach(wk=>{CHECKINS[dept]=CHECKINS[dept]||{};CHECKINS[dept][wk]=CHECKINS[dept][wk]||{};if(CHECKINS[dept][wk][name]==null)CHECKINS[dept][wk][name]=JSON.parse(JSON.stringify(rec.checkins[wk]));});
+  clearStaffTombstone(dept,name);
+  delete DELETED_ARCHIVE[_archiveKey(dept,name)];
+  save("hotel_deleted_archive",DELETED_ARCHIVE);
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_actuald",ACTUALD);save("hotel_floors",FLOORS);save("hotel_accruals",ACCRUALS);save("hotel_checkins",CHECKINS);
+  if(DB){restoredWks.forEach(wk=>pushWeekAll(dept,wk));Object.keys(rec.checkins||{}).forEach(wk=>{try{pushCheckin(dept,wk,name);}catch(e){}});}
+  renderSettings();
+  flashNote("Restored "+name+" to Former staff with "+restoredWks.length+" schedule week(s).");
+}
 function seedRoster(){try{
   {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));
    // O-much Erich and Three-J Kaio (formerly modeled as their own "Laundry chute" crew) are a task assignment
@@ -29609,9 +29896,11 @@ function seedRoster(){try{
    // Janitorial
    D.staff.forEach(function(s){if(s.role==="Outsourced — Chutter"||s.role==="Outsourced — Laundry chute"){s.role="Outsourced — J4 Janitorial";if(!s.note)s.note="Laundry chute";}});
    ["Outsourced — Chutter","Outsourced — Laundry chute"].forEach(old=>{const _ci=D.roles.indexOf(old);if(_ci>=0)D.roles.splice(_ci,1);});
-   OUT.forEach(([n,role,note])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:"OUT",oncall:true,employed:true,note:note});have.add(n);}});}
+   // isStaffTombstoned() guard — this block has no one-time flag and runs on EVERY boot, which is precisely why a
+   // permanently deleted outsourced crew member kept reappearing. See the tombstone comment above this function.
+   OUT.forEach(([n,role,note])=>{if(!have.has(n)&&!isStaffTombstoned("HSK",n)){D.staff.push({n:n,role:role,type:"OUT",oncall:true,employed:true,note:note});have.add(n);}});}
   const MGRS=[["Jenny De Guzman","FT"],["Cynthia Requino","FT"],["Edna Cortez","FT"],["Roberta Fernandez","FT"],["Editha Fallejo","FT"]];
-  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));MGRS.forEach(([n,t])=>{if(!have.has(n)){D.staff.push({n:n,role:"Managers",type:t,employed:true});have.add(n);}});}
+  {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));MGRS.forEach(([n,t])=>{if(!have.has(n)&&!isStaffTombstoned("HSK",n)){D.staff.push({n:n,role:"Managers",type:t,employed:true});have.add(n);}});}
  const FO={
   "Front Desk Supervisor":[["Katherine Johnson","FT",1]],
   "Front Desk Agents":[["Prince Tarape","FT",0],["Irish Gonzales","FT",0],["Ahmylyn Cabrera","FT",0],["Jema Rokop","FT",0],["Jackrine Jimmy","PT",0],["Sungbin Kang","FT",0],["Jessica Basaliza","PT",0],["Shane Ricoy","PT",0],["Ashley Mandani","OC",0],["Aira Calilung","OC",0],["Kimberly German","OC",0],["Clarence Dimalanta","PT",0]],
@@ -29653,7 +29942,7 @@ function seedRoster(){try{
  };
  function apply(dept,map){const D=CFG[dept];D.staff=D.staff||[];const have=new Set(D.staff.map(s=>s.n));
    Object.entries(map).forEach(([role,list])=>{if(!D.roles.includes(role))D.roles.push(role);
-     list.forEach(([n,type,former])=>{if(!have.has(n)){D.staff.push({n:n,role:role,type:type,employed:former?false:true});have.add(n);}});});}
+     list.forEach(([n,type,former])=>{if(!have.has(n)&&!isStaffTombstoned(dept,n)){D.staff.push({n:n,role:role,type:type,employed:former?false:true});have.add(n);}});});}
  if(!CFG._mgrSeeded){CFG._mgrSeeded=true;} if(!CFG._rosterSeeded){apply("FO",FO);apply("HSK",HSK);CFG._rosterSeeded=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}
  }catch(e){console.warn("roster seed skipped",e);}}
 /* BOOT ---------- */
@@ -29854,8 +30143,26 @@ function seedRoster(){try{
   // Lazily freeze settings for weeks that are now PAST but never snapshotted (captures the settings in effect
   // through that week)
   try{["FO","HSK"].forEach(dp=>{const savedDept=DEPT;DEPT=dp;const ws=mondayOfWeekStartThu(new Date());for(let k=1;k<=8;k++){const d=new Date(ws);d.setDate(d.getDate()-7*k);const wk=weekKey(d);if(!((SETHIST[dp]||{})[wk])){const _cur=WEEK_START;WEEK_START=d;snapshotSettings(dp,wk);WEEK_START=_cur;}}DEPT=savedDept;});}catch(e){}
+  // "on my phone, in both mobile and desktop view, the changes I can see on an actual computer don't show
+  // (shifts, assignments, roster changes)." Root cause: this app only ever auto-connected to the shared live copy
+  // if THIS browser profile had already connected once before and had a saved "hotel_supa" entry. A phone opening
+  // the deployed link for the first time therefore booted straight into local mode against its own freshly seeded
+  // default roster — no error, no prompt, just a different set of data from the one the desktop is editing.
+  // Nothing about the device was wrong; it had simply never been connected.
+  //
+  // A first run with no saved connection info AND no record of a deliberate disconnect now connects using this
+  // deployment's own built-in default, which is the behaviour a shared, deployed copy should have. A deliberate
+  // Disconnect writes hotel_supa_optout (see disconnect()), so choosing local mode is still respected on every
+  // subsequent load and is never silently undone by this.
   const saved=load("hotel_supa",null);
   if(saved){el("supaUrl").value=saved.url;el("supaKey").value=saved.key;connect();}
+  else if(!load("hotel_supa_optout",false)){
+    try{
+      el("supaUrl").value='https://rrvxbvpcbbmdabgzqykp.supabase.co';
+      el("supaKey").value='sb_publishable_JkMtNhQ-HUO80fMtG1n7ZA_1zItxTdq';
+      connect();
+    }catch(e){console.warn("first-run auto-connect skipped (non-fatal):",e);}
+  }
   // Restores this device's own saved view-mode preference (see cycleViewMode()'s own comment for the full 3-state
   // design and the real bug fixed in HOW it's stored) BEFORE the very first render() call — so a device that
   // already chose App/Desktop view sees the correct hamburger/viewport/label state from the FIRST paint, not a
@@ -29880,6 +30187,7 @@ function seedRoster(){try{
   // because this one, non-essential feature happened to throw in some unusual embedding context this session has no
   // way to fully anticipate.
   try{registerServiceWorker();}catch(e){console.warn("Service worker registration skipped (non-fatal):",e);}
+  try{initScrollChainAtBoundary();}catch(e){console.warn("scroll chaining init skipped (non-fatal):",e);}
   if(CFG._notifEnabled)startReminderEngine();
   autoLoadHistoricalScheduleOnce();
   // — lazy PTO-accrual catch-up (see ACCRUAL_RATE_DEFAULT's own comment for the full feature), matching this
