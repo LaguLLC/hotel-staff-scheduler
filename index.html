@@ -2458,8 +2458,12 @@
          count, never a stale one carried over from an earlier click. This second layer fixes the user-visible
          symptom unconditionally, independent of whichever exact mechanism is (or might still be) altering the
          counts in the background. -->
-    <button class="ghostw" id="btnUndo" onclick="undoAction()" onmouseenter="_refreshUndoRedoButtons()" onfocus="_refreshUndoRedoButtons()" style="padding:5px 8px" title="Nothing to undo" disabled>↶</button>
-    <button class="ghostw" id="btnRedo" onclick="redoAction()" onmouseenter="_refreshUndoRedoButtons()" onfocus="_refreshUndoRedoButtons()" style="padding:5px 8px" title="Nothing to redo" disabled>↷</button>
+        <!-- The hover target is the WRAPPER span, not the button: a disabled button does not dispatch
+         mouseenter/mouseover in most browsers, so hovering a greyed-out Redo would otherwise show nothing at all
+         and give no way to see why it is unavailable. No title attribute on either button — see
+         _refreshUndoRedoButtons() for why a native tooltip cannot be kept in step with the toast. -->
+    <span style="display:inline-block" onmouseenter="showUndoRedoTip('undo','btnUndo')" onmouseleave="hideUndoRedoTip()"><button class="ghostw" id="btnUndo" onclick="undoAction()" onfocus="showUndoRedoTip('undo','btnUndo')" onblur="hideUndoRedoTip()" style="padding:5px 8px;opacity:0.45" disabled>↶</button></span>
+    <span style="display:inline-block" onmouseenter="showUndoRedoTip('redo','btnRedo')" onmouseleave="hideUndoRedoTip()"><button class="ghostw" id="btnRedo" onclick="redoAction()" onfocus="showUndoRedoTip('redo','btnRedo')" onblur="hideUndoRedoTip()" style="padding:5px 8px;opacity:0.45" disabled>↷</button></span>
     <button class="ghostw weeknav" onclick="prevWeek()">◀ Prev</button>
         <!-- TIGHTENED alongside the header/.tag gap reductions above (see header's own CSS comment for the full "one line if
          it fits" measurement): 150px→128px; the real content ("Aug 13 – Aug
@@ -2473,7 +2477,12 @@
          suddenly appear right where the cursor already was on clicking Next, physically shifting Next further
          right out from under a repeated click at the same screen position — a real misclick risk. Kept
          deliberately compact (a short "Today" label, matching Prev/Next's own terse style). -->
-    <button class="ghostw weeknav" id="btnCurrentWeek" onclick="jumpToCurrentWeek()" style="display:none" title="Jump to the current week">Today</button>
+        <!-- "Prev and Next shift in full-width view when moving off the current week, because the Today button
+         appears" — display:none removes the element from layout entirely, so the flex row re-measures and every
+         sibling moves. visibility:hidden keeps the box, and therefore the row width, constant: the button fades in
+         and out in place and nothing else on the row ever moves. pointer-events is cleared alongside visibility so
+         an invisible button can never be clicked. -->
+    <button class="ghostw weeknav" id="btnCurrentWeek" onclick="jumpToCurrentWeek()" style="visibility:hidden;pointer-events:none" title="Jump to the current week">Today</button>
     <span class="status" id="syncStatus"><span class="dot" style="background:#c7d0da"></span><span>&nbsp;local</span></span>
         <!-- See _awayChanges' own comment (near pullAll()) for the full "what changed while away" feature. An empty,
          hidden-by-default span filled in only by renderAwayChangesBadge() — kept genuinely EMPTY (rather than a static
@@ -4483,6 +4492,97 @@ let _syncApplying=false;
 // mirrors _undoApplying/_syncApplying's own established pattern (capture prior value, set true, restore the
 // captured value in finally) so nested/overlapping calls can never clear it early.
 let _autoMaintenance=false;
+// THE SHARED ROOT CAUSE behind "the first undo removes Ashley Mandani and the coverage pills I never touched",
+// "undo does nothing / redo stays greyed out on the deployed copy", "going local to live says Justin Biven only
+// exists on my device when I added nobody", and "the phone doesn't show the computer's changes".
+//
+// boot() runs ~30 one-time migrations and fixups (fixupPaycomAltNames, fixupAddMissingHSKStaff,
+// fixupAiraNoteRestore, seedRoster, the coverage-completeness safeguard, ...). Most write with a direct
+// localStorage.setItem(), but several call save("hotel_cfg",CFG) instead. save() cannot tell those apart from a
+// person typing in Settings, so each one:
+//   1. opened an undo batch      -> UNDO_STACK is already several entries deep before the page has finished
+//                                   painting, which is why a fresh open shows "15 steps available" and why the
+//                                   first undo reverts roster/coverage work nobody did. Every commit also does
+//                                   REDO_STACK=[], which is why redo went straight back to greyed out.
+//   2. set PENDING=true          -> DB is still null this early, so save()'s own "!DB && SYNCABLE_KEYS" branch
+//                                   fires. connect() then takes the `if(PENDING) maybeUploadOnConnect()` branch
+//                                   on EVERY boot on EVERY device, which is where the unexplained "Justin Biven
+//                                   exists only on your device" line came from. Worse, on a phone whose roster
+//                                   was just built from this file's own seed lists, choosing Upload pushes that
+//                                   seeded roster over the live one via pushConfig()'s wholesale
+//                                   {FO:CFG.FO,HSK:CFG.HSK} upsert.
+//   3. stamped _cfgDirtyStamp    -> which is the flag pullAll() checks before applying the live roster.
+//
+// None of these writes is a user action, so none should be undoable, none should mark the device as having
+// unsynced work, and none should suppress an incoming pull. _bootstrapping stays true for the whole of boot()
+// and is cleared at the end, immediately before the connection is opened.
+// "the lock/unlock icon was better, it just wasn't working properly — it showed the locked version when it was
+// unlocked on the phone."
+//
+// Taking that at face value rather than assuming it was only a legibility problem: the icon is restored, but it
+// is no longer an emoji. U+1F513 OPEN LOCK is drawn by the FONT, and several Android emoji fonts draw it with
+// the shackle seated against the body, which is visually a closed padlock — so on those devices the correct
+// state was rendered as the wrong picture, and nothing in this app could influence that. These are inline SVG
+// instead: the open form has the shackle offset right and lifted clear of the body, which is unambiguous at any
+// size and identical on every device, because this app draws it rather than asking a font to.
+//
+// Monochrome (currentColor) so it inherits the surrounding badge's own colour, exactly as the emoji did.
+const LOCK_SVG_CLOSED='<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false" style="vertical-align:-2px;display:inline-block"><path d="M7 10V7a5 5 0 0 1 10 0v3" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="4" y="10" width="16" height="11" rx="2" fill="currentColor"/></svg>';
+const LOCK_SVG_OPEN='<svg viewBox="0 0 24 24" width="12" height="12" aria-hidden="true" focusable="false" style="vertical-align:-2px;display:inline-block"><path d="M12 10V7a5 5 0 0 1 10 0v2" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/><rect x="2" y="10" width="16" height="11" rx="2" fill="currentColor"/></svg>';
+let _bootstrapping=true;
+// ============================================================================================================
+// UNDO/REDO — FIVE INDEPENDENT LAYERS
+//
+// This has been patched repeatedly and kept coming back, because every previous attempt was a single guard that
+// had to correctly identify every automatic write. That is a losing design: each new boot-time fixup, migration
+// or render-triggered stamp is another chance to miss one, and missing one is enough to reproduce the whole bug.
+// The confirmed example this round: the previous build set _bootstrapping=false immediately BEFORE
+// autoLoadHistoricalScheduleOnce(), which calls save("hotel_cfg",CFG) — producing exactly one phantom undo step
+// on a fresh open, which is precisely what was reported. It is also staged across four separate one-time flags
+// (_histLoaded, _histDemandLoaded, _histFloorsLoaded, _histActualHoursLoaded), so it yields one phantom step per
+// load for four consecutive loads.
+//
+// Rather than fix that one ordering mistake and call it done again, the design is changed so that no single
+// missed guard can reproduce the symptom. Each layer below is independently sufficient to block a phantom step:
+//
+//   L1 ORDERING     — _bootstrapping now stays true until the true end of boot, after every automatic call.
+//   L2 USER GESTURE — no undo step may be recorded until a TRUSTED user input event has reached the document.
+//                     No automatic code path can forge event.isTrusted, so this holds regardless of L1.
+//   L3 NO-OP DROP   — a step whose before/after snapshots are equal (ignoring internal _-prefixed CFG flags) is
+//                     discarded at commit. A migration that only flips a flag produces nothing, regardless of L1/L2.
+//   L4 VERIFY       — undoAction()/redoAction() confirm the state actually changed; if a step turns out to be a
+//                     no-op it is skipped rather than silently consumed, so the button never "does nothing".
+//   L5 SELF-AUDIT   — a periodic sweep drops any stale no-op entries that reached the stacks by any route at all.
+//
+// _undoUserGesture (L2): set by the first trusted pointerdown/keydown/touchstart. Listeners are registered in the
+// capture phase and never removed — they are one-line and idempotent.
+let _undoUserGesture=false;
+try{
+  ["pointerdown","keydown","touchstart"].forEach(evt=>{
+    document.addEventListener(evt,function(e){if(e&&e.isTrusted)_undoUserGesture=true;},{capture:true,passive:true});
+  });
+}catch(e){/* no document yet — _undoUserGesture stays false, which fails safe (no steps recorded) */}
+// L3/L5 helper: a comparison that ignores CFG's own internal bookkeeping. Top-level CFG keys beginning with "_"
+// are migration guards and per-device UI state (_histLoaded, _rulesOpen, _notifName, ...). They are never data a
+// person edits, so a change confined to them is not something to offer as an undo step.
+function _undoComparable(snapStr){
+  if(!snapStr)return "";
+  try{
+    const o=JSON.parse(snapStr);
+    if(o&&o.CFG){const c={};Object.keys(o.CFG).forEach(k=>{if(k.charAt(0)!=="_")c[k]=o.CFG[k];});o.CFG=c;}
+    return JSON.stringify(o);
+  }catch(e){return snapStr;}
+}
+function _undoStepIsNoOp(beforeSnap,afterSnap){
+  try{return _undoComparable(beforeSnap)===_undoComparable(afterSnap);}catch(e){return false;}
+}
+// True when the current save() is automatic rather than user-initiated — boot migrations, render-triggered
+// stamps, or an undo/redo restore replaying its own saves.
+// Wrapped because both flags are `let`, so a save() reaching here before their declaration line has executed
+// would throw a ReferenceError from the temporal dead zone — and this is called from save()'s PENDING branch,
+// which is NOT inside a try/catch, so an uncaught throw there would abort the caller mid-write. On failure it
+// reports "automatic", which is the safe direction: no undo step, no PENDING, no dirty stamp.
+function _isAutomaticWrite(){try{return _bootstrapping||_autoMaintenance;}catch(e){return true;}}
 let _undoPushScope=null; // see _undoRestore() — the (dept,week)/demand/leave-request set a restore actually changed
 function runAutoMaintenance(fn){const _prev=_autoMaintenance;_autoMaintenance=true;try{return fn();}finally{_autoMaintenance=_prev;}}
 // "set a shift for Sept 12... export shows 0 shifts" — traced a genuine, real data-race distinct from every
@@ -4683,6 +4783,10 @@ function _undoRestore(snapStr){
 function flushPendingUndoBatch(){
   if(_undoBatchTimer!=null){clearTimeout(_undoBatchTimer);_undoBatchTimer=null;}
   if(_undoBatchPre!==null){
+    // Same L3 no-op drop as the deferred commit path — both routes must apply it or a flush could admit a step
+    // the timer would have rejected.
+    const _afterFlush=_undoSnapshot();
+    if(_undoStepIsNoOp(_undoBatchPre,_afterFlush)){_undoBatchPre=null;_lastSettledSnapshot=_afterFlush;return;}
     UNDO_STACK.push(_undoBatchPre);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();REDO_STACK=[];_undoBatchPre=null;
     // Same re-capture as the deferred-timer path in save() itself — see _lastSettledSnapshot's own comment for why
     // this must happen at the true end of every batch, including one flushed early/manually here.
@@ -4693,7 +4797,15 @@ function undoAction(){
   flushPendingUndoBatch();
   if(!UNDO_STACK.length){flashNote("Nothing to undo.");return;}
   const cur=_undoSnapshot();
-  const prev=UNDO_STACK.pop();
+  // L4: a step that would change nothing must not be consumed — that is the "I clicked undo and nothing
+  // happened" report. Any such entry is discarded and the next real one is used instead. The loop is bounded by
+  // the stack itself, so it always terminates.
+  let prev=null;
+  while(UNDO_STACK.length){
+    const cand=UNDO_STACK.pop();
+    if(!_undoStepIsNoOp(cand,cur)){prev=cand;break;}
+  }
+  if(prev===null){_refreshUndoRedoButtons();flashNote("Nothing left to undo — the remaining history matched the current state.");return;}
   REDO_STACK.push(cur);if(REDO_STACK.length>UNDO_MAX)REDO_STACK.shift();
   _undoRestore(prev);
   // Recomputed immediately before the toast is composed, from the same stacks the tooltip reads, so the two can
@@ -4706,17 +4818,61 @@ function redoAction(){
   flushPendingUndoBatch(); // ensures any not-yet-committed edit is safely captured first, so it's never silently lost/skipped by a redo
   if(!REDO_STACK.length){flashNote("Nothing to redo.");return;}
   const cur=_undoSnapshot();
-  const next=REDO_STACK.pop();
+  let next=null;                              // L4, mirroring undoAction() above
+  while(REDO_STACK.length){
+    const cand=REDO_STACK.pop();
+    if(!_undoStepIsNoOp(cand,cur)){next=cand;break;}
+  }
+  if(next===null){_refreshUndoRedoButtons();flashNote("Nothing left to redo.");return;}
   UNDO_STACK.push(cur);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();
   _undoRestore(next);
   _refreshUndoRedoButtons();
   flashNote("Redid change. ("+REDO_STACK.length+" more to redo)");
   _blurUndoRedoButtons();
 }
+// "the hover tooltip and the toast numbers don't match" — screenshot shows the tooltip saying 15 while the toast
+// says 14. Both numbers were read from the same UNDO_STACK; the tooltip is simply older. A native tooltip is
+// rendered by the browser from the `title` attribute AT THE MOMENT IT OPENS and is never re-read while it stays
+// open, so updating `title` afterwards changes nothing on screen — and because the pointer does not move during
+// an undo click, the tooltip that was already open when the click landed stays open, showing the pre-click count.
+// No amount of refreshing the attribute can fix that; the attribute is not what is being displayed.
+//
+// Replaced with a small tooltip element this app draws itself, so the text can be updated live while it is
+// visible. The `title` attribute is removed from both buttons entirely, so the browser has nothing stale to show
+// alongside it.
+let _urTipEl=null;
+function _urTip(){
+  if(_urTipEl&&document.body.contains(_urTipEl))return _urTipEl;
+  _urTipEl=document.createElement("div");
+  _urTipEl.id="undoRedoTip";
+  _urTipEl.style.cssText="position:fixed;z-index:9998;background:#1f2d3d;color:#fff;font-size:11px;line-height:1.3;padding:4px 8px;border-radius:5px;pointer-events:none;display:none;white-space:nowrap;box-shadow:0 2px 8px rgba(0,0,0,.25)";
+  document.body.appendChild(_urTipEl);
+  return _urTipEl;
+}
+function _urTipText(which){
+  if(which==="undo")return UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step"+(UNDO_STACK.length===1?"":"s")+" available) — Ctrl+Z"):"Nothing to undo";
+  return REDO_STACK.length?("Redo ("+REDO_STACK.length+" step"+(REDO_STACK.length===1?"":"s")+" available) — Ctrl+Y"):"Nothing to redo";
+}
+let _urTipFor=null;
+function showUndoRedoTip(which,anchorId){
+  _urTipFor=which;
+  const t=_urTip(),a=el(anchorId);if(!a)return;
+  t.textContent=_urTipText(which);
+  t.style.display="block";
+  const r=a.getBoundingClientRect();
+  t.style.top=(r.bottom+6)+"px";
+  t.style.left=Math.max(6,Math.min(r.left,window.innerWidth-t.offsetWidth-6))+"px";
+}
+function hideUndoRedoTip(){_urTipFor=null;const t=_urTipEl;if(t)t.style.display="none";}
 function _refreshUndoRedoButtons(){
   const u=el("btnUndo"),r=el("btnRedo");
-  if(u){u.disabled=!UNDO_STACK.length;u.title=UNDO_STACK.length?("Undo ("+UNDO_STACK.length+" step(s) available) — Ctrl+Z"):"Nothing to undo";}
-  if(r){r.disabled=!REDO_STACK.length;r.title=REDO_STACK.length?("Redo ("+REDO_STACK.length+" step(s) available) — Ctrl+Y"):"Nothing to redo";}
+  // A disabled button suppresses pointer events in most browsers, so it cannot be relied on to hide its own
+  // tooltip — hence the opacity/pointer-events approach below rather than the `disabled` attribute alone. The
+  // attribute is kept for keyboard/AT correctness; the wrapper span keeps receiving hover either way.
+  if(u){u.disabled=!UNDO_STACK.length;u.removeAttribute("title");u.style.opacity=UNDO_STACK.length?"":"0.45";}
+  if(r){r.disabled=!REDO_STACK.length;r.removeAttribute("title");r.style.opacity=REDO_STACK.length?"":"0.45";}
+  // Live-update whichever tooltip is currently open, which is the entire point of not using `title`.
+  if(_urTipFor&&_urTipEl&&_urTipEl.style.display==="block")_urTipEl.textContent=_urTipText(_urTipFor);
   // The mobile drawer carries its OWN pair of Undo/Redo buttons (see the drawer's markup builder), whose
   // disabled/opacity/title were baked in at build time and never refreshed by anything — so on a phone they kept
   // showing whatever the counts happened to be when the drawer was last rebuilt. Refreshed from the same single
@@ -4740,7 +4896,22 @@ function _refreshUndoRedoButtons(){
 // second, without requiring the user to find a working way to trigger a refresh themselves. Deliberately NOT
 // disabled/paused based on VIEW or focus state — the whole point is to be an unconditional safety net that
 // cannot itself be skipped by whatever code path caused the original problem.
-setInterval(_refreshUndoRedoButtons,800);
+// L5: the existing 800ms button poll also audits the stacks. Any entry that has become a no-op relative to the
+// current state (by any route, including one no other layer anticipated) is dropped, so the counts shown can
+// never drift above the number of steps that would actually do something. Bounded work: the stacks are capped at
+// UNDO_MAX and the comparison is a string compare.
+function _auditUndoStacks(){
+  try{
+    const cur=_undoSnapshot();if(!cur)return;
+    const before=UNDO_STACK.length+REDO_STACK.length;
+    // Only trailing no-ops are removed. An interior entry can legitimately match the current state (edit, then
+    // undo back to it) and still be a real step for the entries beneath it.
+    while(UNDO_STACK.length&&_undoStepIsNoOp(UNDO_STACK[UNDO_STACK.length-1],cur))UNDO_STACK.pop();
+    while(REDO_STACK.length&&_undoStepIsNoOp(REDO_STACK[REDO_STACK.length-1],cur))REDO_STACK.pop();
+    if(UNDO_STACK.length+REDO_STACK.length!==before)_refreshUndoRedoButtons();
+  }catch(e){}
+}
+setInterval(function(){_auditUndoStacks();_refreshUndoRedoButtons();},800);
 // "toast doesn't match number when hovering over undo key" — an earlier pass here theorized this was purely a
 // stale, already-open native tooltip (title text not live-refreshing until the next fresh hover), and blurring
 // the buttons was intended to force that. That theory was directly disproven: the user confirmed the stale
@@ -4756,8 +4927,14 @@ function _blurUndoRedoButtons(){
   if(u&&typeof u.blur==="function")u.blur();
   if(r&&typeof r.blur==="function")r.blur();
 }
-function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
-  if(!DB&&SYNCABLE_KEYS.includes(k)){if(typeof setPending==="function")setPending(true);else PENDING=true;if(typeof setStatus==="function"&&document.getElementById("syncStatus"))setStatus("local","#c7d0da");}
+function save(k,v){
+  // Captured on schedule writes only. ASSIGN is mutated in place by its callers before save() is reached, so this
+  // records the post-edit state of the week — a periodic restore point, not a pre-change backup (the explicit
+  // saveSnapshotQuiet() calls before destructive actions remain the pre-change backup). See maybeAutoSnapshot()
+  // for the rate limit and the conditions under which it does nothing.
+  if(k==="hotel_assign"&&typeof maybeAutoSnapshot==="function"&&typeof WEEK_START!=="undefined"){try{maybeAutoSnapshot(DEPT,weekKey(WEEK_START));}catch(e){}}
+  try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
+  if(!DB&&SYNCABLE_KEYS.includes(k)&&!_isAutomaticWrite()){if(typeof setPending==="function")setPending(true);else PENDING=true;if(typeof setStatus==="function"&&document.getElementById("syncStatus"))setStatus("local","#c7d0da");}
   // "badge number filled in on roster silently blank at export time" — the same class of bug as the earlier
   // ASSIGN/schedule-cell fix (see _assignDirtyStamp's own comment), extended to cover CFG.FO/CFG.HSK (the
   // roster: every staff member's Employee ID, Badge Number, roles, rules, etc.), which turned out to have the
@@ -4778,7 +4955,7 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
   // self-correcting false-positive (the other department's genuinely newer remote change simply applies on the
   // NEXT pull instead of this one), which is a far smaller cost than the alternative of ever silently destroying
   // a real edit.
-  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.appWide=_now;}
+  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.appWide=_now;}
   if(k==="hotel_cfg"&&DB&&!_pullingConfigNow&&typeof pushConfig==="function"){pushConfig();}
   // Undo/redo capture — see this block's own comment above for the full batching design. Skipped entirely while
   // _undoRestore() itself is applying a snapshot (that's an undo/redo action IN PROGRESS, not a new one to track).
@@ -4808,7 +4985,9 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
     // exact same category of event `_syncApplying` exists to exclude from undo tracking — so checking it here
     // too costs nothing and closes off any path (present or future) where the two flags might ever end up out
     // of sync with each other.
-    if(!_undoApplying&&!_syncApplying&&!_pullingConfigNow&&!_autoMaintenance&&UNDO_TRACKED_KEYS.includes(k)){
+    // L2: a trusted user gesture is required before any step can even begin. This is the layer that does not
+    // depend on correctly classifying the writer — automatic code cannot produce a trusted input event.
+    if(!_undoApplying&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()&&_undoUserGesture&&UNDO_TRACKED_KEYS.includes(k)){
       // See _lastSettledSnapshot's own comment above for the full root-cause writeup. The first save() of a new
       // batch now uses _lastSettledSnapshot (the state as of the end of the PREVIOUS batch — genuinely "before"
       // this one) instead of a fresh _undoSnapshot() call here (which, by this point, always reflects the CURRENT
@@ -4829,7 +5008,14 @@ function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k
       clearTimeout(_undoBatchTimer);
       _undoBatchTimer=setTimeout(()=>{
         try{
-          if(_undoBatchPre!==null){UNDO_STACK.push(_undoBatchPre);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();REDO_STACK=[];_undoBatchPre=null;}
+          // L3: commit only if this batch genuinely changed something a person can see. A batch that only
+          // touched internal flags is dropped, and REDO_STACK is left alone — clearing it for a non-edit is what
+          // made redo snap back to greyed out immediately after an undo.
+          if(_undoBatchPre!==null){
+            const _after=_undoSnapshot();
+            if(_undoStepIsNoOp(_undoBatchPre,_after)){_undoBatchPre=null;}
+            else{UNDO_STACK.push(_undoBatchPre);if(UNDO_STACK.length>UNDO_MAX)UNDO_STACK.shift();REDO_STACK=[];_undoBatchPre=null;}
+          }
           // Re-captures the NOW-current (post-batch, fully settled) state as the new baseline for whatever batch
           // comes NEXT — see _lastSettledSnapshot's own comment for why this must happen exactly here (the true end
           // of a batch), not inside _undoSnapshot() itself.
@@ -6036,7 +6222,9 @@ function render(){
   const _curWeekBtn=el("btnCurrentWeek");
   if(_curWeekBtn){
     const _isCurrentWeek=weekKey(WEEK_START)===weekKey(mondayOfWeekStartThu(new Date()));
-    _curWeekBtn.style.display=_isCurrentWeek?"none":"";
+    // visibility, not display — see this button's own markup comment for the layout-shift reason.
+    _curWeekBtn.style.visibility=_isCurrentWeek?"hidden":"visible";
+    _curWeekBtn.style.pointerEvents=_isCurrentWeek?"none":"";
   }
   // "toast doesn't match number when hovering over undo key... clicked undo but redo button remains greyed out"
   // — STILL happening after the previous fix (which added _refreshUndoRedoButtons() at the very END of this
@@ -12540,8 +12728,43 @@ async function pushLeaveRequest(id){
 // expand/collapse state), or the one-time _hist*Loaded migration flags — syncing those would incorrectly overwrite
 // one person's own device-local preference with whatever another device happened to have set, which is never the
 // intent.
+// GUARD AGAINST THE EXACT LOSS REPORTED: "employees added by users on the live version disappeared when I
+// deployed." This function replaces the whole shared roster row in one upsert — {FO:CFG.FO, HSK:CFG.HSK} — so
+// whichever device pushes last wins outright. Any device that pushes a roster missing someone silently deletes
+// that person for everyone. In the previous build a device could reach that state without anyone doing anything
+// wrong: boot-time migrations set PENDING=true before the connection existed, so connect() offered the upload
+// prompt on every load, and answering "Upload" on a device whose roster had just been rebuilt from this file's
+// own seed lists pushed that seeded roster over the live one.
+//
+// The cause is fixed (see _bootstrapping), but the mechanism that made it destructive is still here, so this adds
+// a check independent of it: before replacing the shared roster, compare against what is actually live right now
+// and refuse to silently push a roster that DROPS people. Deletions made on purpose still work — they are simply
+// confirmed first, by name.
 async function pushConfig(){
   if(!DB)return;
+  try{
+    if(!_pullingConfigNow){
+      const{data:_liveRows}=await DB.from("app_config").select("data").eq("id","depts");
+      const _live=(_liveRows&&_liveRows[0]&&_liveRows[0].data)||null;
+      if(_live){
+        const _dropped=[];
+        ["FO","HSK"].forEach(dp=>{
+          const liveStaff=((_live[dp]||{}).staff)||[];
+          const mineNames=new Set((((CFG[dp]||{}).staff)||[]).map(x=>x.n));
+          liveStaff.forEach(x=>{
+            // A tombstone means this person was deliberately deleted (see addStaffTombstone), so their absence
+            // is intended and needs no confirmation.
+            if(!mineNames.has(x.n)&&!isStaffTombstoned(dp,x.n))_dropped.push(CFG[dp].label+": "+x.n);
+          });
+        });
+        if(_dropped.length){
+          const _list=_dropped.slice(0,12).join("\n")+(_dropped.length>12?"\n\u2026 and "+(_dropped.length-12)+" more":"");
+          const _ok=await uiConfirm("This device is about to replace the shared roster with a copy that does not include "+_dropped.length+" person(s) who exist on the live copy:\n\n"+_list+"\n\nUploading removes them for everyone. If you did not just delete these people, choose Cancel \u2014 this device's roster is out of date and should be refreshed from live first (Settings \u2192 Live sync \u2192 Disconnect, then Connect).\n\nUpload anyway?");
+          if(!_ok){console.warn("pushConfig cancelled by the roster-shrink guard.");return;}
+        }
+      }
+    }
+  }catch(e){console.warn("roster-shrink guard skipped (non-fatal) \u2014 continuing with the push:",e);}
   _pushStarted();
   try{
     // Now also pushes every SHARED_APP_CFG_KEYS field (see that constant's own comment for the full "Paycom
@@ -12596,6 +12819,44 @@ function exportXLSX(){
 }
 /* VERSION HISTORY (snapshots of THIS dept+week over time) ---------- */
 let SNAPS=load("hotel_snaps",{});   // SNAPS[dept][week] = [{ts, note, days:{staff:{d:v}}}]
+// "the site is supposed to save every time a change is made, but the last version is from 2 p.m." Two different
+// things were being conflated, and only one of them was behaving as expected:
+//   SAVING happens on every change — save() writes to localStorage synchronously and, when connected, pushes to
+//   Supabase. That was working.
+//   A VERSION is a separate, restorable point-in-time copy, and one was only ever created by an explicit "Save
+//   version now" or automatically just before a destructive action (Clear week, Copy week, Restore). Ordinary
+//   editing never produced one. A gap of eight hours between versions is therefore the documented behaviour, not
+//   a failure — but it is also not what someone reading "saves every time" would reasonably expect, and it is the
+//   difference between having and not having something to recover from.
+//
+// A version is now also taken automatically, rate-limited to at most one per department per week per hour, and
+// only when that week's data has actually changed since the last version held for it. Nothing is stored when
+// nothing has changed, and the existing 30-versions-per-week cap still applies.
+const AUTO_SNAP_MIN_GAP_MS=60*60*1000;
+let _autoSnapLast={};
+function maybeAutoSnapshot(dept,wk){
+  try{
+    if(_isAutomaticWrite())return;             // boot migrations and undo restores are not editing sessions
+    if(!dept||!wk)return;
+    const key=dept+"|"+wk,now=Date.now();
+    if(_autoSnapLast[key]&&(now-_autoSnapLast[key])<AUTO_SNAP_MIN_GAP_MS)return;
+    const cur=((ASSIGN[dept]||{})[wk])||{};
+    const list=((SNAPS[dept]||{})[wk])||[];
+    if(list.length){
+      const newest=list.slice().sort((a,b)=>(a.ts<b.ts?1:-1))[0];
+      if(newest&&JSON.stringify(newest.days||{})===JSON.stringify(cur))
+        {_autoSnapLast[key]=now;return;}       // identical to the version already held — nothing to record
+      if(newest&&newest.ts&&(now-new Date(newest.ts).getTime())<AUTO_SNAP_MIN_GAP_MS)
+        {_autoSnapLast[key]=now;return;}       // a version from this hour already exists (e.g. saved by another device)
+    }
+    SNAPS[dept]=SNAPS[dept]||{};SNAPS[dept][wk]=SNAPS[dept][wk]||[];
+    SNAPS[dept][wk].unshift({ts:new Date().toISOString(),note:"Auto",days:JSON.parse(JSON.stringify(cur))});
+    SNAPS[dept][wk]=SNAPS[dept][wk].slice(0,30);
+    _autoSnapLast[key]=now;
+    save("hotel_snaps",SNAPS);
+    if(DB)pushSnap(dept,wk);
+  }catch(e){console.warn("auto version snapshot skipped (non-fatal):",e);}
+}
 function autoSnap(){try{const wk=weekKey(WEEK_START);SNAPS[DEPT]=SNAPS[DEPT]||{};const arr=SNAPS[DEPT][wk]=SNAPS[DEPT][wk]||[];const last=arr[0];const now=Date.now();
   if(last&&last.auto&&(now-new Date(last.ts).getTime())<3600000)return; // at most one auto-version per hour
   const snap={ts:new Date().toISOString(),note:"auto",auto:true,days:JSON.parse(JSON.stringify(curAssign()))};
@@ -17812,16 +18073,18 @@ function syncAppModeAuthBadge(){
   // signal: unlocked states now also carry a word ("Edit") and a green tint, locked states a grey tint, so the
   // badge is readable without relying on emoji rendering at all.
   badge.style.fontWeight="600";
+  // Icon restored, but drawn rather than rendered from an emoji font — see LOCK_SVG_OPEN's own comment for the
+  // confirmed reason the open padlock could appear closed on a phone. Label is the department code only.
   if(EDIT){
-    badge.textContent="🔓 Edit "+DEPT;
+    badge.innerHTML=LOCK_SVG_OPEN+" "+esc(DEPT);
     badge.style.background="rgba(44,158,95,.85)";badge.style.color="#fff";
-    badge.title="Editing "+CFG[DEPT].label+(CURRENT_USER&&CURRENT_USER.name?" as "+CURRENT_USER.name:"")+". Tap to lock.";
+    badge.title="Unlocked for editing — "+CFG[DEPT].label+(CURRENT_USER&&CURRENT_USER.name?" as "+CURRENT_USER.name:"")+". Tap to lock.";
   }else if(_partial.length){
-    badge.textContent="🔓 Edit "+_partial.join(",");
-    badge.style.background="rgba(44,158,95,.85)";badge.style.color="#fff";
+    badge.innerHTML=LOCK_SVG_OPEN+" "+esc(_partial.join(","));
+    badge.style.background="rgba(201,137,27,.9)";badge.style.color="#fff";
     badge.title="Partial access — edit access is currently granted for "+_partial.map(d=>CFG[d].label).join(" and ")+" only; the department you're viewing right now may still be locked.";
   }else{
-    badge.textContent="🔒 View only";
+    badge.innerHTML=LOCK_SVG_CLOSED;
     badge.style.background="rgba(255,255,255,.16)";badge.style.color="";
     badge.title="View-only. Tap this badge, or any schedule cell, to unlock.";
   }
@@ -17867,9 +18130,35 @@ function updateAuth(){
   const b=el("authBtn");if(b){
   const _partial=partialEditDepts();
   const _both=EDIT&&grantCoversBothDepts();
-  if(EDIT){b.textContent="🔓 "+(CURRENT_USER?CURRENT_USER.name:"Edit")+(_both?" (Both depts)":"")+(weekIsPast()?" (history)":"");b.style.background="#2c9e5f";b.title=_both?"This PIN/account is not scoped to one department — it grants edit access to both Front Office and Housekeeping.":"";}
-  else if(_partial.length){b.textContent="🔓 Partial access ("+_partial.map(d=>CFG[d].label).join(", ")+")";b.style.background="#c9891b";b.title="Edit access is currently granted for "+_partial.map(d=>CFG[d].label).join(" and ")+" only (e.g. from deciding a Leave Request) — the schedule tab you're viewing right now may still be locked. Click to fully lock everything, or to unlock the currently-viewed department.";}
-  else{b.textContent="🔒 View-only";b.style.background="";b.title="";}
+  // "the padlock at the top shows a LOCKED padlock next to HSK, which should only ever appear next to view-only."
+  // Corrected diagnosis: the badge in the screenshot is THIS element (#authBtn), not #appModeAuthBadge, which is
+  // what the previous round patched — so that round could not have changed what the phone displays. The state
+  // itself was never wrong: the background is #2c9e5f (green), which only the EDIT branch sets, and the label is
+  // CURRENT_USER.name ("HSK Manager"), so EDIT was true throughout. What is wrong is the glyph. U+1F513 OPEN LOCK
+  // is drawn by several Android/Chrome emoji fonts as a padlock body with the shackle swung to the side, which at
+  // this size is not distinguishable from U+1F512 CLOSED LOCK — the icon genuinely looks locked.
+  //
+  // The open-padlock glyph is therefore removed from every unlocked state and replaced with a word. The closed
+  // padlock is kept for view-only, where it is both unambiguous and correct. State is now carried by text and
+  // colour, neither of which depends on emoji rendering.
+  // Label shortened to the department code. The account NAME ("HSK Manager") was shown, which is longer than a
+  // phone header allows and redundant beside a department tab already saying the same thing — the useful fact is
+  // which department is unlocked, not whose credential it is. The full sentence, name included, moves to title.
+  if(EDIT){
+    b.innerHTML=LOCK_SVG_OPEN+" "+esc(DEPT)+(_both?" \u00B72":"")+(weekIsPast()?" \u00B7hist":"");
+    b.style.background="#2c9e5f";
+    b.title="Unlocked for editing — "+CFG[DEPT].label+(CURRENT_USER&&CURRENT_USER.name?" as "+CURRENT_USER.name:"")+(_both?". This PIN/account is not scoped to one department: it grants edit access to both Front Office and Housekeeping.":"")+(weekIsPast()?" Viewing a past week.":"")+" Click to lock.";
+  }
+  else if(_partial.length){
+    b.innerHTML=LOCK_SVG_OPEN+" "+esc(_partial.join(","));
+    b.style.background="#c9891b";
+    b.title="Edit access is currently granted for "+_partial.map(d=>CFG[d].label).join(" and ")+" only (e.g. from deciding a Leave Request) — the schedule tab you're viewing right now may still be locked. Click to fully lock everything, or to unlock the currently-viewed department.";
+  }
+  else{
+    b.innerHTML=LOCK_SVG_CLOSED+" View-only";
+    b.style.background="";
+    b.title="View-only. Click to unlock.";
+  }
 }render();
   setTimeout(()=>{
     const _gridElAfter=_dfSel?document.querySelector(_dfSel):_authScrollAnchorEl();
@@ -20963,6 +21252,18 @@ function _renderSettingsInner(){
       <div class="small muted" style="margin-top:4px">Restoring puts the person back in <b>Former staff</b> and merges their archived schedule weeks back in. A week that already has data for that name on this device is left as it is.</div>
       <div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px;max-height:40vh"><table style="table-layout:auto"><tr><th>Name</th><th>Role</th><th>Deleted</th><th>Weeks archived</th><th></th></tr>
       ${_arch.map(r=>`<tr><td>${esc(r.name)}</td><td>${esc((r.staff&&r.staff.role)||"")}</td><td>${esc((r.deletedAt||"").slice(0,10))}</td><td style="text-align:center">${Object.keys(r.assign||{}).length}</td><td><button class="mini" onclick="restoreDeletedStaff('${esc(r.dept)}','${esc(r.name).replace(/'/g,"")}')">↩ Restore</button></td></tr>`).join("")}
+      </table></div></details>`;
+    }
+  }
+  // Recovery for anyone deleted BEFORE the archive above existed — see findRecoverableStaffNames() for which
+  // sources are searched and why a full version-restore is deliberately not used.
+  {
+    let _recov=[];try{_recov=findRecoverableStaffNames(SETDEPT);}catch(e){_recov=[];}
+    if(_recov.length){
+      h+=`<details style="margin-top:10px" ${settingsSectionOpen('recoverStaff')?"open":""} ontoggle="toggleSettingsSection('recoverStaff',this.open)"><summary class="small" style="cursor:pointer"><b>Recover from history (${_recov.length})</b> — names with schedule data but no roster record</summary>
+      <div class="small muted" style="margin-top:4px">These names appear in saved versions, the built-in history, or this device's own schedule weeks, but are not on the roster — usually because they were permanently deleted. Recovering rebuilds the person in <b>Former staff</b> and merges their own weeks back in. It does not roll the app back, so nothing entered since is lost.</div>
+      <div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px;max-height:40vh"><table style="table-layout:auto"><tr><th>Name</th><th>Weeks found</th><th>Found in</th><th></th></tr>
+      ${_recov.map(r=>`<tr><td>${esc(r.name)}</td><td style="text-align:center">${r.weeks}</td><td class="small muted">${esc(r.sources)}</td><td><button class="mini" onclick="recoverStaffFromHistory('${esc(SETDEPT)}','${esc(r.name).replace(/'/g,"")}')">↩ Recover</button></td></tr>`).join("")}
       </table></div></details>`;
     }
   }
@@ -25214,7 +25515,26 @@ async function checkBackgroundPushStatus(){
       if(error){
         rows.push(`<tr><td>Registered in shared DB?</td><td><b>Could not check</b> — ${esc(error.message||String(error))}${/permission|RLS|policy/i.test(error.message||"")?" (likely an RLS/GRANT issue, not this device)":""}</td></tr>`);
       }else if(data&&data.length){
-        rows.push(`<tr><td>Registered in shared DB?</td><td><b>Yes</b> — updated ${esc(data[0].updated_at||"")}. Still no push? Check the server side (function/schedule), not this device.</td></tr>`);
+        rows.push(`<tr><td>Registered in shared DB?</td><td><b>Yes</b> — updated ${esc(data[0].updated_at||"")}.</td></tr>`);
+        // A row existing is NOT the same as a row the function will ever match. The Edge Function selects
+        // personal reminders by the `name` column and manager alerts by `manager_depts` (.contains). A row with
+        // name=null and manager_depts={} is stored perfectly and matches neither query, so every check above
+        // passes, the function runs and reports success, and nothing is ever delivered. That combination is the
+        // single most common reason for "set up exactly per the Readme, no notifications", and until now it was
+        // invisible in this tool. Shown explicitly.
+        const _r=data[0]||{};
+        const _nm=_r.name||"", _md=Array.isArray(_r.manager_depts)?_r.manager_depts:[];
+        if(!_nm&&!_md.length){
+          rows.push(`<tr><td>Who is this subscription for?</td><td><b>Nobody</b> — this row has no name and no manager department, so the server function cannot match it to any alert and will never send to this device. Fix: Settings &rarr; Notifications &amp; reminders &rarr; "Remind me about shifts, as:" &rarr; pick your name and/or tick a Manager department, then press <b>Update</b>.</td></tr>`);
+        }else{
+          const _who=[_nm?("personal reminders for "+esc(_nm)):"",_md.length?("manager alerts for "+esc(_md.join(", "))):""].filter(Boolean).join("; ");
+          rows.push(`<tr><td>Who is this subscription for?</td><td>${_who}</td></tr>`);
+          // A name that is not on the roster (a typo, a rename, or an alternate spelling) also matches nothing.
+          if(_nm){
+            const _onRoster=["FO","HSK"].some(dp=>((CFG[dp]&&CFG[dp].staff)||[]).some(x=>x.n===_nm&&x.employed!==false));
+            if(!_onRoster)rows.push(`<tr><td>Name matches the roster?</td><td><b>No</b> — "${esc(_nm)}" is not a currently-employed staff member in either department, so no shift can ever be matched to it. Re-pick the name in "Remind me about shifts, as:".</td></tr>`);
+          }
+        }
       }else{
         // The "Retry upload now" button below "I enabled permissions but still get 0 push subscriptions" —
         // even across multiple Disable→Enable cycles. See _upsertPushSubscriptionRow()'s own comment for the
@@ -25261,7 +25581,52 @@ async function checkBackgroundPushStatus(){
     rows.push(`<tr><td>Server function running?</td><td>Cannot check while disconnected — connect first (Settings → Live sync).</td></tr>`);
   }
   box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>
-  <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway — it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>`;
+  <div class="small muted" style="margin-top:4px">A real, working foreground/in-app test notification (the button above) only ever confirms THIS device's OWN local delivery pathway — it never touches the server, so it cannot tell you whether background push (arriving with the app fully closed) is registered. This tool checks that specifically.</div>
+  <div style="margin-top:8px"><button class="mini" onclick="invokeServerFunctionNow()">\u25B6 Run the server function now and show its reply</button>
+  <div class="small muted" style="margin-top:2px">Every check above is about this device. This calls the Edge Function directly and prints its raw HTTP status and body, which is the one thing that distinguishes "never deployed" from "rejecting the call" from "running but finding nobody to notify".</div></div>`;
+}
+// "background notifications don't work even though I set up everything in Supabase per the Readme."
+//
+// Every existing check answers a question about THIS DEVICE — is there a service worker, a local subscription, a
+// row in push_subscriptions. All of them can pass while the server half does nothing, and the heartbeat row only
+// distinguishes "ran" from "never ran"; it cannot say WHY a run produced nothing. That left the most likely
+// causes indistinguishable from each other and from a correctly-working system on a quiet day.
+//
+// This calls the function the same way the cron job does and prints exactly what comes back, which separates
+// them in one click:
+//   404          -> not deployed, or deployed under a different name than the cron URL uses
+//   401          -> rejected: wrong/missing anon key, or a CRON_SECRET set as a secret but not sent in the header
+//   500          -> it ran and threw; the body carries the reason, commonly a missing VAPID_PRIVATE_KEY secret
+//                   or "permission denied for table ..." (a GRANT that was never applied)
+//   200 + report -> it ran fine. If nothing arrives after this, the pairing is the remaining suspect: the
+//                   function's VAPID_PRIVATE_KEY does not match the public key this app subscribed with, in
+//                   which case the push service rejects each send with 403 and the function reports 0 sent.
+//   network error-> the URL in Settings is wrong, or the browser blocked it.
+async function invokeServerFunctionNow(){
+  const box=el("reminderDiag"); // the same panel checkBackgroundPushStatus() renders into
+  const url=((el("supaUrl")&&el("supaUrl").value)||"").trim().replace(/\/+$/,"");
+  const key=((el("supaKey")&&el("supaKey").value)||"").trim();
+  if(!url||!key){uiAlert("The Supabase URL and key aren't filled in (Settings \u2192 Live sync), so there's nothing to call.");return;}
+  const fnUrl=url+"/functions/v1/attendance-reminders";
+  const out=(html)=>{const d=document.createElement("div");d.className="small";d.style.cssText="margin-top:6px;border:1px solid var(--line);border-radius:6px;padding:8px;background:#f8fafc";d.innerHTML=html;if(box)box.appendChild(d);};
+  out(`<span class="muted">Calling <code>${esc(fnUrl)}</code> \u2026</span>`);
+  let res=null,bodyText="",netErr=null;
+  try{
+    res=await fetch(fnUrl,{method:"POST",headers:{"Content-Type":"application/json","Authorization":"Bearer "+key},body:"{}"});
+    try{bodyText=await res.text();}catch(e){bodyText="(the response body could not be read)";}
+  }catch(e){netErr=e;}
+  if(netErr){
+    out(`<b style="color:#b30000">Could not reach the function.</b> ${esc(netErr.message||String(netErr))}<br><span class="muted">Usually the project URL in Settings \u2192 Live sync is wrong, or the function has never been deployed to this project. Confirm the URL resolves in Supabase \u2192 Edge Functions.</span>`);
+    return;
+  }
+  const st=res.status;
+  let verdict="";
+  if(st===404)verdict=`<b style="color:#b30000">Not found (404).</b> No function named <code>attendance-reminders</code> exists in this project. Either it was never deployed, or it was deployed under a different name \u2014 in which case the cron job's own URL must use that same name. This is the whole reason no notification ever arrives.`;
+  else if(st===401||st===403)verdict=`<b style="color:#b30000">Rejected (${st}).</b> The function exists but refused the call. Two causes: the anon key in Settings \u2192 Live sync isn't this project's key, or <code>CRON_SECRET</code> is set as a function secret while the caller sends no matching <code>x-cron-secret</code> header. If the cron job was created before that secret was added, it is being rejected on every run for this exact reason.`;
+  else if(st>=500)verdict=`<b style="color:#b30000">The function ran and failed (${st}).</b> Its reply is below \u2014 the usual causes are a missing or misspelled <code>VAPID_PRIVATE_KEY</code> secret, or "permission denied for table \u2026", meaning the GRANT statements in the setup SQL were not applied to that table.`;
+  else if(st>=200&&st<300)verdict=`<b style="color:#2c7a4b">The function ran (${st}).</b> Its reply is below. If it reports zero notifications sent while someone genuinely has an attendance issue right now, the remaining suspect is the key pairing: the function's <code>VAPID_PRIVATE_KEY</code> must be the matching half of the public key this app subscribes with (<code>BM3Qmk\u2026wHORo</code>). A mismatch makes every send fail at the push service while the function itself still reports success.`;
+  else verdict=`<b>Unexpected status ${st}.</b> The raw reply is below.`;
+  out(verdict+`<div style="margin-top:6px"><b>Raw reply</b><pre style="white-space:pre-wrap;word-break:break-word;max-height:220px;overflow:auto;background:#fff;border:1px solid var(--line);border-radius:4px;padding:6px;margin-top:2px;font-size:11px">${esc(bodyText||"(empty)")}</pre></div>`);
 }
 // See checkBackgroundPushStatus()'s own "Retry upload now" button comment for the full root cause this closes.
 // Re-fetches the local subscription fresh (rather than trusting a possibly-stale one from the diagnostic run a
@@ -26234,6 +26599,17 @@ function buildScheduleExceptionsData(fromIso,toIso){
       let dayIdx=-1;for(let i=0;i<7;i++){if(weekKey(dayDateForWeek(wk,i))===iso){dayIdx=i;break;}}
       if(dayIdx<0)continue;
       staffList.forEach(s=>{
+        // "I deleted Elsa from HSK and she disappeared from the schedule but still appears in the patterns at the
+        // bottom of the HSK tab." This loop walked the whole roster with no employment check, so a person moved to
+        // Former staff kept generating attendance rows for every date in range — including dates after they left,
+        // where the absence of a shift is expected rather than an exception. Scoped to their actual period of
+        // employment: dates before inactiveSince are genuine history and still reported, dates on or after it are
+        // not. Someone marked not-employed with no recorded inactiveSince is excluded outright, since there is no
+        // date to bound them by.
+        if(s.employed===false){
+          if(!s.inactiveSince)return;
+          if(iso>=s.inactiveSince)return;
+        }
         const v=(wkAssign[s.n]||{})[dayIdx];
         const cls=classify(v);
         const upper=(v||"").toUpperCase();
@@ -29878,6 +30254,78 @@ async function restoreDeletedStaff(dept,name){
   renderSettings();
   flashNote("Restored "+name+" to Former staff with "+restoredWks.length+" schedule week(s).");
 }
+// Answers "couldn't you have restored them by diffing previous weeks' records, or the version history?" — yes,
+// where any of those sources still holds the data, and this is the tool that does it. archiveStaffBeforeDelete()
+// only protects deletions made from this build onward; anyone already deleted has to be reconstructed from
+// whatever independent copies survived. Three are searched, best first:
+//
+//   1. SNAPS — the version history. Each entry is a full per-department, per-week copy of ASSIGN taken at the
+//      moment a version was saved, and it is SYNCED (see pushSnap()), so a version saved on any device is
+//      available on all of them. This is the strongest source and is not affected by a roster deletion at all,
+//      because deleting a person never touches SNAPS.
+//   2. HISTORICAL_ASSIGN — the July/August weeks baked into this file as a constant. Read-only and immune to any
+//      deletion, but limited to the weeks it covers.
+//   3. ASSIGN — whatever weeks are still present in this browser's own copy. A permanent delete removes the
+//      person from ASSIGN locally and remotely, so this normally finds nothing; it is checked anyway because a
+//      device that was offline during the deletion can still be holding a complete copy.
+//
+// What this deliberately does NOT do is roll the app back to an earlier state — restoring a whole version would
+// discard every schedule change made since, which is the opposite of what is wanted. It reads the person's own
+// rows out of those sources and merges only those rows back in.
+function findRecoverableStaffNames(dept){
+  const inRoster=new Set(((CFG[dept]||{}).staff||[]).map(s=>s.n));
+  const found={};
+  const note=(name,wk,src)=>{if(inRoster.has(name))return;found[name]=found[name]||{weeks:new Set(),sources:new Set()};found[name].weeks.add(wk);found[name].sources.add(src);};
+  try{Object.keys((SNAPS||{})[dept]||{}).forEach(wk=>{((SNAPS[dept][wk])||[]).forEach(v=>{Object.keys((v&&v.days)||{}).forEach(nm=>note(nm,wk,"version history"));});});}catch(e){}
+  try{Object.keys((typeof HISTORICAL_ASSIGN!=="undefined"?HISTORICAL_ASSIGN:{})[dept]||{}).forEach(wk=>{Object.keys(HISTORICAL_ASSIGN[dept][wk]||{}).forEach(nm=>note(nm,wk,"built-in history"));});}catch(e){}
+  try{Object.keys((ASSIGN||{})[dept]||{}).forEach(wk=>{Object.keys(ASSIGN[dept][wk]||{}).forEach(nm=>note(nm,wk,"schedule"));});}catch(e){}
+  // Also scanned because a staff member added on the live copy can be erased from the ROSTER while their other
+  // records survive — see the note on pushConfig() below for how that happens. Check-ins and actual hours are
+  // separate tables keyed by staff name, and are not touched by a roster overwrite, so they are often the only
+  // surviving evidence that a person existed at all.
+  try{Object.keys((CHECKINS||{})[dept]||{}).forEach(wk=>{Object.keys(CHECKINS[dept][wk]||{}).forEach(nm=>note(nm,wk,"check-ins"));});}catch(e){}
+  try{Object.keys((ACTUALD||{})[dept]||{}).forEach(wk=>{Object.keys(ACTUALD[dept][wk]||{}).forEach(nm=>note(nm,wk,"actual hours"));});}catch(e){}
+  try{Object.keys((ACCRUALS||{})[dept]||{}).forEach(nm=>note(nm,"—","PTO accruals"));}catch(e){}
+  return Object.keys(found).sort().map(n=>({name:n,weeks:found[n].weeks.size,sources:[...found[n].sources].join(", ")}));
+}
+// Rebuilds one person's weeks from those sources. Newest-first within SNAPS, so the most recently saved version
+// of a given week wins; a week already present for that name on this device is never overwritten.
+async function recoverStaffFromHistory(dept,name){
+  const weeks={};
+  const take=(wk,days)=>{if(!days||!Object.keys(days).length)return;if(weeks[wk])return;weeks[wk]=JSON.parse(JSON.stringify(days));};
+  try{Object.keys((ASSIGN||{})[dept]||{}).forEach(wk=>{const d=(ASSIGN[dept][wk]||{})[name];if(d&&Object.keys(d).length)take(wk,d);});}catch(e){}
+  try{Object.keys((SNAPS||{})[dept]||{}).forEach(wk=>{
+    const list=((SNAPS[dept][wk])||[]).slice().sort((a,b)=>(a.ts<b.ts?1:-1));
+    for(const v of list){const d=((v&&v.days)||{})[name];if(d&&Object.keys(d).length){take(wk,d);break;}}
+  });}catch(e){}
+  try{Object.keys((typeof HISTORICAL_ASSIGN!=="undefined"?HISTORICAL_ASSIGN:{})[dept]||{}).forEach(wk=>{const d=(HISTORICAL_ASSIGN[dept][wk]||{})[name];if(d&&Object.keys(d).length)take(wk,d);});}catch(e){}
+  const wkKeys=Object.keys(weeks).sort();
+  // A person can be recoverable with no schedule weeks at all — e.g. added to the roster on the live copy and
+  // given check-ins, but never assigned a shift before the roster was overwritten. That is still worth putting
+  // back, so an empty schedule is no longer treated as "nothing to recover".
+  const _hasOther=(()=>{try{
+    if(Object.keys((CHECKINS||{})[dept]||{}).some(wk=>((CHECKINS[dept][wk])||{})[name]!=null))return true;
+    if(Object.keys((ACTUALD||{})[dept]||{}).some(wk=>((ACTUALD[dept][wk])||{})[name]!=null))return true;
+    if(((ACCRUALS||{})[dept]||{})[name]!=null)return true;
+  }catch(e){}return false;})();
+  if(!wkKeys.length&&!_hasOther){uiAlert("No surviving data was found for "+name+" in the version history, the built-in history, check-ins, actual hours, or this device's own copy.");return;}
+  const _span=wkKeys.length?(" ("+wkKeys[0]+" to "+wkKeys[wkKeys.length-1]+")"):"";
+  if(!(await uiConfirm("Recover "+name+" into Former staff, with "+wkKeys.length+" schedule week(s)"+_span+"?\n\nThey will NOT be put back on active schedules \u2014 re-employ them afterward if that is intended. A week that already has data for this name on this device is left as it is.")))return;
+  clearStaffTombstone(dept,name);
+  CFG[dept].staff=CFG[dept].staff||[];
+  if(!CFG[dept].staff.some(x=>x.n===name)){
+    CFG[dept].staff.push({n:name,role:"",type:"FT",employed:false,inactiveSince:(wkKeys.length?wkKeys[wkKeys.length-1]:weekKey(new Date())),note:"Recovered from history — set role/type"});
+  }
+  const pushed=[];
+  wkKeys.forEach(wk=>{
+    ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};
+    if(ASSIGN[dept][wk][name]==null||!Object.keys(ASSIGN[dept][wk][name]).length){ASSIGN[dept][wk][name]=weeks[wk];pushed.push(wk);}
+  });
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);
+  if(DB)pushed.forEach(wk=>pushWeekAll(dept,wk));
+  renderSettings();
+  flashNote("Recovered "+name+" with "+pushed.length+" schedule week(s). Set their role and type in Former staff.");
+}
 function seedRoster(){try{
   {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));
    // O-much Erich and Three-J Kaio (formerly modeled as their own "Laundry chute" crew) are a task assignment
@@ -30154,6 +30602,10 @@ function seedRoster(){try{
   // deployment's own built-in default, which is the behaviour a shared, deployed copy should have. A deliberate
   // Disconnect writes hotel_supa_optout (see disconnect()), so choosing local mode is still respected on every
   // subsequent load and is never silently undone by this.
+  // L1: _bootstrapping is NOT cleared here. The previous build cleared it at this point, before
+  // autoLoadHistoricalScheduleOnce() — which calls save("hotel_cfg",CFG) — and that is the confirmed source of
+  // the single phantom undo step on a fresh open. It is now cleared at the very end of this function, after
+  // every automatic call below has finished. See the end of boot() for the clearing.
   const saved=load("hotel_supa",null);
   if(saved){el("supaUrl").value=saved.url;el("supaKey").value=saved.key;connect();}
   else if(!load("hotel_supa_optout",false)){
@@ -30200,7 +30652,28 @@ function seedRoster(){try{
   // this closes off. This is the correct "before any REAL user edit" baseline that the very FIRST genuine edit of a
   // session needs as its own undo target, rather than incorrectly capturing its own already-mutated state (the
   // actual bug being fixed).
+  // L1: the true end of the automatic phase. Everything above ran without user involvement — migrations,
+  // fixups, seeding, the historical-schedule load, the accrual catch-up and the first render. Anything after
+  // this point is a genuine user action or a sync.
+  //
+  // The stacks are emptied rather than merely stopped, because an entry captured before this line represents
+  // boot work and must never be offered as something to undo. _lastSettledSnapshot is then reseeded from the
+  // fully-settled state, so the first real edit of the session has the correct "before" to return to.
+  _bootstrapping=false;
+  UNDO_STACK=[];REDO_STACK=[];_undoBatchPre=null;
+  if(_undoBatchTimer!=null){clearTimeout(_undoBatchTimer);_undoBatchTimer=null;}
   try{_lastSettledSnapshot=_undoSnapshot();}catch(e){console.warn("undo baseline seed skipped (non-fatal):",e);}
+  try{_refreshUndoRedoButtons();}catch(e){}
+  // A second clear on the next macrotask. connect() is async and fire-and-forget from here, so its pull and the
+  // render that follows can settle after this function has already returned; this catches anything they leave
+  // behind. It is skipped if a real edit has happened in the meantime, which a trusted gesture proves.
+  setTimeout(function(){
+    if(_undoUserGesture)return;
+    UNDO_STACK=[];REDO_STACK=[];_undoBatchPre=null;
+    if(_undoBatchTimer!=null){clearTimeout(_undoBatchTimer);_undoBatchTimer=null;}
+    try{_lastSettledSnapshot=_undoSnapshot();}catch(e){}
+    try{_refreshUndoRedoButtons();}catch(e){}
+  },1500);
 })();
 </script>
 </body>
