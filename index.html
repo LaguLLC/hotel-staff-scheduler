@@ -58,7 +58,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   /* COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): CSS comments in this block use
-     the standard CSS block-comment syntax only -- never line comments or HTML comment delimiters. State facts and reasoning only --
+     the standard CSS block-comment syntax only -- never // or HTML's <!-- -->. State facts and reasoning only --
      no "," "," or quoted-complaint narration. */  /* Audited every mobile/desktop schedule-formatting pair directly. Most already share ONE definition safely
      (.small/.muted/.todaydot are single shared classes both views' own JS literally emits, so either can never
      drift from the other; .rolelabel/.mobRoleLabel each reference the SAME var(--brand) custom property below, not
@@ -164,7 +164,7 @@
        be double-tap-zoomed, letting it fire the click immediately on the first tap with no wait at all -- this
        app's OWN floating-toolbar drag handles already use exactly this same property for an analogous reason (see
        .msb-drag's own comment), just never extended to ordinary buttons/selects/inputs before now. NOTE: this
-       comment itself was PREVIOUSLY, INCORRECTLY, written using HTML comment delimiters instead of a real
+       comment itself was PREVIOUSLY, INCORRECTLY, written using HTML comment syntax (<!-- --) instead of a real
        CSS comment (/* *-/) -- inside a <style> block that isn't valid CSS at all, and the embedded double-quotes
        inside it broke the CSS tokenizer badly enough to corrupt parsing of many of the real rules that followed,
        which is exactly what caused the reported "layout was a mess" (missing day-column headers, the Hrs/Cost
@@ -2141,11 +2141,11 @@
        not an accidental specificity war) — and extended the selector to also cover select.sfield (the
        notification/leave-request name pickers shared this exact same inline-min-width problem, on a different
        element type the original rule never covered at all). */    /* The comment block explaining the narrow-screen overflow fix just below was WRITTEN using HTML comment syntax
-       HTML comment delimiters instead of a real CSS block comment — inside a <style> block that isn't HTML, this is exactly
+       (<!-- --) instead of a real CSS comment (/* *-/) — inside a <style> block that isn't HTML, this is exactly
        the SAME class of self- inflicted bug this file's own Readme/comment history already explicitly warns about
        (see that much earlier entry a few hundred lines up: "this comment itself was PREVIOUSLY, INCORRECTLY,
        written using HTML comment syntax... Instead of a real CSS comment... Causing exactly this kind of
-       corruption"). Those delimiters are technically valid low-level CSS tokens (a legacy "hide from old browsers"
+       corruption"). "<!--"/"-->" ARE technically valid low-level CSS tokens (a legacy "hide from old browsers"
        mechanism), but the ENTIRE multi-sentence English paragraph sitting between them is NOT itself a comment at
        all under that mechanism — it was real, un-commented text sitting in the middle of a stylesheet, full of
        colons/parentheses/quotes that a CSS parser then attempted to interpret as actual selectors/rules, confusing
@@ -2270,7 +2270,7 @@
            "//" as a comment marker; every one of those lines was real, uncommented text sitting in the middle of a
            stylesheet, which a parser then tried to interpret as actual selectors/rules — exactly the same
            self-inflicted class of bug this file's own much earlier comment history already explicitly warned about
-           and fixed once already (see the HTML-comment-inside-CSS entry a few hundred lines up) — just
+           and fixed once already (see the "<!-- -->" HTML- comment-inside-CSS entry a few hundred lines up) — just
            reintroduced here in a different, but equally invalid, comment syntax. This is what caused the reported
            "borders, box shapes, font etc messed up throughout": a CSS parse error at this exact point corrupts the
            parser's own recovery state badly enough to visibly break rendering of unrelated, otherwise-correct
@@ -2496,9 +2496,18 @@
      The behaviour it was originally protecting against - the page "jumping" once the inner box runs out - is
      simply what scroll chaining is, and is what every other scrollable region in this app (and in the browser
      generally) already does. Reverted to the default, so the page picks the gesture up at the edge. */
-    /* A .tblwrap can reserve both scrollbars at once. Its corner keeps the scrollbar's opaque background but draws
-       no line of its own, so each axis separator stops cleanly at the other bar instead of intersecting. */
-  .tblwrap::-webkit-scrollbar-corner{background:#fafafa;box-shadow:none;border:none;}
+    /* The roster table is forced to min-width:900px (see #settingsBody table's own rule), so on a narrower
+     screen this .tblwrap scrolls horizontally, showing a classic (reserved-space) scrollbar on its right edge.
+     Classic scrollbars on Windows/desktop Linux commonly measure 15–17px wide, wider than the roster's own
+     padding-right:8px (meant to keep the last-column "x" button clear of it) — so the button could still be
+     partially covered depending on scrollbar width. Separately, a scrollable container with both horizontal AND
+     vertical overflow reserves a small blank square where the two scrollbar tracks meet (the "scrollbar corner"),
+     which can read as a stray dot/notch between the scrollbar and the rightmost button. Fixed with two changes at
+     the shared .tblwrap level (covering every wide/scrollable table in this app, not just the roster):
+     (1) ::-webkit-scrollbar-corner is painted transparent, eliminating the stray square; (2) the roster's own
+     inline padding-right is bumped from 8px to 20px below, comfortably exceeding a real scrollbar's typical
+     width on any platform. */
+  .tblwrap::-webkit-scrollbar-corner{background:transparent;}
     /* The padding-right:20px / scrollbar-corner fix above addressed the SCROLLBAR-corner reading of this bug, but
        a real, second, independent cause was still producing a stray dot on EVERY row, not just once at a scrollbar
        corner: direct DOM/rendered inspection shows the roster's own delete (✕) and re-employ (↩) buttons
@@ -2847,18 +2856,12 @@
   @media (hover:hover) and (pointer:fine){
     *::-webkit-scrollbar{width:15px;height:15px;background:#fafafa}
     *::-webkit-scrollbar-track{background:#fafafa}
-    *::-webkit-scrollbar-track:vertical{box-shadow:inset 1px 0 0 var(--line)}
-    *::-webkit-scrollbar-track:horizontal{box-shadow:inset 0 1px 0 var(--line)}
+    *::-webkit-scrollbar-track:vertical{border-left:1px solid #c9d1da;box-sizing:border-box}
+    *::-webkit-scrollbar-track:horizontal{border-top:1px solid #c9d1da;box-sizing:border-box}
     *::-webkit-scrollbar-thumb{background:#8c8c8c;background-clip:padding-box;border:3px solid transparent;border-radius:8px}
     *::-webkit-scrollbar-thumb:hover{background:#6f6f6f;background-clip:padding-box}
-    /* The track and its arrow button share var(--line), the table-border source of truth. Each separator is drawn
-       only on its own scrollbar axis, so the horizontal and vertical lines stop at the visible bar dimensions and
-       never overlap into a darker square at the bottom-right junction. The corner is deliberately just the opaque
-       scrollbar background: no border and no shadow. */
-    *::-webkit-scrollbar-corner{background:#fafafa;box-shadow:none;border:none}
+    *::-webkit-scrollbar-corner{background:#fafafa}
     *::-webkit-scrollbar-button:single-button{display:block;background-color:#fafafa;background-repeat:no-repeat;background-position:center;width:15px;height:15px}
-    *::-webkit-scrollbar-button:single-button:vertical{box-shadow:inset 1px 0 0 var(--line)}
-    *::-webkit-scrollbar-button:single-button:horizontal{box-shadow:inset 0 1px 0 var(--line)}
     *::-webkit-scrollbar-button:single-button:vertical:decrement{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15'><path d='M4 9.5 L7.5 5.5 L11 9.5Z' fill='%23808080'/></svg>")}
     *::-webkit-scrollbar-button:single-button:vertical:increment{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15'><path d='M4 5.5 L7.5 9.5 L11 5.5Z' fill='%23808080'/></svg>")}
     *::-webkit-scrollbar-button:single-button:horizontal:decrement{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='15' height='15'><path d='M9.5 4 L5.5 7.5 L9.5 11Z' fill='%23808080'/></svg>")}
@@ -3170,7 +3173,7 @@
          the currently-displayed week's grid" reasoning this responds to. Empty/hidden (via renderCarryoverBanner() itself,
          not this markup) whenever there's nothing to show. -->
     <div id="carryoverBanner"></div>
-    <div class="schedule-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px;position:relative"><table id="grid"></table></div>
+    <div style="overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px;position:relative"><table id="grid"></table></div>
     <div class="small" style="margin-top:6px">Cells: type or pick a shift (e.g. <b>14:00-22:30</b>), or a code — <b>OFF</b>, <b>PTO</b>, <b>LWOP</b>, <b>R-OFF</b>, <b>OC</b>. Blank = unassigned.</div>
   </div>
     <!-- Positioned OUTSIDE #desktopGridCard (a sibling of both #desktopGridCard and #mobileScheduleCard, inside
@@ -9703,8 +9706,8 @@ function renderExcelImportSheetPicker(){
   body.innerHTML=`
     <p><b>${_xlImportSheets.length} sheet(s) found</b> — ${withDates.length} with an auto-detected week; ${_xlImportSheets.length-withDates.length} need a manual date (or can be left unchecked to skip).</p>
     <div class="mrow" style="align-items:center;gap:8px">
-      <label class="small">Import from <input type="date" id="xlFromDate" class="sfield" value="${esc(minWk)}" data-range-peer="xlToDate" data-range-edge="from" data-range-policy="auto"></label>
-      <label class="small">to <input type="date" id="xlToDate" class="sfield" value="${esc(maxWk)}" data-range-peer="xlFromDate" data-range-edge="to" data-range-policy="auto"></label>
+      <label class="small">Import from <input type="date" id="xlFromDate" class="sfield" value="${esc(minWk)}"></label>
+      <label class="small">to <input type="date" id="xlToDate" class="sfield" value="${esc(maxWk)}"></label>
       <button class="mini" onclick="applyExcelImportDateFilter()">Apply range</button>
       <span class="small" id="xlDateNote" style="color:#8a6d00"></span>
     </div>
@@ -9905,7 +9908,6 @@ function _xlActiveDateRange(){
   return {from,to};
 }
 function applyExcelImportDateFilter(){
-  _dateRangeCommit("xlFromDate","xlToDate","auto");
   const from=el("xlFromDate").value?new Date(el("xlFromDate").value+"T00:00:00"):null;
   const to=el("xlToDate").value?new Date(el("xlToDate").value+"T00:00:00"):null;
   // Cause: this only ever compared a sheet's own week-START date against [from,to], so a week that starts
@@ -10148,7 +10150,6 @@ function _applyExcelImportPlan(dept,plan){
     w.rows.forEach(row=>{
       ASSIGN[dept][w.wk][row.name]=ASSIGN[dept][w.wk][row.name]||{};
       Object.keys(row.newCells).forEach(dayIdx=>{ASSIGN[dept][w.wk][row.name][dayIdx]=row.newCells[dayIdx];});
-      if(Object.keys(row.newCells).length)_markAssignDirty(dept,w.wk,row.name);
     });
     const _wdk=demandKeyFor(dept,w.wk);
     DEMAND[_wdk]=DEMAND[_wdk]||{};
@@ -12400,36 +12401,6 @@ function _undoStepIsNoOp(a,b){try{return _undoComparable(a)===_undoComparable(b)
 // instead) if that key was touched locally at or after the moment their own fetch/event began — so a local edit
 // can never again be silently clobbered by data that was already stale the instant it was requested.
 let _assignDirtyStamp={};
-const DIRTY_ASSIGN_ROWS_KEY="hotel_dirty_assign_rows";
-let _dirtyAssignRows=load(DIRTY_ASSIGN_ROWS_KEY,{});
-if(Array.isArray(_dirtyAssignRows)){const _o={};_dirtyAssignRows.forEach(k=>{if(k)_o[k]=1;});_dirtyAssignRows=_o;}
-if(!_dirtyAssignRows||typeof _dirtyAssignRows!=="object")_dirtyAssignRows={};
-function _assignRowKey(dept,wk,name){return dept+"|"+wk+"|"+name;}
-function _parseAssignRowKey(key){const p=String(key||"").split("|");return p.length>=3?{dept:p.shift(),wk:p.shift(),name:p.join("|")}:null;}
-function _persistDirtyAssignRows(){try{if(Object.keys(_dirtyAssignRows).length)localStorage.setItem(DIRTY_ASSIGN_ROWS_KEY,JSON.stringify(_dirtyAssignRows));else localStorage.removeItem(DIRTY_ASSIGN_ROWS_KEY);}catch(e){}}
-function _hasProtectedAssignRows(){return Object.keys(_dirtyAssignRows).length>0;}
-function _isAssignRowProtected(dept,wk,name){return !!_dirtyAssignRows[_assignRowKey(dept,wk,name)];}
-function _protectAssignRow(dept,wk,name){if(!dept||!wk||!name)return;_dirtyAssignRows[_assignRowKey(dept,wk,name)]=1;_persistDirtyAssignRows();}
-function _clearProtectedAssignKeys(keys){let changed=false;(keys||[]).forEach(k=>{if(_dirtyAssignRows[k]){delete _dirtyAssignRows[k];changed=true;}});if(changed)_persistDirtyAssignRows();}
-function _protectedNamesForWeek(dept,wk){const out=[];Object.keys(_dirtyAssignRows).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&p.dept===dept&&p.wk===wk)out.push(p.name);});return out;}
-function _markAllAssignmentRowsProtected(){Object.keys(ASSIGN||{}).forEach(dept=>{Object.keys(ASSIGN[dept]||{}).forEach(wk=>{Object.keys(ASSIGN[dept][wk]||{}).forEach(name=>_protectAssignRow(dept,wk,name));});});}
-function _normalizedAssignRow(r){if(!r||typeof r!=="object")return null;const o={};Object.keys(r).forEach(k=>{const v=r[k];if(v!==""&&v!=null)o[k]=v;});return Object.keys(o).length?o:null;}
-let _v23ReviewRequired=(load("hotel_v23_review_required",false)===true);
-function _setV23ReviewRequired(v){_v23ReviewRequired=!!v;try{if(v)localStorage.setItem("hotel_v23_review_required","true");else localStorage.removeItem("hotel_v23_review_required");}catch(e){}}
-function _markChangedAssignmentRows(before,after){
-  before=before||{};after=after||{};let changed=false;const now=Date.now();
-  new Set([...Object.keys(before),...Object.keys(after)]).forEach(dept=>{
-    const bD=before[dept]||{},aD=after[dept]||{};
-    new Set([...Object.keys(bD),...Object.keys(aD)]).forEach(wk=>{
-      const bW=bD[wk]||{},aW=aD[wk]||{};
-      new Set([...Object.keys(bW),...Object.keys(aW)]).forEach(name=>{
-        let same=false;try{same=_stableStringify(_normalizedAssignRow(bW[name]))===_stableStringify(_normalizedAssignRow(aW[name]));}catch(e){same=JSON.stringify(bW[name]||null)===JSON.stringify(aW[name]||null);}
-        if(!same){const key=_assignRowKey(dept,wk,name);_assignDirtyStamp[key]=now;_dirtyAssignRows[key]=1;changed=true;}
-      });
-    });
-  });
-  if(changed)_persistDirtyAssignRows();
-}
 // DEMAND had NO staleness guard of any kind — neither pullAll()'s own demand fetch nor the "sched" realtime
 // channel's demand handler ever asked "was this week edited locally more recently than the data I'm about to
 // apply?", and BOTH do a wholesale `DEMAND[week]=r.days` replacement of the entire week. That is the confirmed
@@ -12462,7 +12433,7 @@ const DEMAND_ECHO_GUARD_MS=6000;
 // OTHER shared setting's own next incoming pull too, the same deliberate, safe-by-default tradeoff already
 // accepted for FO/HSK above.
 let _cfgDirtyStamp={FO:0,HSK:0,DB:0,appWide:0};
-function _markAssignDirty(dept,wk,name){_assignDirtyStamp[_assignRowKey(dept,wk,name)]=Date.now();_protectAssignRow(dept,wk,name);}
+function _markAssignDirty(dept,wk,name){_assignDirtyStamp[dept+"|"+wk+"|"+name]=Date.now();}
 // The _assignDirtyStamp fix just above protects a LOCAL edit from being overwritten by a stale pull, but the
 // confirmed reconnect-storm (see subscribe()'s own "console shows a continuous stream of CLOSED messages" fix)
 // revealed a genuinely SEPARATE race this alone doesn't cover: pullAll() is fire-and-forget from three independent
@@ -12675,7 +12646,7 @@ function _undoRestore(snapStr){
       const _now=Date.now();
       Object.keys(ASSIGN||{}).forEach(dept=>{
         Object.keys(ASSIGN[dept]||{}).forEach(wk=>{
-          Object.keys(ASSIGN[dept][wk]||{}).forEach(nm=>{_markAssignDirty(dept,wk,nm);});
+          Object.keys(ASSIGN[dept][wk]||{}).forEach(nm=>{_assignDirtyStamp[dept+"|"+wk+"|"+nm]=_now;});
         });
       });
       _cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.DB=_now;_cfgDirtyStamp.appWide=_now;
@@ -12942,12 +12913,7 @@ function _blurUndoRedoButtons(){
   if(u&&typeof u.blur==="function")u.blur();
   if(r&&typeof r.blur==="function")r.blur();
 }
-function save(k,v){
-  let _assignBefore=null,_trackAssign=false;
-  try{_trackAssign=(k==="hotel_assign"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite());if(_trackAssign){const raw=localStorage.getItem("hotel_assign");_assignBefore=raw?JSON.parse(raw):{};}}catch(e){_trackAssign=false;}
-  try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}
-  if(_trackAssign){try{_markChangedAssignmentRows(_assignBefore,v);}catch(e){console.warn("assignment dirty-row comparison skipped",e);}}
-  if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
+function save(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
   // Boot-time migrations run before any connection exists, so without this they set PENDING=true and connect()
   // then offered the "you have local changes" upload prompt on every single load — on a device whose roster had
   // just been rebuilt from this file's own seed lists, accepting that prompt pushed the seeded roster over the
@@ -13720,7 +13686,7 @@ function manageDraftRanges(){
     <div class="small muted" style="margin-bottom:8px">Pick any date range — a single day, a few days, or a full 7-day span for a whole week — to hide from view-only users while still drafting it. A hidden day looks like an ordinary, unassigned cell to them (no "hidden" label of any kind); editors always keep seeing everything normally regardless.</div>
     <div id="draftRangeList">${rows}</div>
     <hr>
-    <div class="mrow" style="align-items:center"><label class="small">From <input type="date" required id="drFrom" class="sfield" data-range-peer="drTo" data-range-edge="from" data-range-policy="auto"></label> <label class="small">To <input type="date" required id="drTo" class="sfield" data-range-peer="drFrom" data-range-edge="to" data-range-policy="auto"></label> <button class="brand" onclick="addDraftRange()">Add range</button></div>
+    <div class="mrow" style="align-items:center"><label class="small">From <input type="date" required id="drFrom" class="sfield"></label> <label class="small">To <input type="date" required id="drTo" class="sfield"></label> <button class="brand" onclick="addDraftRange()">Add range</button></div>
     <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeDraftRangeModal()">Close</button></div>
   </div>`;
   document.body.appendChild(bg);
@@ -13742,8 +13708,11 @@ function addDraftRange(){
   if(!canManageDraftHiding(DEPT)){uiAlert("Only a Manager-role user can change drafting-hide settings for "+CFG[DEPT].label+".");return;}
   // One date means one day. Requiring both for a single-day range was needless: if only one is given, the
   // other is taken to be the same date, which is what somebody filling in one box plainly means.
-  if(!_dateRangeCommit("drFrom","drTo","auto")){uiAlert("Pick a date.");return;}
-  const from=el("drFrom").value,to=el("drTo").value;
+  let from=el("drFrom").value,to=el("drTo").value;
+  if(!from&&!to){uiAlert("Pick a date.");return;}
+  if(!from)from=to;
+  if(!to)to=from;
+  if(to<from){const _t=from;from=to;to=_t;}   // swapped rather than refused - the intent is unambiguous
   const STORE=activeRangeStore();
   STORE[DEPT]=STORE[DEPT]||[];
   STORE[DEPT].push({from,to});
@@ -13799,7 +13768,7 @@ async function toggleLock(){const wk=weekKey(WEEK_START);
   LOCKS[DEPT]=LOCKS[DEPT]||{};LOCKS[DEPT][wk]=!LOCKS[DEPT][wk];save("hotel_locks",LOCKS);render();}
 function curAssign(){const wk=weekKey(WEEK_START);ASSIGN[DEPT]=ASSIGN[DEPT]||{};ASSIGN[DEPT][wk]=ASSIGN[DEPT][wk]||{};return ASSIGN[DEPT][wk];}
 function cellVal(name,day){const a=curAssign()[name];return (a&&a[day]!=null)?a[day]:"";}
-function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[day]+" = "+(val||"(clear)"));/* snapshot handled lazily on boot for weeks that have become past */if(weekLocked()){uiAlert("This week is locked"+(weekIsPast()?" (past week — historical record).":".")+" Unlock to edit.");render();return;}const _localOnly=!DB;if(_localOnly)setPending(true);const wk=weekKey(WEEK_START);const a=curAssign();a[name]=a[name]||{};const _oldCellVal=a[name][day];if(val==="")delete a[name][day];else a[name][day]=val;_markAssignDirty(DEPT,wk,name);save("hotel_assign",ASSIGN);pushCell(DEPT,wk,name,day,val);autoSnap();
+function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[day]+" = "+(val||"(clear)"));/* snapshot handled lazily on boot for weeks that have become past */if(weekLocked()){uiAlert("This week is locked"+(weekIsPast()?" (past week — historical record).":".")+" Unlock to edit.");render();return;}if(!DB){setPending(true);}const wk=weekKey(WEEK_START);const a=curAssign();a[name]=a[name]||{};const _oldCellVal=a[name][day];if(val==="")delete a[name][day];else a[name][day]=val;_markAssignDirty(DEPT,wk,name);save("hotel_assign",ASSIGN);pushCell(DEPT,wk,name,day,val);autoSnap();
   // Cause, this function has never cleared the whole-week ACTUAL hours override (the plain, typeable "Hrs" cell
   // at the end of each staff row, set via setActual() — a SEPARATE mechanism from the per-day actualDay()/ACTUALD
   // override, which setActualDay() already correctly clears this same override for, per that function's own
@@ -13912,7 +13881,6 @@ function setCell(name,day,val){if(!EDIT){return;}logChange("cell",name+" "+DOW[d
     // Any OTHER value (a working shift, R-OFF, a leave code, blank, etc.) intentionally does NOT touch ABSENT_MARKS
     // at all — an existing mark persists through any edit that isn't explicitly bare "OFF".
   }catch(e){}
-  if(_localOnly)flashNote("Saved locally — connect to share this schedule change.");
   render();}
 // Direct inspection of the actual source FO Excel found a registered-trademark symbol (U+00AE) genuinely
 // embedded in real cell values across multiple weeks -- confirmed 3 distinct variants: an off-code with a
@@ -14292,21 +14260,17 @@ function toggleOutsourcedCrew(role,checked){
   CFG.HSK.outsourcedRoleEnabled=CFG.HSK.outsourcedRoleEnabled||{};
   CFG.HSK.outsourcedRoleEnabled[role]=checked;
   if(CFG._outCrewOpen)delete CFG._outCrewOpen[role];
-  const wk=weekKey(WEEK_START),changedNames=new Set();
   if(!checked){
-    ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
+    const wk=weekKey(WEEK_START);ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
     (CFG.HSK.staff||[]).filter(s=>s.role===role&&s.type==="OUT").forEach(s=>{
       const row=ASSIGN.HSK[wk][s.n];if(!row)return;
       const expected={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"};
       const matchesAutoStamp=[0,1,2,3,4,5,6].every(d=>(row[d]||"")===(expected[d]||"")||(row[d]==null&&expected[d]==null));
-      if(matchesAutoStamp){delete ASSIGN.HSK[wk][s.n];_markAssignDirty("HSK",wk,s.n);changedNames.add(s.n);}
+      if(matchesAutoStamp)delete ASSIGN.HSK[wk][s.n]; // safe to clear — exactly matches the auto-stamp, no manual edit to lose
     });
     save("hotel_assign",ASSIGN);
   }
-  save("hotel_cfg",CFG);
-  if(checked)seedOutsourcedWeek(true);
-  else if(changedNames.size){if(DB)changedNames.forEach(n=>_deleteAssignmentRowRemote("HSK",wk,n,"disable outsourced-crew schedule row"));else setPending(true);}
-  render();
+  save("hotel_cfg",CFG);render();
 }
 // (found while investigating the "ctrl+z/undo needs two clicks" report — see save()'s own undo-capture block
 // for the actual confirmed cause of that report, which is unrelated to this one, but this was a genuine, separate
@@ -14320,9 +14284,9 @@ function toggleOutsourcedCrew(role,checked){
 // mutated (either a legacy-format fixup or a brand-new stamp) via a real `_anyChange` flag, and only calls save()
 // when that flag is true — an already-fully-seeded, already-correctly-formatted week (the common case on every
 // render after the first) now correctly does nothing at all.
-function seedOutsourcedWeek(syncGenerated){ // stamp the constant Thu-Sun pattern (OFF Mon-Wed) for outsourced crews, once per week, only when blank AND that crew's toggle is on
+function seedOutsourcedWeek(){ // stamp the constant Thu-Sun pattern (OFF Mon-Wed) for outsourced crews, once per week, only when blank AND that crew's toggle is on
   try{const wk=weekKey(WEEK_START);ASSIGN.HSK=ASSIGN.HSK||{};ASSIGN.HSK[wk]=ASSIGN.HSK[wk]||{};
-    let _anyChange=false;const _changedNames=new Set();
+    let _anyChange=false;
     (CFG.HSK.staff||[]).forEach(s=>{ if(s.type!=="OUT"||String(s.role).indexOf("Outsourced")!==0)return;
       // This function — which runs automatically on EVERY render of the HSK schedule (see render()'s own call
       // to it) — never checked employed status at all before auto-stamping a blank row with the standard Thu-Sun
@@ -14340,16 +14304,11 @@ function seedOutsourcedWeek(syncGenerated){ // stamp the constant Thu-Sun patter
       if(!outsourcedCrewEnabled(s.role))return; // crew toggled off — leave blank, do not auto-fill
       const row=ASSIGN.HSK[wk][s.n]; const hasAny=row&&Object.keys(row).length;
       const LEGACY={"9:AM":"09:00-17:00","11AM":"11:00-19:00","10am-5pm":"10:00-17:00","10am-6pm":"10:00-18:00"};
-      if(hasAny){Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];_anyChange=true;_changedNames.add(s.n);}});return;}
-      ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"};_anyChange=true;_changedNames.add(s.n); });
-    // A render-time maintenance pass stays quiet. A direct checkbox enable requests synchronization explicitly.
-    if(_anyChange){
-      if(syncGenerated)_changedNames.forEach(n=>_markAssignDirty("HSK",wk,n));
-      runAutoMaintenance(()=>save("hotel_assign",ASSIGN));
-      if(syncGenerated){if(DB)pushWeekAll("HSK",wk,_changedNames);else setPending(true);}
-    }
-    return _changedNames;
-  }catch(e){console.warn("outsourced seed skipped",e);return new Set();} }
+      if(hasAny){Object.keys(row).forEach(k=>{if(LEGACY[row[k]]){row[k]=LEGACY[row[k]];_anyChange=true;}});return;}
+      ASSIGN.HSK[wk][s.n]={0:outsourcedShift(s.n),1:outsourcedShift(s.n),2:outsourcedShift(s.n),3:outsourcedShift(s.n),4:"OFF",5:"OFF",6:"OFF"};_anyChange=true; });
+    // RULE 1 — an automatic, render-triggered stamp, not a user action.
+    if(_anyChange)runAutoMaintenance(()=>save("hotel_assign",ASSIGN));
+  }catch(e){console.warn("outsourced seed skipped",e);} }
 // See render()'s own comment at this function's call site for the full "pills about coverage missing in mobile
 // view" gap this closes. The ONE genuinely CUMULATIVE (running-weekly-total) piece of the desktop grid's own
 // per-cell visual-marker logic, factored out so it can be computed ONCE per staff member and shared identically by
@@ -15611,7 +15570,7 @@ function renderDemand(){
     // Two independent bases exist for this DISPLAY figure: (1) if OOO and/or house-use has been entered, credits =
     // (total rooms + two-credit extra − OOO − house) × the credit multiplier — the exact formula confirmed with the
     // hotel; (2) OTHERWISE, if only Occupancy % is known (e.g. Mirrored in from Front Office, but HSK's own
-    // OOO/house-use numbers haven't been entered yet), a rough, provisional estimate shows instead: (total rooms +
+    // OOO/house-use numbers haven't been entered yet), a rough, UNCONFIRMED estimate shows instead: (total rooms +
     // extra) × Occupancy % × the multiplier. These are genuinely different assumptions (basis 1 treats every
     // non-OOO/non-house room as needing service; basis 2 scales by how full the hotel is, silently assuming a
     // vacant-but-available room needs no service at all) and are never combined — whichever basis has data wins,
@@ -16502,7 +16461,6 @@ function closePaycomSetupModal(v){
 function submitPaycomSetupModal(){
   const bg=el("paycomSetupModal");if(!bg)return;
   const dept=bg.querySelector("#pcDept").value;
-  if(!_dateRangeCommit("pcFrom","pcTo","auto")){uiAlert("Enter a date.");return;}
   const from=bg.querySelector("#pcFrom").value,to=bg.querySelector("#pcTo").value;
   // Read from this modal, where the person exporting can see and adjust it, rather than only from Settings.
   // Applied for this export alone - the saved default is not changed by typing here.
@@ -16510,7 +16468,8 @@ function submitPaycomSetupModal(){
     const _lh=bg.querySelector("#pcLunchHrs");
     if(_lh)PAYCOM_LUNCH_OVERRIDE=(_lh.value.trim()===""?"":parseFloat(_lh.value));
   }catch(e){PAYCOM_LUNCH_OVERRIDE=null;}
-  if(!from||!to){uiAlert("Enter a date.");return;}
+  if(!from||!to){uiAlert("Enter both a From and To date.");return;}
+  if(to<from){uiAlert("The To date must be on or after the From date.");return;}
   // Read this SELECT's own live DOM value directly, rather than relying solely on CFG.paycomEmployeeIdType (via
   // paycomEmployeeIdType()) reflecting it — setPaycomEmployeeIdType() (called on this select's own onchange)
   // silently no-ops behind an alert if this device currently lacks edit access to any department's Settings (see
@@ -16577,7 +16536,7 @@ function paycomExportSetupModal(){
         <option value="HSK" ${_pcDefaultDept==="HSK"?"selected":""}>${esc(CFG.HSK.label)}</option>
       </select></label></div>
       <div class="small" style="margin-bottom:8px">Date range defaults to the currently displayed week — change either date to export a custom range instead (e.g. a full pay period, or a single day). Can span multiple weeks.</div>
-      <div class="mrow" style="align-items:center;margin-bottom:12px"><label class="small">From <input type="date" required id="pcFrom" class="sfield" value="${defFrom}" data-range-peer="pcTo" data-range-edge="from" data-range-policy="auto"></label> <label class="small">To <input type="date" required id="pcTo" class="sfield" value="${defTo}" data-range-peer="pcFrom" data-range-edge="to" data-range-policy="auto"></label></div>
+      <div class="mrow" style="align-items:center;margin-bottom:12px"><label class="small">From <input type="date" required id="pcFrom" class="sfield" value="${defFrom}"></label> <label class="small">To <input type="date" required id="pcTo" class="sfield" value="${defTo}"></label></div>
       <div class="mrow" style="align-items:center;margin-bottom:12px"><label class="small" title="Where the unpaid lunch sits inside each shift, for the IL/OL punches. Blank exports no lunch punches at all.">Lunch punch <input class="sfield no-spin" type="number" min="0" step="0.5" style="width:52px" id="pcLunchHrs" value="${esc(CFG.paycomLunchHoursAfterStart!=null?CFG.paycomLunchHoursAfterStart:PAYCOM_LUNCH_HOURS_AFTER_START_DEFAULT)}"> hours after each shift starts</label></div>
       <div class="small muted" style="margin:-6px 0 10px">Only affects this export. Blank = no IL/OL punches. The saved default lives in Settings \u2192 Shift &amp; hours rules.</div>
       <hr style="margin:12px 0">
@@ -17362,8 +17321,8 @@ function openPaycomImportModal(){
       <input type="file" id="pciFile" accept=".csv,.xlsx,.xls" style="display:none" onchange="_pciPick(event)">
     </div>
     <div class="mrow small" style="align-items:center;gap:6px;margin-top:10px;flex-wrap:wrap">
-      <label>Only import dates from <input type="date" id="pciFrom" class="sfield" data-range-peer="pciTo" data-range-edge="from" data-range-policy="auto"></label>
-      <label>to <input type="date" id="pciTo" class="sfield" data-range-peer="pciFrom" data-range-edge="to" data-range-policy="auto"></label>
+      <label>Only import dates from <input type="date" id="pciFrom" class="sfield"></label>
+      <label>to <input type="date" id="pciTo" class="sfield"></label>
       <span class="small muted">Leave date range blank to import everything in the file.</span>
     </div>
     <div id="pciStatus" class="small" style="margin-top:8px"></div>
@@ -17445,8 +17404,6 @@ async function _pciRun(){
   // The date range is read by the readers themselves through this shared pair, so every report honours it
   // without each one growing its own controls.
   try{
-    const _pf=((el("pciFrom")||{}).value||"").trim(),_pt=((el("pciTo")||{}).value||"").trim();
-    if(_pf||_pt)_dateRangeCommit("pciFrom","pciTo","auto");
     PAYCOM_IMPORT_FROM=((el("pciFrom")||{}).value||"").trim();
     PAYCOM_IMPORT_TO=((el("pciTo")||{}).value||"").trim();
   }catch(e){}
@@ -21781,12 +21738,6 @@ function renderFlags(){
 // flag (hotel_pending_dirty) that survives reloads, initialized from storage instead of hardcoded false.
 let PENDING=(load("hotel_pending_dirty",false)===true);
 function setPending(v){PENDING=v;try{localStorage.setItem("hotel_pending_dirty",JSON.stringify(v));}catch(e){}}
-// A failed write remains latched until a deliberate full review/upload succeeds. A later unrelated successful cell
-// write must not erase evidence that other person-week rows from an earlier bulk operation are still unsynced.
-let _pushFailureLatched=(load("hotel_push_failed",false)===true);
-function _setPushFailureLatched(v){_pushFailureLatched=!!v;try{localStorage.setItem("hotel_push_failed",JSON.stringify(_pushFailureLatched));}catch(e){}if(v)setPending(true);}
-let _reviewUploadInProgress=false;
-function _beginFullPushRetry(){_setPushFailureLatched(false);SYNC_ERR=null;}
 // While genuinely connected/live (DB is set), every push* function
 // (pushCell/pushDemand/pushLeaveRequest/pushCheckin/pushWeekAll/pushSnap) is called WITHOUT `await` from its own
 // caller (e.g. SetCell()) — a deliberate, correct "fire and forget" pattern so the UI doesn't have to freeze
@@ -21871,15 +21822,7 @@ function rosterUploadSafetyMessage(rep){
     +d.names.join(", ")+(d.more?(" and "+d.more+" more"):"")).join("\n\n");
 }
 function _pushStarted(kind){_outstandingPushes++;if(kind==="config")_outstandingConfigPushes++;setPending(true);}
-function _pushSettled(succeeded,kind){
-  _outstandingPushes=Math.max(0,_outstandingPushes-1);if(kind==="config")_outstandingConfigPushes=Math.max(0,_outstandingConfigPushes-1);
-  if(!succeeded)_setPushFailureLatched(true);
-  if(_outstandingPushes===0){
-    if(_reviewUploadInProgress){setPending(true);setStatus(DB?"reviewing":"local",DB?"#c9891b":"#c7d0da");}
-    else if(succeeded&&!SYNC_ERR&&!_pushFailureLatched&&!_hasProtectedAssignRows())setPending(false);
-    else if(_pushFailureLatched||_hasProtectedAssignRows())setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");
-  }
-}
+function _pushSettled(succeeded,kind){_outstandingPushes=Math.max(0,_outstandingPushes-1);if(kind==="config")_outstandingConfigPushes=Math.max(0,_outstandingConfigPushes-1);if(succeeded&&_outstandingPushes===0&&!SYNC_ERR){setPending(false);}}
 // Re-fetches just the roster row when an earlier merge was skipped. Runs a few seconds later, by which time any
 // in-flight write has settled, and is a no-op when nothing was deferred. This is the piece whose absence turned
 // a momentary race into a permanent stale roster.
@@ -21926,10 +21869,7 @@ window.addEventListener("beforeunload",function(e){
     try{localStorage.setItem("hotel_pending_dirty","true");}catch(err){}
   }
 });
-let SYNC_ERR=null; // last REST/push/pull error
-let REALTIME_RECEIVE_ERR=null; // schedule-channel receiving error; only SUBSCRIBED clears it
-let _realtimeScheduleReceiving=false;
-let _schedEverSubscribed=false;
+let SYNC_ERR=null; // last Supabase error message, if any — surfaced in the status bar so failed pushes are never silent again
 // The status bar previously showed a PERSISTENT "⬆ Upload to live" link any time PENDING was true — an
 // always-on button, not the requested pop-up-only behavior. That link is now removed from the status bar entirely;
 // uploading is instead driven ONLY by pop-up confirmations at the two moments that actually matter — going from
@@ -22031,9 +21971,7 @@ function setStatus(txt,color){
   // The one exception that matters: a green "live" is a claim that this device and the shared copy agree, which
   // is exactly what is still undecided while the dialog is open. Every other status - connecting, local,
   // unsynced, an error - is still allowed through, because those remain true regardless of the answer.
-  if((_awaitingSyncChoice||_reviewUploadInProgress)&&txt==="live"){txt="reviewing";color="#c9891b";}
-  else if(txt==="live"&&(_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired||(PENDING&&_outstandingPushes===0)||(DB&&!_realtimeScheduleReceiving))){txt="unsynced";color="#e0a800";}
-  const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();clearSyncError();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
+  if(_awaitingSyncChoice&&txt==="live"){txt="reviewing";color="#c9891b";}const _showErr=SYNC_ERR&&DB;const _staleKey=_showErr&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(SYNC_ERR)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(SYNC_ERR)}\n\nClick to dismiss." onclick="event.stopPropagation();clearSyncError();">Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
   requestAnimationFrame(_syncTagRowAlign); // the error pill/"Reconnect" link above are optional content that changes .tag's own width -- see .tag.wrappedRow's own comment
   // Mirrors this SAME color onto the compact app-mode-only status dot (see that element's own comment) — this is
   // the ONE place sync color/text is ever actually decided in this whole app, so mirroring it here (rather than
@@ -22079,89 +22017,70 @@ function reportSyncError(where,error){
 // anything about local-edit safety — PENDING is left completely untouched, since a channel-only issue never
 // establishes that one.
 function reportRealtimeChannelError(where,error){
-  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);
-  if(DB)setStatus("unsynced","#e0a800");
+  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);
+  if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
+  _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;if(SYNC_ERR)setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");},4000);
 }
 // Now also manually clickable (see setStatus above) — lets a user dismiss a persistent error that can't
 // self-resolve (e.g. A genuinely missing Supabase table/schema issue that requires an admin to fix separately)
 // instead of it being stuck showing forever with no way to acknowledge and move on.
 function clearSyncError(){
   if(_statusFlickerTimer){clearTimeout(_statusFlickerTimer);_statusFlickerTimer=null;}
-  if(SYNC_ERR)SYNC_ERR=null;
-  setStatus(DB?"live":"local",DB?"#2c9e5f":"#c7d0da");
+  if(SYNC_ERR){SYNC_ERR=null;setStatus(DB?"live":"local",DB?"#2c9e5f":"#c7d0da");}
 }
 window.addEventListener("offline",()=>{if(DB)setStatus("unsynced","#e0a800");});
 window.addEventListener("online",async()=>{if(DB){if(PENDING){await maybeUploadOnConnect(true);if(DB)setStatus("live","#2c9e5f");}else{setStatus("live","#2c9e5f");}}});
-async function _freshLiveAssignmentsForReview(){
-  try{
-    const{data,error}=await DB.from("assignments").select("*");
-    if(error)return{ok:false,error,map:{}};
-    const map={};(data||[]).forEach(r=>{((map[r.dept]=map[r.dept]||{})[r.week]=map[r.dept][r.week]||{})[r.staff]=JSON.parse(JSON.stringify(r.days||{}));});
-    return{ok:true,error:null,map};
-  }catch(error){return{ok:false,error,map:{}};}
-}
-async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return {failed:true};}
-  if(!opts.fromReview){console.warn("pushPending refused: it is only sent from the review (reviewAndUpload / connect).");return {failed:true};}
-  _reviewUploadInProgress=true;_beginFullPushRetry();
+async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return;}
+  // Only the review dialog's answer may send a batch of local data. Any other caller is refused, so a new button or
+  // shortcut cannot add a second route to the shared copy.
+  if(!opts.fromReview){console.warn("pushPending refused: it is only sent from the review (reviewAndUpload / connect).");return;}
   const _secs=opts.sections?new Set(opts.sections):null;
   const _want=k=>!_secs||_secs.has(k);
+  // Push every week that has local data for this dept + demand + snapshots
+  // opts.onlyChanged (the connect review) sends only the rows that differ from what live returned when it was read,
+  // so a large local history is not re-sent row by row. A table whose live rows could not be read (it failed, or the
+  // device never pulled) falls back to sending everything in it, so a missing comparison can never drop a row.
   const _PR=_lastPulledRows,_only=!!opts.onlyChanged;
-  const _tally={schedule:0,demand:0,leave:0,checkin:0,skipped:0,failed:false};
-  const _scheduleCleanup=new Set();
-  const _fail=()=>{_reviewUploadInProgress=false;setPending(true);setStatus("unsynced","#e0a800");_tally.failed=true;flashNote("Upload incomplete — at least one row failed. This device remains unsynced; use Review & upload to retry.");return _tally;};
-  let _freshAssign=null;
-  if(_want("schedule")&&_only){
-    const fresh=await _freshLiveAssignmentsForReview();
-    if(!fresh.ok){reportSyncError("read live schedule before reviewed upload",fresh.error);_setPushFailureLatched(true);return _fail();}
-    _freshAssign=fresh.map;
-  }
-  if(_want("schedule"))for(const dept of DEPT_KEYS){
-    const wks=ASSIGN[dept]||{},weekKeys=new Set(Object.keys(wks));
-    Object.keys(_dirtyAssignRows).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&p.dept===dept)weekKeys.add(p.wk);});
-    for(const wk of weekKeys){
-      wks[wk]=wks[wk]||{};const loc=wks[wk],protectedNames=_protectedNamesForWeek(dept,wk);protectedNames.forEach(n=>{if(loc[n]==null)loc[n]={};});
-      let only=null;
-      if(_only){
-        only=new Set();const liv=((_freshAssign&&_freshAssign[dept]||{})[wk])||{};
-        Object.keys(loc).forEach(n=>{
-          const key=_assignRowKey(dept,wk,n),equal=_sameValue(_normalizedAssignRow(loc[n]),_normalizedAssignRow(liv[n]));
-          if(!equal)only.add(n);else{_tally.skipped++;if(_isAssignRowProtected(dept,wk,n))_scheduleCleanup.add(key);}
-        });
-        if(!only.size)continue;
-      }
-      _tally.schedule+=only?only.size:Object.keys(loc).length;
-      const result=await pushWeekAll(dept,wk,only,{fromReview:true});
-      if(!result.ok)return _fail();
-      (only?[...only]:Object.keys(loc)).forEach(n=>_scheduleCleanup.add(_assignRowKey(dept,wk,n)));
+  const _rowNorm=r=>{if(!r||typeof r!=="object")return null;const o={};Object.keys(r).forEach(k=>{const v=r[k];if(v!==""&&v!=null)o[k]=v;});return Object.keys(o).length?o:null;};
+  const _tally={schedule:0,demand:0,leave:0,checkin:0,skipped:0};
+  if(_want("schedule"))for(const dept of DEPT_KEYS){const wks=ASSIGN[dept]||{};for(const wk of Object.keys(wks)){
+    let only=null;
+    if(_only&&_PR.ok.assignments){
+      only=new Set();const loc=wks[wk]||{},liv=((_PR.assign[dept]||{})[wk])||{};
+      Object.keys(loc).forEach(n=>{if(!_sameValue(_rowNorm(loc[n]),_rowNorm(liv[n])))only.add(n);else _tally.skipped++;});
+      if(!only.size)continue;
     }
-  }
+    _tally.schedule+=only?only.size:Object.keys(wks[wk]||{}).length;
+    await pushWeekAll(dept,wk,only);
+  }}
   if(_want("demand"))for(const wk of Object.keys(DEMAND)){
     if(_only&&_PR.ok.demand&&_sameValue(_nullIfEmpty(DEMAND[wk]),_nullIfEmpty(_PR.demand[wk]))){_tally.skipped++;continue;}
-    _tally.demand++;await pushDemand(wk);if(_pushFailureLatched)return _fail();
+    _tally.demand++;await pushDemand(wk);
   }
   if(_want("leave"))for(const id of Object.keys(LEAVE_REQUESTS)){
     if(_only&&_PR.ok.leave_requests&&_sameValue(LEAVE_REQUESTS[id]||{},_PR.leave[id])){_tally.skipped++;continue;}
-    _tally.leave++;await pushLeaveRequest(id);if(_pushFailureLatched)return _fail();
+    _tally.leave++;await pushLeaveRequest(id);
   }
+  // Checkins now genuinely sync (see pushCheckin()'s own comment); included here too so a manual "Upload now"
+  // fallback covers every syncable data type, not just the three that existed before.
   if(_want("schedule"))for(const dept of DEPT_KEYS){const wks=CHECKINS[dept]||{};for(const wk of Object.keys(wks)){for(const nm of Object.keys(wks[wk]||{})){
-    if(_only&&_PR.ok.checkins&&_sameValue(_normalizedAssignRow(wks[wk][nm]),_normalizedAssignRow((((_PR.checkin[dept]||{})[wk])||{})[nm]))){_tally.skipped++;continue;}
-    _tally.checkin++;await pushCheckin(dept,wk,nm);if(_pushFailureLatched)return _fail();
+    if(_only&&_PR.ok.checkins&&_sameValue(_rowNorm(wks[wk][nm]),_rowNorm((((_PR.checkin[dept]||{})[wk])||{})[nm]))){_tally.skipped++;continue;}
+    _tally.checkin++;await pushCheckin(dept,wk,nm);
   }}}
+  // Roster/settings (CFG.FO/CFG.HSK) now genuinely sync too (see pushConfig()'s own comment for the full
+  // architectural gap this closes); included here so a manual "Upload now" fallback covers this data type as well,
+  // not just schedule/demand/leave/check-ins.
   const _wantRoster=_want("people")||_want("details")||_want("roster");
   if(_wantRoster||_want("settings")){
-    const _prevDel=_deliberateRosterChange;if(opts.deliberate&&_wantRoster)_deliberateRosterChange=true;
-    try{await pushConfig(_secs?{sections:[..._secs]}:undefined);}finally{_deliberateRosterChange=_prevDel;}
-    if(_pushFailureLatched)return _fail();
+    // A deliberate roster change opens the roster-shrink gate, which is the case it exists to allow.
+    const _prevDel=_deliberateRosterChange;
+    if(opts.deliberate&&_wantRoster)_deliberateRosterChange=true;
+    try{await pushConfig(_secs?{sections:[..._secs]}:undefined);}
+    finally{_deliberateRosterChange=_prevDel;}
   }
-  if(_want("schedule"))_clearProtectedAssignKeys([..._scheduleCleanup]);
-  if(opts.discardScheduleAfterSuccess){_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_setV23ReviewRequired(false);}
-  else if(_want("schedule")&&!_hasProtectedAssignRows())_setV23ReviewRequired(false);
-  _reviewUploadInProgress=false;
-  if(_hasProtectedAssignRows()||_v23ReviewRequired){_setPushFailureLatched(true);setPending(true);setStatus("unsynced","#e0a800");_tally.reviewRemaining=true;}
-  else{_setPushFailureLatched(false);setPending(false);setStatus("live","#2c9e5f");}
+  setPending(false);setStatus("live","#2c9e5f");
   flashNote(_only?("Uploaded "+nfmt(_tally.schedule)+" schedule row"+(_tally.schedule===1?"":"s")+", "+nfmt(_tally.demand)+" demand week"+(_tally.demand===1?"":"s")+", "+nfmt(_tally.leave)+" leave request"+(_tally.leave===1?"":"s")+". "+nfmt(_tally.skipped)+" unchanged row"+(_tally.skipped===1?"":"s")+" not re-sent."):"Local changes uploaded to live.");
-  return _tally;
-}
+  return _tally;}
 // Detects genuine conflicts between this device's local (pre-pull) edits and what's actually live right now, for
 // the specific cells/rows this device has pending changes for — NOT a full-database diff, just the parts that
 // matter (where uploading local would silently overwrite something newer that arrived from elsewhere). Returns a
@@ -22994,7 +22913,7 @@ function _renderPlainItemsList(items){
 function renderAwayChangesBadge(){
   const el2=el("awayChangesBadge");if(!el2)return;
   if(_awayChangesDismissed||!_awayChanges.length){el2.innerHTML="";requestAnimationFrame(_syncTagRowAlign);return;}
-  el2.innerHTML=`<span class="pill" style="background:#fde9c8;color:#7a4b00;cursor:pointer;margin-left:4px" onclick="toggleAwayChangesPanel(event)" title="Live differences received by the most recent catch-up pull. This is not a count of local changes waiting to upload.">${nfmt(_awayChanges.length)} live difference${_awayChanges.length===1?"":"s"} received ▾</span>`;
+  el2.innerHTML=`<span class="pill" style="background:#fde9c8;color:#7a4b00;cursor:pointer;margin-left:4px" onclick="toggleAwayChangesPanel(event)" title="Click to see what changed on the shared live copy since you last had this open">${nfmt(_awayChanges.length)} change${_awayChanges.length===1?"":"s"} since you were away ▾</span>`;
   requestAnimationFrame(_syncTagRowAlign); // this badge's own appearance/disappearance changes .tag's total width — see .tag.wrappedRow's own comment
 }
 function toggleAwayChangesPanel(e){
@@ -23017,7 +22936,7 @@ function toggleAwayChangesPanel(e){
   // matching how every other above-header overlay in this app (modals at z-index:9999, the mobile drawer at 3001)
   // already stacks.
   panel.style.cssText="position:absolute;background:#fff;border:1px solid var(--line);border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);padding:10px;max-width:420px;max-height:320px;overflow:auto;z-index:2100;font-size:12px;color:#1f2d3d";
-  panel.innerHTML=`<div style="font-weight:600;margin-bottom:6px">Live differences received during the most recent catch-up pull</div><div class="small muted" style="margin-bottom:6px">This reports what the pull changed on this device; it is not a pending-upload count. Each line reads <b>before pull</b> then <b>live received</b>.</div>${body}<div class="mrow" style="justify-content:flex-end;margin-top:8px"><button class="mini" onclick="dismissAwayChanges()">Dismiss</button></div>`;
+  panel.innerHTML=`<div style="font-weight:600;margin-bottom:6px">Changed on the shared live copy since you were away</div><div class="small muted" style="margin-bottom:6px">Each line reads <b>local</b> (this device) then <b>live</b> (the shared copy).</div>${body}<div class="mrow" style="justify-content:flex-end;margin-top:8px"><button class="mini" onclick="dismissAwayChanges()">Dismiss</button></div>`;
   const badge=el("awayChangesBadge");
   document.body.appendChild(panel);
   const r=badge.getBoundingClientRect();
@@ -23402,10 +23321,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   // difference there was never meaningful to surface here.
   // Compared without the dates-off records the schedule editor creates itself (see _withoutAutoAvail).
   const _cfgChanged=(_cfgCompareView(_cfgDeptsLocal)!==_cfgCompareView(_cfgDeptsLive));
-  if(!changes.length&&!_cfgChanged){
-    if(PENDING||_stay){const result=await pushPending({onlyChanged:true,fromReview:true});if(!result||result.failed){setPending(true);setStatus("unsynced","#e0a800");return;}}
-    if(DB)setStatus("live","#2c9e5f");if(_stay)flashNote("This device matches the live copy. Nothing to upload.");return;
-  } // nothing itemized, but protected rows are still freshly verified before their registry entries are cleared
+  if(!changes.length&&!_cfgChanged){ if(DB){setStatus("live","#2c9e5f");} if(_stay)flashNote("This device matches the live copy. Nothing to upload."); return; } // nothing actually pending in any syncable data — nothing to ask about, already live
     const _isFirstAppWideSync=!(_lastPulledAppConfig&&_lastPulledAppConfig.appWide&&Object.keys(_lastPulledAppConfig.appWide).length);
     _awaitingSyncChoice=true;
     try{ setStatus("reviewing","#c9891b");syncNav(); }catch(e){}
@@ -23427,16 +23343,10 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   // The choice is "cancel", "live", or {c:"upload",sections,dropped,deliberate} from the sectioned dialog.
   const _choice=(choice&&typeof choice==="object")?choice.c:choice;
   if(_choice==="upload"){
-    const _uploadResult=await pushPending({sections:choice.sections,deliberate:choice.deliberate,onlyChanged:true,fromReview:true,discardScheduleAfterSuccess:(choice.dropped||[]).indexOf("schedule")>=0});
-    if(!_uploadResult||_uploadResult.failed){
-      // Nothing after a partial reviewed upload is allowed to pull, overwrite local data, clear Pending, or turn
-      // the header green. The local snapshots remain on screen and Review & upload remains available.
-      setPending(true);setStatus("unsynced","#e0a800");render();return;
-    }
-    // A dropped roster-people section releases local tombstones only after every selected write succeeds.
+    // People deleted here are not sent when Roster people is left out, so the local record of those deletions goes too.
     if((choice.dropped||[]).indexOf("people")>=0)_releaseLocalDeletions();
-    // Sections intentionally left unticked take the already-reviewed live snapshot only after every selected write
-    // has succeeded. A failed selected row therefore cannot cause any local section to be discarded.
+    // An unticked schedule, demand, or leave section is not sent, and live's rows replace this device's in it. That
+    // includes rows only this device holds: left in place they would never be sent and nothing would show them.
     {
       const _drop=choice.dropped||[];let _any=false;
       if(_drop.indexOf("schedule")>=0){ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_any=true;}
@@ -23444,17 +23354,34 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
       if(_drop.indexOf("leave")>=0){LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));_any=true;}
       if(_any){const _p=_syncApplying;_syncApplying=true;try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);}finally{_syncApplying=_p;}}
     }
-    const _prevSync=_syncApplying;_syncApplying=true;
-    try{await pullAll(false,false);}catch(e){reportSyncError("post-upload pull",e);}
-    finally{_syncApplying=_prevSync;}
-    if(!_pushFailureLatched&&!SYNC_ERR)setPending(false);
-    setStatus("live","#2c9e5f");render();
+    await pushPending({sections:choice.sections,deliberate:choice.deliberate,onlyChanged:true,fromReview:true});
+    // Always pull afterwards: this device was holding its own copy during the review, so rows that exist only on live
+    // (another device's weeks, a leave request submitted elsewhere) are not here yet, and without this they would not
+    // appear until the next connection.
+    if(!(choice.dropped||[]).length){
+      const _p0=_syncApplying;_syncApplying=true;
+      try{await pullAll(false,false);}catch(e){console.warn("post-upload pull failed",e);}
+      finally{_syncApplying=_p0;}
+      setPending(false);render();
+    }
     if((choice.dropped||[]).length){
+      // Sections that were not sent take the live version. Leaving the pull out is a fault: a device that keeps its
+      // own older schedule looks wiped when the roster went up and the schedule did not (a compare against the
+      // server once showed 83 schedule rows live for a week where the device held 12). _syncApplying keeps this
+      // pull out of the undo history, because it is not something the user did.
+      const _prevSync=_syncApplying;_syncApplying=true;
+      try{ await pullAll(false,false); }
+      catch(e){ console.warn("post-upload pull failed",e); }
+      finally{ _syncApplying=_prevSync; }
+      setPending(false);
+      if(DB)setStatus("live","#2c9e5f");
+      render();
       const _nm={people:"Roster people",details:"Roster details",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};
       await uiAlert("Uploaded: "+choice.sections.map(k=>_nm[k]).join(", ")+".\n\nNot sent, so live values replaced the local ones in: "+choice.dropped.map(k=>_nm[k]).join(", ")+".");
     }
+    else if(DB)setStatus("live","#2c9e5f");
   }
-  else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));if(_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
+  else if(choice==="live"){ ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));if(_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
     // See the realtime "sched" channel's own new comment (a few hundred lines up) for the full "undo/redo
     // buttons still flickering" cause this closes. These 4 save() calls represent the SYNC RECONCILIATION's own
     // choice to discard local edits and adopt the live copy — not a real user edit — so, exactly like pullAll()'s
@@ -23671,7 +23598,7 @@ function disconnect(){
   // The "changes since you were away" list describes the live copy, so it goes when the connection does.
   try{_awayChanges=[];_awayChangesDismissed=false;const _ap=document.getElementById("awayChangesPanel");if(_ap)_ap.remove();renderAwayChangesBadge();}catch(e){}
   _tabConnectAuthorize(false);try{save("hotel_supa_optout",true);}catch(e){} // a deliberate choice to work locally, which boot()'s first-run auto-connect must not override
-  if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;REALTIME_RECEIVE_ERR=null;_realtimeScheduleReceiving=false;_schedEverSubscribed=false;localStorage.removeItem("hotel_supa");resetRosterMergeGate();setStatus("local","#c7d0da");render();}
+  if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;localStorage.removeItem("hotel_supa");resetRosterMergeGate();setStatus("local","#c7d0da");render();}
 // Console errors and Settings-tab lag are two separate symptoms with no code path connecting them:
 // manifest.json/sw.js 404s are non-fatal (a failed, one-time fetch at page load, never retried); CHANNEL_ERROR/
 // "socket closed" on the realtime channels is reported via reportSyncError()/console.warn(), also a one-time log
@@ -23706,13 +23633,12 @@ function _scheduleRealtimeReconnect(channelKey){
     // reload — now, a successful reconnect (regardless of which channel) always triggers a real pullAll()
     // immediately after, closing that exact gap. Harmless to call twice in quick succession if BOTH channels happen
     // to drop and reconnect around the same time — pullAll() itself is a plain, idempotent full refresh either way.
+    if(DB)pullAll();
   },delayMs);
 }
 function subscribe(){
   if(!DB)return;
   _realtimeReconnectAttempts={sched:0,checkins:0};
-  _realtimeScheduleReceiving=false;
-  setStatus("unsynced","#e0a800");
   _subscribeSchedChannel();
   _subscribeCheckinsChannel();
 }
@@ -23733,22 +23659,13 @@ function subscribe(){
 // existing 5-attempt cap actually take effect once a connection is genuinely, persistently unable to stay up.
 let _channelStableTimer={sched:null,checkins:null};
 function _onChannelSubscribed(channelKey){
-  if(channelKey==="sched"){
-    const wasReconnect=_schedEverSubscribed&&!_realtimeScheduleReceiving;
-    _realtimeScheduleReceiving=true;REALTIME_RECEIVE_ERR=null;_schedEverSubscribed=true;
-    setStatus("live","#2c9e5f");
-    if(wasReconnect&&DB)setTimeout(()=>{if(DB&&_realtimeScheduleReceiving)pullAll(false,true);},0);
-  }
+  if(channelKey==="sched")clearSyncError();
   clearTimeout(_channelStableTimer[channelKey]);
   _channelStableTimer[channelKey]=setTimeout(()=>{_realtimeReconnectAttempts[channelKey]=0;},5000);
 }
 function _onChannelDropped(channelKey){
   clearTimeout(_channelStableTimer[channelKey]);
   _channelStableTimer[channelKey]=null;
-  if(channelKey==="sched"){
-    _realtimeScheduleReceiving=false;
-    if(DB)setStatus("unsynced","#e0a800");
-  }
 }
 function _subscribeSchedChannel(){
   CHAN=DB.channel("sched")
@@ -23791,10 +23708,17 @@ function _subscribeSchedChannel(){
     // tracking early.
     .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{
       const r=payload.new||payload.old;if(!r)return;
-      _notePulled("assign",r);
       ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};
-      if(_isAssignRowProtected(r.dept,r.week,r.staff))return;
-      // Unprotected rows can adopt the committed event immediately; protected rows stay local until review.
+      // Deliberately does NOT need the same _assignDirtyStamp guard pullAll() now uses (see that fix's own
+      // comment for the full cause) — considered directly and ruled out as unnecessary here, not merely
+      // overlooked: a single realtime event's own payload is a snapshot as of the COMMIT that triggered it, not a
+      // long-running query with its own separate "started, but may return stale-by-the-time-it-resolves" window
+      // the way pullAll()'s broad SELECT * has. Two genuine edits to the same key (a local one, and a nearly-
+      // concurrent remote one) are already correctly serialized by the database itself; if this device's own
+      // slightly-older echo happens to arrive AFTER a subsequent local edit, this would only cause a brief,
+      // self-correcting flicker (any following push, from this or another device, produces its own follow-up echo
+      // that restores the correct value moments later) — never the kind of LASTING, silent data loss pullAll()'s
+      // own one-shot, never-revisited overwrite could cause, which is what the reported bug actually described.
       const _before=JSON.stringify(ASSIGN[r.dept][r.week][r.staff]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
       try{ASSIGN[r.dept][r.week][r.staff]=r.days||{};save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
@@ -23993,7 +23917,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // the database's state as of when it was issued, or earlier), so it's always correct to trust a
   // _assignDirtyStamp at or after this moment over this fetch's own now-provably-stale row for that same key.
   const _assignsFetchStartedAt=Date.now();
-  await pullTable("assignments","assignments",rows=>{rows.forEach(r=>{_notePulled("assign",r);ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _dkey=_assignRowKey(r.dept,r.week,r.staff);if(_isAssignRowProtected(r.dept,r.week,r.staff))return;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][r.staff]=r.days||{};});});
+  await pullTable("assignments","assignments",rows=>{rows.forEach(r=>{_notePulled("assign",r);ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _dkey=r.dept+"|"+r.week+"|"+r.staff;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][r.staff]=r.days||{};});});
   // See _pullGeneration's own comment for the full "overlapping pulls finishing out of order" fix this is part
   // of — checked after EVERY remaining table fetch below; a newer pullAll() having started in the meantime means
   // this call's own remaining results are now provably stale, so it stops here rather than risk applying them.
@@ -24292,40 +24216,15 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
     {message:_summary}
   );
 }
-const _assignmentWriteQueues=new Map();
-function _queueAssignmentUpsert(dept,wk,name,days){
-  const key=_assignRowKey(dept,wk,name),client=DB,payload=JSON.parse(JSON.stringify(days||{}));
-  const previous=_assignmentWriteQueues.get(key)||Promise.resolve();
-  const task=previous.catch(()=>{}).then(async()=>{
-    try{const{error}=await client.from("assignments").upsert({dept,week:wk,staff:name,days:payload},{onConflict:"dept,week,staff"});return{ok:!error,error:error||null,payload,key};}
-    catch(error){return{ok:false,error,payload,key};}
-  });
-  _assignmentWriteQueues.set(key,task);
-  task.finally(()=>{if(_assignmentWriteQueues.get(key)===task)_assignmentWriteQueues.delete(key);});
-  return task;
-}
-function _queueAssignmentDelete(dept,wk,name){
-  const key=_assignRowKey(dept,wk,name),client=DB,previous=_assignmentWriteQueues.get(key)||Promise.resolve();
-  const task=previous.catch(()=>{}).then(async()=>{try{const{error}=await client.from("assignments").delete().eq("dept",dept).eq("week",wk).eq("staff",name);return{ok:!error,error:error||null,key};}catch(error){return{ok:false,error,key};}});
-  _assignmentWriteQueues.set(key,task);task.finally(()=>{if(_assignmentWriteQueues.get(key)===task)_assignmentWriteQueues.delete(key);});return task;
-}
-async function _deleteAssignmentRowRemote(dept,wk,name,where){
-  if(!DB)return{ok:false,reason:"not connected"};_markAssignDirty(dept,wk,name);_pushStarted();const result=await _queueAssignmentDelete(dept,wk,name);
-  if(!result.ok){reportSyncError(where||("delete schedule row ("+dept+" "+wk+" "+name+")"),result.error);_pushSettled(false);return result;}
-  if(!_pushFailureLatched)_clearProtectedAssignKeys([_assignRowKey(dept,wk,name)]);clearSyncError();_pushSettled(true);return result;
-}
-function _clearAssignAfterConfirmedStandaloneWrite(dept,wk,name,payload){
-  if(_pushFailureLatched)return;
-  const current=(((ASSIGN[dept]||{})[wk]||{})[name])||{};
-  if(_sameValue(_normalizedAssignRow(current),_normalizedAssignRow(payload)))_clearProtectedAssignKeys([_assignRowKey(dept,wk,name)]);
-}
 async function pushCell(dept,wk,name,day,val){
-  if(!DB)return {ok:false,reason:"not connected"};
+  if(!DB)return;
   _pushStarted();
-  const days=((((ASSIGN[dept]||{})[wk]||{})[name])||{});
-  const result=await _queueAssignmentUpsert(dept,wk,name,days);
-  if(!result.ok){reportSyncError("push schedule cell ("+dept+" "+name+")",result.error);_pushSettled(false);return result;}
-  _clearAssignAfterConfirmedStandaloneWrite(dept,wk,name,result.payload);clearSyncError();_pushSettled(true);return result;
+  const days=(ASSIGN[dept][wk][name])||{};
+  try{
+    const {error}=await DB.from("assignments").upsert({dept,week:wk,staff:name,days},{onConflict:"dept,week,staff"});
+    if(error){reportSyncError("push schedule cell ("+dept+" "+name+")",error);_pushSettled(false);return;}
+    clearSyncError();_pushSettled(true);
+  }catch(e){reportSyncError("push schedule cell ("+dept+" "+name+")",e);_pushSettled(false);}
 }
 async function pushDemand(wk){
   if(!DB)return;
@@ -24719,7 +24618,7 @@ async function pushCheckin(dept,wk,name){
 }
 /* DATA UTILS ---------- */
 function exportJSON(){const blob={cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS};const s=JSON.stringify(blob,null,2);const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([s],{type:"application/json"}));a.download="hotel_schedule_backup.json";a.click();}
-function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const b=JSON.parse(r.result);if(b.cfg)CFG=b.cfg;if(b.assign)ASSIGN=b.assign;if(b.demand)DEMAND=b.demand;if(b.leaveRequests)LEAVE_REQUESTS=b.leaveRequests;const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);_markAllAssignmentRowsProtected();_setPushFailureLatched(true);setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");render();flashNote("Backup restored locally — Review & upload is required before it can replace live data.");}catch(err){uiAlert("Bad file: "+err.message);}};r.readAsText(f);}
+function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=()=>{try{const b=JSON.parse(r.result);if(b.cfg)CFG=b.cfg;if(b.assign)ASSIGN=b.assign;if(b.demand)DEMAND=b.demand;if(b.leaveRequests)LEAVE_REQUESTS=b.leaveRequests;save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);render();}catch(err){uiAlert("Bad file: "+err.message);}};r.readAsText(f);}
 /* XLSX EXPORT (approximate the hotel's sheet layout) ---------- */
 function exportXLSX(){
   if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}
@@ -26478,7 +26377,6 @@ function setCellQuiet(name,day,val){
   a[name][day]=val;
   if(_oldVal!==val){
     const wk=weekKey(WEEK_START);
-    _markAssignDirty(DEPT,wk,name);
     try{if(ACTUALD[DEPT]&&ACTUALD[DEPT][wk]&&ACTUALD[DEPT][wk][name]&&ACTUALD[DEPT][wk][name][day]!=null){delete ACTUALD[DEPT][wk][name][day];markActualAutoSourced(DEPT,wk,name,day,false);save("hotel_actuald",ACTUALD);}}catch(e){}
   }
 }
@@ -27844,21 +27742,7 @@ async function bulkStamp(val){
   if(typeof autoSnap==="function")autoSnap();if(typeof TOUCH==="function")TOUCH();render();
   flashNote("Stamped "+proceedList.length+" cell(s) as “"+val+"”.");
 }
-async function pushWeekAll(dept,wk,only,opts){
-  opts=opts||{};
-  if(!DB)return {ok:false,failed:[],reason:"not connected"};
-  _pushStarted();const a=((ASSIGN[dept]||{})[wk])||{},names=Object.keys(a).filter(nm=>!only||only.has(nm));
-  // Every payload is copied when it enters its person-week queue. Requests for one row therefore commit in the
-  // same order the user made them, while independent rows may proceed together. Every selected row is attempted.
-  const results=await Promise.all(names.map(nm=>_queueAssignmentUpsert(dept,wk,nm,a[nm])));
-  const failed=results.map((r,i)=>({result:r,name:names[i]})).filter(x=>!x.result.ok).map(x=>({name:x.name,error:x.result.error}));
-  if(failed.length){
-    const first=failed[0].error||{};reportSyncError("push week ("+dept+" "+wk+") — "+failed.length+" of "+names.length+" staff row(s) failed; first: "+failed[0].name,first);
-    _pushSettled(false);return {ok:false,failed:failed.map(x=>x.name),attempted:names.length};
-  }
-  if(!opts.fromReview&&!_pushFailureLatched)results.forEach((r,i)=>_clearAssignAfterConfirmedStandaloneWrite(dept,wk,names[i],r.payload));
-  clearSyncError();_pushSettled(true);return {ok:true,failed:[],attempted:names.length};
-}
+async function pushWeekAll(dept,wk,only){ if(!DB)return; _pushStarted(); const a=((ASSIGN[dept]||{})[wk])||{}; for(const nm of Object.keys(a)){if(only&&!only.has(nm))continue;try{const {error}=await DB.from("assignments").upsert({dept,week:wk,staff:nm,days:a[nm]},{onConflict:"dept,week,staff"});if(error){reportSyncError("push week ("+dept+" "+wk+" "+nm+")",error);_pushSettled(false);return;}}catch(e){reportSyncError("push week ("+dept+" "+wk+" "+nm+")",e);_pushSettled(false);return;}} clearSyncError();_pushSettled(true); }
 async function pushSnap(dept,wk){ if(!DB)return; _pushStarted(); const list=(SNAPS[dept]||{})[wk]||[]; try{const {error}=await DB.from("snapshots").upsert({dept,week:wk,versions:list},{onConflict:"dept,week"});if(error){reportSyncError("push version snapshot ("+dept+" "+wk+")",error);_pushSettled(false);return;}clearSyncError();_pushSettled(true);}catch(e){reportSyncError("push version snapshot ("+dept+" "+wk+")",e);_pushSettled(false);} }
 /* SHIFT EDITOR (split shifts + flag-at-pick) ---------- */
 let SM={name:null,day:null,segs:[],code:""};
@@ -30915,10 +30799,10 @@ function renderReadme(){
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Leave Requests</b></summary>
 <ul class="small">
 <li>Anyone (including view-only staff) can submit a request — department, name, type, dates, optional part-day times, reason, an optional attachment (5MB cap) — no edit PIN needed. Checks for overlapping requests (own or others', same department, oldest-first). Past-dated requests are still accepted, with a note they can only be decided later.</li>
-<li><b>Leave Requests vs. "Specific dates off":</b> Leave Requests is worker-initiated and remains Pending until a scheduler decides it. Specific dates off is scheduler-initiated and takes effect immediately. An exact same-person, same-department, same-range overlap offers <b>Approve &amp; add</b> or <b>Add only</b>. Approve &amp; add links the request to the date-off record; Add only leaves the request Pending. The request retains its requested code while the schedule retains the scheduler-selected code.</li>
-<li><b>Linked lifecycle:</b> revoking a request that was linked to Specific dates off returns only the request to Pending; the independent date-off record and its schedule stamps remain. Removing the date-off record returns linked requests to Pending and safely removes unchanged stamps. A reason-only edit preserves the link. Changing the date range, code, or full-day/part-day window returns the linked request to Pending unless the new range is an exact match deliberately approved again. A shorter, longer, or partially overlapping range never partially approves a request: the request remains one whole record with its original dates.</li>
+<li><b>Leave Requests vs. "Specific dates off":</b> Leave Requests is worker-initiated and stays Pending until a scheduler decides it. Specific dates off (Settings → Availability &amp; preferences) is scheduler-initiated and takes effect immediately. When one or more Pending requests for the same person, department, and exact date range exist, the overlap dialog offers <b>Approve &amp; add</b> or <b>Add only</b>. Approve &amp; add links those requests to the date-off record and marks them Approved; Add only deliberately leaves their status unchanged. The schedule uses the code selected in Specific dates off, while each request keeps its originally requested code.</li>
+<li>A linked approval follows its scheduler-entered date-off record. Removing that record returns its linked request to Pending and safely clears only schedule cells that still contain the record's code. A material edit to its dates, code, or full-day/part-day window returns the prior linked request to Pending unless the edited range is deliberately approved again in the same overlap choice. Reason-only edits preserve the approval.</li>
 <li><b>Reason tier:</b> maps to Tier 1 (Medical/emergency/Bereavement/Court), Tier 2 (Pre-booked travel/School/Family), or Tier 3 (Personal preference/Recreational) — hidden from the requester, shown to a decider. <mark style="background:#ffe08a"><b>Pending verification</b></mark> — not used elsewhere (no auto-deny role, no grid indicator) today.</li>
-<li>Approve, Deny, Revoke, and Reconsider use the request department’s own authorization through <code>canDecideLeaveRequest()</code>: Supabase’s department edit grant or that department’s remembered PIN unlock. The Leave Requests tab does not require the unrelated global/current-tab <code>EDIT</code> flag. Past-dated requests collapse into their own section. Type/Reason/Attachment hide from non-deciders by default; Status stays visible for fairness. <mark style="background:#ffe08a"><b>Pending verification</b></mark> — whether a Denied status should also be hidden from view-only users.</li>
+<li>Approve/Deny needs department edit access; Revoke undoes a mistaken approval. Past-dated requests collapse into their own section. Type/Reason/Attachment hide from non-deciders by default; Status stays visible for fairness. <mark style="background:#ffe08a"><b>Pending verification</b></mark> — whether a Denied status should also be hidden from view-only users.</li>
 </ul>
 </details>
 
@@ -30955,7 +30839,7 @@ function renderReadme(){
     <li><b>Routes found by tracing and closed:</b>
     <li><b>Another route that was closed:</b> when the live roster is empty, the pull offered "The shared roster is empty. Upload this device's roster now?" with its own upload. It now ends in "Review roster", which opens this review (every local person is listed as added locally, because live holds no roster to compare against), and it waits for, or is skipped after, a review that was just shown.</li>
     <li><b>No unsynced edits:</b> the dialog is read-only, titled "The live copy has changes this device doesn't", and lists only differences where live holds a value, with Cancel and Take live copy. It compares against the merged state the pull produces, so rows only this device has are kept, as connecting without edits has always behaved. Lines that say "live not set", "live none", "live blank", or "local only" are left out, so defaults this device has and live does not are not listed on every connect. If nothing is left to list, there is no dialog and the device takes live. A device that has never pulled and holds no edits has only the built-in seed, so it also takes live without a dialog.</li>
-    <li><b>The catch-up badge is not a pending-upload count:</b> it compares this device immediately before and after the most recent full pull, then lists the live differences that pull applied. A large number means many displayed differences were received; it does not prove this device’s local schedule was uploaded. The badge is cleared on Disconnect and now says “live differences received” rather than “changes since you were away.”</li>
+    <li><b>The "changes since you were away" badge is not part of connecting:</b> it only reports live changes that arrive after a dropped connection resumes, and it is cleared when the device disconnects. Taking live silently when nothing is pending and reporting the differences afterwards through the badge would be a second route to the same decision.</li>
   </ul></li>
 <li><b>One review dialog, always itemized:</b> every route to the shared copy (the Connect button in the header or Settings, a first-run or saved-credentials connection, and regaining the network with changes pending) opens the same dialog when this device holds changes that are not on live. Nothing is written to the shared copy before it is answered, and no realtime channel is opened before then. That includes writes the preliminary pull would otherwise make on its own (re-applying a local staff deletion, repairing old leave-request data): <code>pushConfig()</code> and <code>pushLeaveRequest()</code> return while <code>_syncReviewPending</code> is set. Differences are grouped into six sections, each with a checkbox: <b>Roster people</b> (people added here, people only on live, people deleted here), <b>Roster details</b> (fields of people on both lists, and their dates off), <b>Settings</b> (coverage minimums, rules and thresholds, default shifts, role lists, app-wide settings), <b>Schedule</b>, <b>Demand</b>, and <b>Leave requests</b>. Inside a section, lines are split into conflicts (live holds a different value) and other local changes, then grouped by category and week, and read "local" (this device) then "live" (the shared copy). A missing value reads <code>blank</code>, <code>none</code>, or <code>not set</code>, never a parenthesised placeholder. Section headers stay pinned while their section scrolls, and the scroll box keeps its own border so the top and bottom edges stay visible.
   <ul>
@@ -30974,8 +30858,8 @@ function renderReadme(){
   </ul></li>
 <li><b>Scheduled days off are read from the schedule, not copied to the roster:</b> a cell coded OFF, R-OFF, a leave code, or an absence code (<code>OFF_FAMILY_ALL</code>) is not copied onto the person's roster entry. Older data may still hold such copies (flagged <code>autoFromSchedule</code>); readers ignore them and they are removed on load and on pull (<code>_stripAutoAvail</code>). The schedule is the only place a scheduled day off is stored.
   <ul>
-    <li><b>What the roster’s Availability column shows:</b> weekly unavailable days and part-day windows; dates entered in Availability; approved leave and Pending requests; and upcoming schedule cells containing R-OFF or a leave code, collapsed into consecutive runs by <code>_scheduledAvailRuns()</code> when an entered range does not already cover the day. A dated item remains through its final day. Plain OFF and absence codes are schedule states, not requested availability, and are not added as schedule-derived notes. The Availability modal lists schedule-derived runs read-only under “In the schedule.” Hard-availability notes consistently read code/state, then weekday/date range, then status/reason — for example <code>OFF Mon</code>, <code>Unavailable Wed 15:00–18:00</code>, <code>OFF 2026-10-20→2026-10-22</code>, and <code>R-OFF 2026-10-20→2026-10-22 (requested, pending approval)</code>. Approved linked requests are not duplicated as Pending.</li>
-    <li><b>Leave requests and dates off warn about each other:</b> submission and date-off entry list overlapping requests, entered availability, and schedule time off. These remain confirmations rather than blocks. Exact-range requests can be linked through Approve &amp; add. Shorter, longer, or partial overlaps stay separate and Pending unless later decided from Leave Requests.</li>
+    <li><b>What the roster's Availability column shows:</b> weekly unavailable days and part-day windows; dates off entered in Availability; approved leave and pending requests; and upcoming schedule cells that are a leave code or R-OFF, as runs of consecutive days ("2026-10-10→2026-10-11 PTO"), for days an entry above does not already list (<code>_scheduledAvailRuns</code>). A dated item is listed until its last day has passed (today still counts). A linked request approved through Specific dates off is no longer listed a second time as Pending, so one range does not produce duplicate OFF and requested-pending text. Removing or materially editing a date-off record safely removes its own unchanged schedule stamp and updates the linked request as described above.</li>
+    <li><b>Leave requests and dates off warn about each other:</b> submitting a request lists the person's overlapping requests, dates entered in Availability, and leave or R-OFF cells in the schedule. Adding a date off lists the person's own pending or approved requests. These checks remain confirmations, not hard blocks. A scheduler can deliberately choose Add only, or use Approve &amp; add for same-person, same-department, exact-range requests; only the latter creates the lifecycle link.</li>
     <li><b>Readers derive "off" from the cell:</b> <code>availForDate(person,iso,dept,name)</code> returns entered entries first and then the cell's code (<code>_scheduledOffCode()</code>), and <code>_offEntries()</code> lists entered entries plus one single-day entry per scheduled cell in a range, leaving out a cell on a day an entered full-day entry already covers. They feed the cell's grey "unavailable" styling and label (<code>cellVisualMarkers</code>), the Checks suggestions (<code>suggestFor</code>), the schedule-exceptions events (<code>getUnavailabilityEvents</code>), the leave-cap count (<code>countAlreadyOffForRule</code>), the leave overlap notes (<code>overlappingAvailDatesInfo</code> and the submit check), and the call-out report. Verified by making the same cell edits through <code>setCell</code> in the earlier build (which copied them) and this one, then comparing markers, events, overlap notes, cap counts, suggestions, and an approve-and-revoke of leave: identical.</li>
     <li><b>Which scheduled days off count toward a leave cap:</b> Settings → Auto-deny has two dropdowns that answer different questions, so they stay separate: <b>Leave requests counted toward cap</b> (which requests count: unavailable + pending + approved, pending + approved, or approved only) and <b>Scheduled days off counted toward cap</b> (which schedule cells count, per department, <code>CFG.autoDenyScheduledOff</code>, shared like the other app-wide settings): "OFF, R-OFF, leave, and absence" (the default, which is what always counted), "R-OFF, leave, and absence", "R-OFF and leave", "Leave codes only", or "None (requests and entered dates only)". One combined list would need every pairing of the two (15 entries) and hide that one is about requests and the other about cells. Leave requests and dates entered in Availability always count. The overlap notes on a leave request are informational and still list every off day.</li>
   </ul></li>
@@ -30987,11 +30871,7 @@ function renderReadme(){
 <li><b>Live-only saved numbers survive an upload:</b> a push chosen in this dialog keeps every saved number or department that exists only on live and lets this device's record win where both hold one (<code>pcvDirectory</code>); positions already merged by timestamp. A push made while already live replaces the map, so a record deleted here stays deleted. Check-ins are snapshotted and restored with the schedule on Cancel and Discard local, which previously left a local-only check-in behind, unsent and never reconciled.</li>
 </ul>
 <p><b>Redeploy safety if the connection key is rotated:</b> no local data is ever at risk — every edit saves to this browser first, regardless of connection state. An already-connected device keeps its own saved key, so redeploying doesn't touch it. If that key is later revoked, sync calls fail, surfaced via the "sync error ⚠" header pill, with a "Reconnect with latest info" link to update just the connection (schedule/roster data untouched).</p>
-<p><b>Assignment propagation choke points:</b> every genuine local <code>hotel_assign</code> save is diffed centrally against the last stored copy, so a new mutator cannot omit persistent person-week protection merely because its own call site forgot a marker. Excel import protects rows before enqueueing. Outsourced-crew enable/disable pushes generated/cleared rows. A live employee-name adoption upserts each renamed row and serially deletes its old live key. Direct assignment-row deletes use the same durable Pending/failure-latch path as upserts.</p>
-<p><b>Failed writes remain unsynced:</b> each outbound write sets the durable pending flag before network I/O. A failed push latches <code>hotel_push_failed</code>; each locally changed person-week is also retained in <code>hotel_dirty_assign_rows</code>. A later unrelated successful write cannot clear that general failure state or let a pull/realtime event overwrite a protected row. <code>pushWeekAll()</code> attempts every selected person-week, reports all failed names as one batch error, and leaves the device Unsynced. Review &amp; upload reads assignments fresh before deciding a protected row is unchanged; only a fully successful reviewed Schedule operation clears sent or identical protected rows. Realtime schedule-channel loss is tracked separately: it does not invent a pending local edit, but it keeps the header Unsynced until a confirmed <code>SUBSCRIBED</code> event, after which reconnect performs a full pull.</p>
-<p><b>Diagnosing a missing schedule value:</b> the roster controls which employee rows render; assignments control their cells. A roster mismatch can hide every assignment for a missing employee, but cannot explain blank cells in a row already visible. <code>setCell()</code> always saves locally, while <code>pushCell()</code> returns without a server write when <code>DB</code> is absent; an edit made while the header says Local therefore remains on that device until connection review uploads Schedule. The editor now also says “Saved locally — connect to share this schedule change.” If a later edit to the same cell propagates in both directions, realtime transport is working at that later moment; the earlier value was either local/uncommitted or missed during a channel outage. A successful channel reconnect performs a full pull.</p>
-<p><b>What a browser with stored v2.3 schedule data sees:</b> on its first v2.4-or-later load, the app protects every existing person-week row and briefly shows “Existing v2.3 schedule is protected.” Before connection the header still says Local. After Connect, the header says Reviewing while the normal local-versus-live comparison opens. Settings shows “V2.3 schedule review required” and keeps Review &amp; upload available. A fully successful reviewed Schedule upload clears the notice, protected-row registry entries, Pending state, and failure latch; intentionally taking/discarding the live Schedule clears them too. Cancel, a failed row, or uploading only a non-Schedule section leaves the notice and Unsynced state for a retry. A browser whose stored config was never version 2.3 sees none of this. The internal <code>hotel_v23_integrity_migrated</code> marker is an invisible one-time history bit; it has no UI effect, needs no cleanup, and no later app version is required to remove it.</p>
-<p><b>Sync trace for different “Last edited” times:</b> the footer is not a shared live timestamp. It is built from this browser profile's own <code>hotel_touched</code> record, so each device reports the most recent schedule/settings save that particular browser observed. Edna's DT HSK footer showing 10/13/2026 9:47:40 AM while the other v2.3 devices show 9/15/2026 7:54:24 AM is therefore consistent with Edna's browser having made or received later DT HSK saves while those browsers retained an older local trace. The header/badge and row comparison, not the footer, determine whether data is currently synchronized.</p>
+<p><b>"Upload now" and pending-changes accuracy:</b> a realtime channel drop (CHANNEL_ERROR/TIMED_OUT/CLOSED on the assignments/demand/leave-requests subscription) has its own reporting path, separate from actual PUSH failures. A channel drop only means this device has stopped RECEIVING other devices' updates — it says nothing about whether this device's OWN edits are reaching the live database (a separate call). Since a brief drop is ordinary and usually self-healing (wifi hiccup, backgrounded tab, laptop waking), keeping the two signals separate means "not currently receiving live updates" shows correctly without affecting the pending-changes signal, which stays accurate to whether a real edit failed to save.</p>
 <p><b>Redo button flicker — known limitation:</b> every realtime-triggered save (assignments/demand/leave-requests/check-ins) and the reconnect-time data pull are wrapped so a remote change is never mistaken for a trackable local edit — the cause of this flicker. Check-in data doesn't yet participate in undo/redo tracking, so its own guard alone wouldn't explain a currently-visible flicker; every save-triggering path has been traced with no unguarded one found. If still visible, note the specific conditions (same week being edited elsewhere, right after reconnect, or fully offline) to help narrow the trigger.</p>
 </details>
 
@@ -31968,7 +31848,7 @@ truncate table public.snapshots;
 <li><b>Every change is validated headlessly</b> (the file must boot and parse without error) before shipping.</li>
 <li><b>One comment syntax per language, never mixed:</b> CSS comments use <code>/* ... */</code> only (never <code>//</code> or HTML's <code>&lt;!-- --&gt;</code>) inside a &lt;style&gt; block; HTML comments use <code>&lt;!-- --&gt;</code> only; JS comments use <code>//</code> or <code>/* ... */</code>. Before shipping any CSS change, run a real parser against the extracted stylesheet and confirm zero parse errors.</li>
 <li><b>Avoid relying on flexbox <code>gap</code> for spacing between two border-less/padding-less elements</b> (e.g. a plain dot + a bare text span) — <code>gap</code> on a flex container is unsupported in some older embedded/webview browser engines still used to view this app, and is silently ignored (not an error) rather than failing loudly, leaving zero visible spacing. This is most noticeable exactly where there's no incidental padding/border/margin already providing some separation — buttons with their own padding can mask a non-functional <code>gap</code>, but a bare dot next to bare text cannot. Use the universal <code>.parent&gt;*:not(:first-child){margin-left:Npx}</code> pattern instead for any such pairing (see <code>#syncStatus</code>'s own <code>.status</code> rule for the reference fix). As a belt-and-suspenders backstop on top of that CSS rule, <code>#syncStatus</code> also leads its text span's own content with a non-collapsible <code>&amp;nbsp;</code> (a plain space would be silently collapsed away as flex whitespace and wouldn't help) so the dot and text can never render touching even if the margin rule is ever accidentally removed or overridden.</li>
-<li><b>Comments state facts and reasoning only</b> — avoid session history, status declarations, quoted complaints, and claims about when a fix was found. Document the current behavior and its reason as if the code were being read for the first time.</li>
+<li><b>Comments state facts and reasoning only</b> — never narrative/status framing (e.g. "this round," "FOUND AND FIXED," "confirmed via direct X," a quoted complaint followed by a fix). Write what the code does and why, as if documenting it for the first time, not as a log of what changed or when. This keeps comments useful and readable as the file grows across many editing sessions, rather than accumulating session-by-session narration.</li>
 <li><b>Borders &amp; corners:</b> data tables use 8px radius with border-collapse:separate; border-spacing:0. Cards use 10px radius.</li>
 <li><b>Field heights</b> are uniform (30px) across inputs, selects, and buttons in a row.</li>
 <li><b>Schedule row height stays standardized</b> across every role section.</li>
@@ -31978,12 +31858,11 @@ truncate table public.snapshots;
 <li><b>Sticky header</b> uses position:sticky; never put overflow:hidden on the table itself.</li>
 <li><b>Sticky-cell borders:</b> keep border-collapse:separate, draw the sticky edge with box-shadow only, never a real border on that edge.</li>
 <li><b>Punctuation:</b> em-dash (—) with spaces for asides; a colon only to introduce a value inline; parentheses for supplementary notes; sentence case for all UI text; no trailing period on a Checks-panel flag fragment.</li>
-<li><b>Every delivered file must pass a headless-boot + static-scan check before shipping</b> — parse JavaScript and CSS with real parsers; boot in a real headless browser; scan style blocks for non-CSS comment syntax and HTML comment regions for non-HTML comment syntax; reject session-history wording; detect unescaped names in inline handlers, literal-array prefix collisions, unexpected control characters, and duplicate top-level functions. A mechanical check enforces these rules rather than relying on memory.</li>
+<li><b>Every delivered file must pass a headless-boot + static-scan check before shipping</b> — this app is booted in a real headless browser and its script/style blocks are parsed with real parsers, catching syntax errors, mismatched comment styles inside &lt;style&gt; blocks, unescaped names inside inline <code>onclick</code> handlers, prefix-collision in literal-string arrays, and duplicate top-level function declarations — each a real bug class possible in this file. This same static scan also checks the two comment-formatting conventions above mechanically, not just by intention: (1) scans every &lt;style&gt; block for a stray <code>//</code> or <code>&lt;!--</code> and every HTML comment region for a stray <code>/*</code>, flagging any mismatched syntax before it can corrupt a stretch of real markup; (2) scans every comment for a short, standing list of banned narrative phrases ("this round," "FOUND AND FIXED," "CONFIRMED," "ROOT CAUSE," a quoted user complaint, etc.), flagging any match for rewording before shipping. A convention stated only in this Readme relies on being remembered and manually re-checked every time — an easy thing to skip under real editing pressure across many sessions; a mechanical scan catches a violation regardless of whether it was remembered in the moment.</li>
 <li><b>In a <code>table-layout:fixed</code> table, hiding a <code>&lt;td&gt;</code> via <code>display:none</code> does not release its governing <code>&lt;col&gt;</code> element's own reserved width back to the table's layout budget</b> — the hidden column's <code>&lt;col&gt;</code> must also have its own width explicitly set to 0.</li>
-<li><b>Two paired-date policies only:</b> every pair declares its peer/edge/policy and is handled by the one delegated <code>focusin</code>/<code>focusout</code> path through <code>_dateRangeBlur()</code>. <code>auto</code> copies the complete edited ISO date to the untouched boundary when needed; <code>popup</code> restores the field just left and explains why. Neither runs while the field is still being typed. Both fill a blank partner for a one-day range. The paired fields are Excel import, Draft visibility, Paycom schedule export, Paycom report import, both actual-hours filters, Specific dates off, Cost center, Leave Requests, Time-off &amp; attendance, and Clear date range. Specific dates off alone uses <code>popup</code>; every other pair uses <code>auto</code>.</li>
-<li><b>Single date fields do not mutate another field:</b> per-sheet Excel dates, both Go-to-date dialogs, auto-deny preview, hire date, birthday, inactive-since, shift-bid date, and copy-week source remain independent. A static scan inventories every <code>input[type=date]</code> and rejects any new paired date that lacks the shared declarative policy.</li>
+<li><b>Specific dates off validate after date editing finishes:</b> a completed From or To fills its blank partner for the common one-day case. If To is earlier than From, leaving the To field shows the correction popup and restores its previous valid value (or the start date when none exists). Add, Done, and Enter keep the same validation as a backstop. No range popup fires mid-typing.</li>
 <li><b>Scroll areas keep their place:</b> <code>renderSettings()</code> records the horizontal and vertical scroll of every table scroller in Settings and of the window, and restores them right after the re-render and again next frame, so adding a date off or closing any Settings modal leaves the roster where it was (the Availability modal's own copy of this logic was removed). Checked with real wheel scrolling and real clicks at three viewport widths: positions identical before and after.</li>
-<li><b>Scrollbar borders:</b> mouse/trackpad scrollbars are 15px with arrow buttons and a grey thumb. The vertical track and arrow buttons draw one inset 1px separator on their left edge; the horizontal track and arrow buttons draw one on their top edge. Both use <code>var(--line)</code>, the table-border source of truth, and each line stops at its scrollbar's visible width/height. The bottom-right corner keeps the opaque scrollbar background but has no shadow and no border, so the two separators do not intersect into a darker square. This applies to the schedule grid and every Settings-type <code>.tblwrap</code>. The thumb’s transparent 3px border leaves its own axis separator visible. These WebKit selectors apply in Chrome, Edge, and Safari; Firefox and touch overlay scrollbars retain their platform rendering.</li>
+<li><b>Scrollbar borders:</b> on mouse and trackpad devices every scrollbar is restyled to match the native one (15px, arrow buttons, grey thumb) with a 1px line in the track, on the left of a vertical bar and the top of a horizontal one, so the last row or column never runs straight into the scrollbar. The line is drawn in the track, above opaque cells and header backgrounds. The thumb's 3px border is transparent: with an opaque border the thumb painted over the line, so the line disappeared wherever the thumb sat (measured by sampling the pixels of the line column or row under the thumb, at the start, middle, and end of the scroll; the line is now there for every thumb pixel). It needs <code>::-webkit-scrollbar</code> (Chrome, Edge, Safari); Firefox allows only a colour, so it keeps its own scrollbar. Touch devices keep their overlay scrollbars.</li>
 <li><b>Button wording audit:</b> hand-built modals use the action's name in one to three words ("Apply & close", "Add to roster", "Go to date", "Copy week", "Add range", "Skip all", "Mark inactive", "Clear cells", "Apply deduction", "Take live copy"), and a count belongs in the label only as a number ("Import 12 days"). Bulk checkbox controls read "Select all" and "Deselect all" everywhere, and "Restore selected", matching "Delete selected" and "Merge selected". "Back" is for a step inside a flow, and "Cancel" for leaving the flow. A dialog that can throw something away names what it discards ("Discard local"). In the wizard's close-time review, ticks mean "keep this change" and unticked rows are reverted, so the button is "Apply & close": it applies whatever the ticks say, including reverting everything when all are cleared. The status words in the header are Local, Reviewing, and Live; there is no separate "connecting" word, because it flashed before Reviewing and read as an error.</li>
 <li><b>Confirm buttons name the action:</b> <code>uiConfirm(msg, okLabel, cancelLabel)</code> takes the label of what the button does ("Delete", "Restore", "Continue", "Leave out"), one to three words. The cancel button stays "Cancel" unless the question is a real choice between two actions ("Map to them" and "Add new"). Cancel is white with grey text and is what Escape and a click outside select; the action button is green and is what Enter selects. A plain "OK" is for alerts only. A hand-built modal that offers a step back inside itself uses "Back" and keeps "Cancel" for leaving the whole flow.</li>
 <li><b>Keyboard floor for every <code>.modalbg</code>:</b> one document-level handler gives each modal Escape (close), Tab (stay inside), and Enter (click the primary <code>.brand</code> button when focus is not on a control; nothing when there is none, so Enter can never trigger a destructive default). A modal that sets <code>data-own-keys="1"</code> keeps its own Enter and Escape, one registered in <code>MODAL_KEY_ACTIONS</code> uses the registry, and one wired through <code>_wireModalKeys()</code> also traps Tab itself. "Open" is judged by computed style, because a static modal such as <code>#shiftModal</code> has no inline display while closed. Only the topmost open modal reacts, so a confirmation over the Excel wizard no longer closes the wizard as well.</li>
@@ -32100,7 +31979,7 @@ async function bulkRemoveSelected(){
     const st=D.staff.find(s=>s.n===nm);if(!st)continue;
     st.employed=false;st.inactiveSince=weekKey(new Date());
     const wks=ASSIGN[SETDEPT]||{};const affected=[];
-    Object.keys(wks).forEach(wk=>{if(wk>=curWk&&wks[wk]&&wks[wk][nm]!=null&&Object.keys(wks[wk][nm]).length){wks[wk][nm]={};_markAssignDirty(SETDEPT,wk,nm);affected.push(wk);}});
+    Object.keys(wks).forEach(wk=>{if(wk>=curWk&&wks[wk]&&wks[wk][nm]!=null&&Object.keys(wks[wk][nm]).length){wks[wk][nm]={};affected.push(wk);}});
     if(DB)affected.forEach(wk=>pushWeekAll(SETDEPT,wk));
   }
   save("hotel_assign",ASSIGN);save("hotel_cfg",CFG);
@@ -32142,7 +32021,7 @@ async function bulkPermanentlyDeleteSelected(){
   }
   save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_actuald",ACTUALD);save("hotel_floors",FLOORS);save("hotel_accruals",ACCRUALS);save("hotel_checkins",CHECKINS);
   if(DB){
-    for(const{wk,name}of remoteAssignDeletes)await _deleteAssignmentRowRemote(dept,wk,name,"permanently delete selected schedule row");
+    for(const{wk,name}of remoteAssignDeletes){try{await DB.from("assignments").delete().eq("dept",dept).eq("week",wk).eq("staff",name);}catch(e){console.warn("remote assignment delete skipped (non-fatal)",e);}}
     for(const{wk,name}of remoteCheckinDeletes){try{await DB.from("checkins").delete().eq("dept",dept).eq("week",wk).eq("staff",name);}catch(e){console.warn("remote checkin delete skipped (non-fatal)",e);}}
   }
   clearRosterSel();
@@ -32496,7 +32375,7 @@ function _renderSettingsInner(){
     <!-- Same defensive inline-color fix as the header Connect modal's own equivalent fields (see that modal's own comment
        for the full reasoning: an explicit inline style is guaranteed to win over any class-selector-based rule,
        sidestepping whatever the underlying cause of the class-only approach not visibly working turns out to be). -->
-  <div class="cfgrow"><input class="sfield small" style="min-width:260px;color:#6b7a8d" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield small" style="min-width:220px;color:#6b7a8d" id="supaKey2" placeholder="Anon public key" value="${key}">${DB?'<button class="btn30" onclick="disconnect()">Disconnect</button>':'<button class="brand btn30" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button class="btn30" onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button class="btn30" onclick="supaLogin()">🔑 Sign in</button>'} ${_v23ReviewRequired?'<span class="pill" style="background:#fde9c8;color:#7a4b00">V2.3 schedule review required</span>':''} ${(DB&&(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired))?'<button class="btn30" onclick="reviewAndUpload()" title="Compares this device with the live copy and shows the same review as connecting. Nothing is sent until you choose.">⬆ Review &amp; upload…</button>':''}</div>
+  <div class="cfgrow"><input class="sfield small" style="min-width:260px;color:#6b7a8d" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield small" style="min-width:220px;color:#6b7a8d" id="supaKey2" placeholder="Anon public key" value="${key}">${DB?'<button class="btn30" onclick="disconnect()">Disconnect</button>':'<button class="brand btn30" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button class="btn30" onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button class="btn30" onclick="supaLogin()">🔑 Sign in</button>'} ${(DB&&PENDING)?'<button class="btn30" onclick="reviewAndUpload()" title="Compares this device with the live copy and shows the same review as connecting. Nothing is sent until you choose.">⬆ Review &amp; upload…</button>':''}</div>
   <!-- Compare moved into Backup & versions, with the other read-only "what does the other copy hold" tools. -->
     <!-- The previous markup here had a genuinely UNCLOSED <div class="cfgrow"> around the old standalone "Schedule
        exceptions report" button — every element that followed was silently nested INSIDE that same flex-row div
@@ -34562,7 +34441,7 @@ async function removeStaffRow(i){
   Object.keys(_wks).forEach(wk=>{
     if(wk>=_curWk&&_wks[wk]&&_wks[wk][st.n]!=null&&Object.keys(_wks[wk][st.n]).length){
       _archive[wk]=JSON.parse(JSON.stringify(_wks[wk][st.n]));
-      _wks[wk][st.n]={};_markAssignDirty(SETDEPT,wk,st.n);_affectedWks.push(wk);
+      _wks[wk][st.n]={};_affectedWks.push(wk);
     }
   });
   archiveAssignmentsFor(SETDEPT,st.n,_archive);
@@ -34636,7 +34515,7 @@ async function permanentlyDeleteStaff(name){
   Object.keys(CHECKINS[dept]||{}).forEach(wk=>{const wkObj=CHECKINS[dept][wk];if(wkObj&&wkObj[name]!=null&&wk>=_cutWeek){delete wkObj[name];remoteCheckinDeletes.push(wk);}});
   save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_actuald",ACTUALD);save("hotel_floors",FLOORS);save("hotel_accruals",ACCRUALS);save("hotel_checkins",CHECKINS);
   if(DB){
-    for(const wk of remoteAssignDeletes)await _deleteAssignmentRowRemote(dept,wk,name,"permanently delete schedule row");
+    for(const wk of remoteAssignDeletes){try{await DB.from("assignments").delete().eq("dept",dept).eq("week",wk).eq("staff",name);}catch(e){console.warn("remote assignment delete skipped (non-fatal)",e);}}
     for(const wk of remoteCheckinDeletes){try{await DB.from("checkins").delete().eq("dept",dept).eq("week",wk).eq("staff",name);}catch(e){console.warn("remote checkin delete skipped (non-fatal)",e);}}
   }
   renderSettings();
@@ -35103,11 +34982,12 @@ function staleActualSortArrow(which,key){
 // — the two independent date-range filters "make them filterable by date from and to date pickers", one pair
 // of ids per table.
 //
-// Both pairs use the shared auto policy after focus leaves the edited field. While typing, no partner field moves;
-// after editing, an inverted range copies the complete edited ISO date to the untouched boundary. The onchange
-// handler below remains only a debounced results refresh and never mutates either date.
+// The auto-shift-if-inverted clamp per the same explicit correction as the Schedule Exceptions Report's own
+// matching functions — see schedExcRangeChanged()'s own comment for the full "a date picker's onchange fires
+// too often/too early for a silent sibling-field snap to feel right" reasoning. Each field now only ever holds
+// exactly what the user set; an inverted range simply yields zero rows, harmlessly.
 //
-// This handler previously called _renderStaleActualTables() SYNCHRONOUSLY,
+// Per direct, explicit report: This handler previously called _renderStaleActualTables() SYNCHRONOUSLY,
 // directly inside the date <input>'s own onchange — and a native browser date-picker's onchange can genuinely fire
 // MULTIPLE times in quick succession while a person is still actively interacting with it (e.g. Once per completed
 // day/month/year segment, not only once at the very end) — each firing triggering a full synchronous rebuild of
@@ -35185,15 +35065,15 @@ function _populateStaleActualHoursReview(){
     <div class="small muted" style="margin-bottom:8px">Compares every per-day actual-hours entry (the <span style="display:inline-block;transform:scaleX(-1)">✎</span> override) against what the CURRENT schedule would compute fresh. Only days that ALREADY have a stored override are ever checked — a genuinely unassigned day with no override recorded has nothing to flag and won't appear here (see the Time-off &amp; attendance report for those instead). A row here does NOT mean the stored number is wrong — it may be entirely accurate (e.g. a real, unscheduled early departure) — it only means it differs from the auto-estimate. Use <b>Restore to scheduled</b> to discard the override, or <b>Keep as entered</b> to confirm it's correct and stop flagging it. A stored 0 tied to an Off/Leave day is harmless right now (Off/Leave days are always skipped when totaling hours) but is still shown since it would silently resurface if that day is ever changed back to a working day.</div>
     <h3 style="margin-bottom:4px">Differs from current estimate (${flagged.length})</h3>
     <div class="mrow" style="align-items:center;margin-bottom:4px">
-      <label class="small">From <input type="date" required class="sfield small" id="staleFlaggedFrom" value="${_flaggedRange.from}" data-range-peer="staleFlaggedTo" data-range-edge="from" data-range-policy="auto" onchange="staleActualRangeChanged('staleFlagged','from')"></label>
-      <label class="small">To <input type="date" required class="sfield small" id="staleFlaggedTo" value="${_flaggedRange.to}" data-range-peer="staleFlaggedFrom" data-range-edge="to" data-range-policy="auto" onchange="staleActualRangeChanged('staleFlagged','to')"></label>
+      <label class="small">From <input type="date" required class="sfield small" id="staleFlaggedFrom" value="${_flaggedRange.from}" onchange="staleActualRangeChanged('staleFlagged','from')"></label>
+      <label class="small">To <input type="date" required class="sfield small" id="staleFlaggedTo" value="${_flaggedRange.to}" onchange="staleActualRangeChanged('staleFlagged','to')"></label>
     </div>
     <div class="tblwrap" style="max-height:32vh;overflow:auto;border:1px solid var(--line);border-radius:6px;min-width:0" id="staleActualFlaggedWrap"></div>
     <div class="mrow" style="margin:6px 0" id="staleFlaggedBulkActions"></div>
     <h3 style="margin-bottom:4px">Orphaned — tied to a day that's now Off/Leave/blank (${orphaned.length})</h3>
     <div class="mrow" style="align-items:center;margin-bottom:4px">
-      <label class="small">From <input type="date" required class="sfield small" id="staleOrphanedFrom" value="${_orphanedRange.from}" data-range-peer="staleOrphanedTo" data-range-edge="from" data-range-policy="auto" onchange="staleActualRangeChanged('staleOrphaned','from')"></label>
-      <label class="small">To <input type="date" required class="sfield small" id="staleOrphanedTo" value="${_orphanedRange.to}" data-range-peer="staleOrphanedFrom" data-range-edge="to" data-range-policy="auto" onchange="staleActualRangeChanged('staleOrphaned','to')"></label>
+      <label class="small">From <input type="date" required class="sfield small" id="staleOrphanedFrom" value="${_orphanedRange.from}" onchange="staleActualRangeChanged('staleOrphaned','from')"></label>
+      <label class="small">To <input type="date" required class="sfield small" id="staleOrphanedTo" value="${_orphanedRange.to}" onchange="staleActualRangeChanged('staleOrphaned','to')"></label>
     </div>
     <div class="tblwrap" style="max-height:24vh;overflow:auto;border:1px solid var(--line);border-radius:6px;min-width:0" id="staleActualOrphanedWrap"></div>
     <div class="mrow" style="margin:6px 0" id="staleOrphanedBulkActions"></div>
@@ -35364,44 +35244,49 @@ function attendancePunchInfoFor(dept,wk,name,day){
   return null;
 }
 function todayISO(){const d=new Date();return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");} // local date, matching this app's own established "never use toISOString() for a date key" convention
+// Cause, a native <input type="date">'s YEAR segment fires its own "change" event the instant it looks
+// numerically complete to the browser — which, while a person is still in the middle of typing a 4-digit year
+// (e.g. Has typed "2026" but the browser momentarily reads only the first 1-2 digits as already "complete" between
+// keystrokes, or the field is tabbed out of a split-second early), can commit a transient, truncated value like
+// "0002" as this field's OWN .value — and THAT premature value is exactly what the From→To auto-fill handler (see
+// lrFrom/sdDate's own onchange, just below) copies verbatim into the paired To field. Once copied, the existing
+// "only fill if blank" guard then permanently protects that bad value from ever being corrected later, even once
+// the From field itself finishes updating to the real, complete date the person actually intended. A plain regex
+// alone can't catch this (a truncated year is still exactly 4 digits, just wrong ones, e.g. "0002") — this instead
+// rejects any year outside a genuinely plausible real-world range for a leave/time-off date.
 function isPlausibleFullDate(v){
-  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v||"");if(!m)return false;
-  const year=+m[1];return year>=2000&&year<=2100;
+  const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(v||"");
+  if(!m)return false;
+  const yr=+m[1];
+  return yr>=2000&&yr<=2100; // a truncated/in-progress year (e.g. "0002") always falls well outside this, a genuine one never does
 }
-// Date-range inputs have two mutation policies, both applied only on blur so a native date field can finish editing:
-// "auto" moves the untouched boundary to keep the range valid; "popup" restores the field just left and explains
-// the correction. Both policies fill a blank partner for a one-day range. No onchange handler mutates another date.
-let _dateRangeTouchSeq=0;
-function _dateRangeFocus(input){if(input&&input.dataset.rangeEditing!=="1"){input.dataset.rangePrev=input.value||"";input.dataset.rangeTouched=String(++_dateRangeTouchSeq);input.dataset.rangeEditing="1";}}
-function _dateRangeBlur(fromId,toId,editedIsFrom,policy){
-  const from=el(fromId),to=el(toId);if(!from||!to)return;
-  const edited=editedIsFrom?from:to,other=editedIsFrom?to:from,prev=edited.dataset.rangePrev||"";
-  delete edited.dataset.rangeEditing;
-  if(!isPlausibleFullDate(edited.value))return;
-  if(!isPlausibleFullDate(other.value)){other.value=edited.value;other.dispatchEvent(new Event("change",{bubbles:true}));return;}
-  if(from.value<=to.value)return;
-  if(policy==="auto"){
-    other.value=edited.value;other.dispatchEvent(new Event("change",{bubbles:true}));
-    return;
+// EXTRACTED and EXTENDED "for leave request date range input fields, if from date changed to after the to date,
+// make to date autoshift with it since anyway to date can't be after from date. Same with if to date is moved to
+// before the from date". Previously the inline onchange handlers here only ever auto-FILLED an empty/implausible To
+// (or From) from whichever field was touched first — a genuine, separate convenience for single-day requests
+// — but never actually CLAMPED an already-valid range once BOTH fields held real dates. If a worker later
+// changed From to a date past an already-set To (or vice versa), the form silently allowed a logically-inverted
+// Range (From after To) with no correction and no warning. By adding the same auto-shift-if-inverted clamp
+// already established for the Schedule Exceptions Report's own From/To pair (see
+// schedExcRangeChanged()) — now applied here too, alongside (not replacing) the existing
+// "fill the other field if it's still empty" convenience for the single-day case.
+// Shared "keep a From/To date-range pair valid" auto-correction — reused by every From/To date-range pair in
+// this app (each previously carried its own near-identical copy). Told which field was JUST edited via
+// `editedIsFrom`: the untouched field is filled in if still empty (a convenience for the common single-day
+// case), and shifted to match whenever the resulting range would otherwise be inverted (from > to).
+// isPlausibleFullDate() guards against reacting to a still-mid-typing partial date.
+function _syncDateRangePair(fromId,toId,editedIsFrom){
+  const f=el(fromId),t=el(toId);
+  if(!f||!t)return;
+  const editedEl=editedIsFrom?f:t,otherEl=editedIsFrom?t:f;
+  if(isPlausibleFullDate(editedEl.value)&&(!otherEl.value||!isPlausibleFullDate(otherEl.value))){otherEl.value=editedEl.value;return;}
+  if(isPlausibleFullDate(f.value)&&isPlausibleFullDate(t.value)){
+    if(editedIsFrom&&f.value>t.value)t.value=f.value;
+    else if(!editedIsFrom&&t.value<f.value)f.value=t.value;
   }
-  let back=prev;
-  if(!isPlausibleFullDate(back)||(editedIsFrom?back>to.value:back<from.value))back=editedIsFrom?to.value:from.value;
-  edited.value=back;
-  const label=editedIsFrom?"start":"end";
-  const shown=new Date(back+"T00:00:00").toLocaleDateString();
-  edited.dispatchEvent(new Event("change",{bubbles:true}));
-  uiAlert("The "+label+" date would make the range run backwards. It was changed back to "+shown+".");
 }
-function _dateRangeCommit(fromId,toId,policy){
-  const from=el(fromId),to=el(toId);if(!from||!to)return false;
-  if(!isPlausibleFullDate(from.value)&&!isPlausibleFullDate(to.value))return false;
-  if(!isPlausibleFullDate(from.value)){from.value=to.value;from.dispatchEvent(new Event("change",{bubbles:true}));}
-  if(!isPlausibleFullDate(to.value)){to.value=from.value;to.dispatchEvent(new Event("change",{bubbles:true}));}
-  if(from.value>to.value){const fromLast=+(from.dataset.rangeTouched||0),toLast=+(to.dataset.rangeTouched||0);_dateRangeBlur(fromId,toId,fromLast>=toLast,policy);}
-  return isPlausibleFullDate(from.value)&&isPlausibleFullDate(to.value)&&from.value<=to.value;
-}
-document.addEventListener("focusin",e=>{const x=e.target;if(x&&x.matches&&x.matches('input[type="date"][data-range-peer]'))_dateRangeFocus(x);});
-document.addEventListener("focusout",e=>{const x=e.target;if(!x||!x.matches||!x.matches('input[type="date"][data-range-peer]'))return;_dateRangeBlur(x.dataset.rangeEdge==="from"?x.id:x.dataset.rangePeer,x.dataset.rangeEdge==="from"?x.dataset.rangePeer:x.id,x.dataset.rangeEdge==="from",x.dataset.rangePolicy||"auto");});
+function lrFromChanged(){_syncDateRangePair("lrFrom","lrTo",true);}
+function lrToChanged(){_syncDateRangePair("lrFrom","lrTo",false);}
 // An overnight shift (e.g. 22:30-7:00) should remain clock-in/out-able from the following calendar day for as
 // long as it's still genuinely running or awaiting a clock-out. Every place that decides whether to show the
 // Clock in/out controls at all (the render()
@@ -35893,9 +35778,8 @@ function _scheduledAvailRuns(dept,name,isCovered){
   });
   return runs;
 }
-function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],weekly=[];
-  // Hard-availability notes use one order everywhere: code/state first, then day or date range, then status/reason.
-  order.forEach(d=>{const a=(st.avail||{})[d];if(!a)return;if(a.off)weekly.push("OFF "+d+(a.reason&&a.reason.toLowerCase()!=="off"?parenWrap(a.reason):""));else if(a.from||a.to)weekly.push("Unavailable "+d+" "+(a.from||"00:00")+"–"+(a.to||"23:59")+(a.reason?" "+String(a.reason).replace(/\s+/g," ").trim():""));});
+function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"];const weekly=[];
+  order.forEach(d=>{const a=(st.avail||{})[d];if(!a)return;if(a.off)weekly.push(d+" OFF"+(a.reason&&a.reason.toLowerCase()!=="off"?parenWrap(a.reason):""));else if(a.from||a.to)weekly.push(d+" "+(a.from||"00:00")+"–"+(a.to||"23:59")+(a.reason?" "+String(a.reason).replace(/\s+/g," ").trim():""));});
   // Shift PREFERENCES (soft, non-blocking — e.g. "TTH 12-8pm") are shown separately from hard
   // availability/unavailability, clearly labeled "pref" so it's never confused with a real constraint — confirmed
   // with hotel these never block scheduling.
@@ -35903,7 +35787,7 @@ function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],w
   const dated=[];
   // A dated entry is listed until its last day has passed (the same rule that removes it on the next load).
   const _today=todayISO(),_live=(to,from)=>((to||from||"9999-12-31")>=_today);
-  const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];if(_isAutoAvail(a)||!_live(a.to,a.from))return;const range=a.part?(a.from+" "+(a.startTime||"00:00")+"→"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"→"+a.to:""));dated.push({from:a.from||k,txt:(a.code||"OFF")+" "+range+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":"")});});
+  const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];if(_isAutoAvail(a)||!_live(a.to,a.from))return;const _lbl=a.part?(a.from+" "+(a.startTime||"00:00")+"→"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"→"+a.to:""));dated.push({from:a.from||k,txt:_lbl+" "+(a.code||"OFF")+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":"")});});
   const lv=(typeof LEAVES!=="undefined"&&LEAVES[SETDEPT]||[]).filter(r=>r.name===st.n);lv.filter(r=>_live(r.to,r.from)).forEach(r=>dated.push({from:r.from,txt:r.code+" "+r.from+"→"+r.to}));
   // Pending leave requests (submitted via the Leave Requests tab, not yet approved) — auto-linked here for
   // visibility
@@ -35913,7 +35797,7 @@ function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],w
   Object.values(sd).forEach(a=>{if(a&&a.from&&!_isAutoAvail(a))_ranges.push([a.from,a.to||a.from]);});
   lv.forEach(r=>_ranges.push([r.from,r.to||r.from]));
   Object.values(LEAVE_REQUESTS).filter(r=>r.status==="pending"&&r.dept===SETDEPT&&r.name===st.n).forEach(r=>_ranges.push([r.from,r.to||r.from]));
-  _scheduledAvailRuns(SETDEPT,st.n,iso=>_ranges.some(r=>iso>=r[0]&&iso<=r[1])).forEach(r=>dated.push({from:r.from,txt:r.code+" "+r.from+(r.to!==r.from?"→"+r.to:"")}));
+  _scheduledAvailRuns(SETDEPT,st.n,iso=>_ranges.some(r=>iso>=r[0]&&iso<=r[1])).forEach(r=>dated.push({from:r.from,txt:r.from+(r.to!==r.from?"→"+r.to:"")+" "+r.code}));
   dated.sort((a,b)=>(a.from<b.from?-1:a.from>b.from?1:0));
   return weekly.concat(dated.map(x=>x.txt)).join("; ");} // NOTE: soft shift PREFERENCES (st.prefer, e.g. "TTH 12-8pm") are intentionally NOT included here — this column is hard Availability only; preferences are shown separately (see prefSummary) so the two are never visually conflated.
 // — st.prefer[day] can now hold an object ({type:"shift"|"off",from,to}, see normalizePreferenceEntry()'s own
@@ -36018,9 +35902,10 @@ function editAvail(i){const st=CFG[SETDEPT].staff[i];AV={name:st.n,editingSpecKe
     <div id="prefBody"></div>
     <hr><div class="cfgrow"><b>Specific dates off</b> <span class="small muted">Single day, range, or part-day &mdash; also stamps the schedule</span></div>
     <div class="mrow"><select class="sfield" id="sdType"><option>OFF</option><option>R-OFF</option><option>PTO</option><option>LOA</option><option>LWOP</option><option>FMLA</option><option>E-LEAVE</option><option>BDH</option><option>AB</option><option>Other&hellip;</option></select><input class="sfield" id="sdTypeOther" placeholder="Code" style="width:70px;display:none">
-            <!-- Uses the shared popup date-range policy: validation runs on blur, never while a native date segment is still being typed. -->
-      <label class="small">From <input type="date" required class="sfield" id="sdDate" data-range-peer="sdTo" data-range-edge="from" data-range-policy="popup"></label>
-      <label class="small">To <input type="date" required class="sfield" id="sdTo" data-range-peer="sdDate" data-range-edge="to" data-range-policy="popup"></label>
+            <!-- A completed date fills its blank partner for a one-day entry. To-date order is checked on blur, after
+           native date editing finishes; Add, Done, and Enter keep the same check as a backstop. -->
+      <label class="small">From <input type="date" required class="sfield" id="sdDate" onchange="sdDatesChanged('from')"></label>
+      <label class="small">To <input type="date" required class="sfield" id="sdTo" onfocus="this.dataset.prev=this.value" onchange="sdDatesChanged('to')" onblur="sdEndDateBlurred()"></label>
       <input class="sfield" id="sdReason" placeholder="Reason" style="width:120px"><button class="mini" id="sdAddBtn" onclick="addSpecDate()">Add</button></div>
         <!-- See timeSelectHTML()'s own extensive comment for the full "reverted back to a native <input type=\"time\">, per
          direct feedback that the user prefers this Availability picker's own native look over the custom 3-select widget"
@@ -36276,11 +36161,7 @@ async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);
       const pick=await uiDialog(msg,["Cancel","Add only","Approve & add"],false,"","Cancel","Approve & add");
       if(pick==="Cancel")return false;
       if(pick==="Approve & add")approvePending=sameRangeCandidates;
-    }else{
-      const partialPending=displayedReqs.filter(r=>r.status==="pending"&&(r.from!==dt||r.to!==to));
-      const partialNote=partialPending.length?("\n\n"+partialPending.length+" pending leave request"+(partialPending.length===1?"":"s")+" overlap only part of these dates. Add anyway will leave "+(partialPending.length===1?"that request":"those requests")+" Pending because approval applies only to an exact date-range match."):"";
-      if(!(await uiConfirm(st.n+" already has "+n+" overlapping "+(n===1?"entry":"entries")+" on file: "+list+"."+partialNote+"\n\nAdd anyway?","Add anyway")))return false;
-    }
+    }else if(!(await uiConfirm(st.n+" already has "+n+" overlapping "+(n===1?"entry":"entries")+" on file: "+list+".\n\nAdd anyway?","Add anyway")))return false;
   }
   if(materialEdit&&oldLinked.length&&!sameRangeCandidates.length){
     if(!(await uiConfirm("Saving this change will return "+oldLinked.length+" linked leave request"+(oldLinked.length===1?"":"s")+" to Pending because the approved date-off details will no longer match. Continue?","Continue")))return false;
@@ -36303,14 +36184,18 @@ async function addSpecDate(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);
   el("sdDate").value="";el("sdTo").value="";el("sdReason").value="";setTimeSelectValue("sdFrom","");setTimeSelectValue("sdTo2","");if(el("sdPart")){el("sdPart").checked=false;if(el("sdFromWrap"))el("sdFromWrap").style.display="none";if(el("sdTo2Wrap"))el("sdTo2Wrap").style.display="none";}if(el("sdTypeOther"))el("sdTypeOther").value="";if(el("sdAddBtn"))el("sdAddBtn").textContent="Add";drawSpec();render();return true;}
 function drawSpec(){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st)return;const d=st.availDates||{};const keys=Object.keys(d).filter(k=>!_isAutoAvail(d[k])).sort((a,b)=>{const fa=(d[a].from||a),fb=(d[b].from||b);return fa<fb?-1:fa>fb?1:0;});
   const sched=_scheduledAvailRuns(SETDEPT,st.n,iso=>keys.some(k=>d[k].from&&iso>=d[k].from&&iso<=(d[k].to||d[k].from)));
-  const schedHtml=sched.length?("<div class='small muted' style='margin-top:6px'><b>In the schedule</b> (change these in the schedule): "+sched.map(r=>r.code+" "+r.from+(r.to!==r.from?"→"+r.to:"")).join("; ")+"</div>"):"";
-  el("sdList").innerHTML=(keys.length?("<b>Dates off:</b><br>"+keys.map(k=>{const a=d[k],range=a.part?(a.from+" "+(a.startTime||"00:00")+"→"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"→"+a.to:""));return `• ${a.code||"OFF"} ${range}${a.reason&&a.reason!==(a.code||"OFF")?" ("+esc(a.reason)+")":""} ${(a.to||a.from)<todayISO()?"<span class='muted'>(past, removed on next load)</span> ":""}<a href="javascript:void(0)" onclick="editSpecDate('${k}')">Edit</a> <a href="javascript:void(0)" onclick="delSpecDate('${k}')">Remove</a>`;}).join("<br>")):"<span class='muted'>None.</span>")+schedHtml;}
+  const schedHtml=sched.length?("<div class='small muted' style='margin-top:6px'><b>In the schedule</b> (change these in the schedule): "+sched.map(r=>r.from+(r.to!==r.from?" → "+r.to:"")+" "+r.code).join("; ")+"</div>"):"";
+  el("sdList").innerHTML=(keys.length?("<b>Dates off:</b><br>"+keys.map(k=>{const a=d[k],lbl=a.part?(a.from+" "+(a.startTime||"00:00")+" → "+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?" → "+a.to:""));return `• ${lbl} — ${a.code||"OFF"}${a.reason&&a.reason!==(a.code||"OFF")?" ("+esc(a.reason)+")":""} ${(a.to||a.from)<todayISO()?"<span class='muted'>(past, removed on next load)</span> ":""}<a href="javascript:void(0)" onclick="editSpecDate('${k}')">Edit</a> <a href="javascript:void(0)" onclick="delSpecDate('${k}')">Remove</a>`;}).join("<br>")):"<span class='muted'>None.</span>")+schedHtml;}
 function editSpecDate(k){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name);if(!st||!st.availDates[k])return;const a=st.availDates[k];
   AV.editingSpecKey=k;el("sdDate").value=a.from||"";el("sdTo").value=(a.to&&a.to!==a.from)?a.to:"";el("sdReason").value=a.reason||"";if(el("sdAddBtn"))el("sdAddBtn").textContent="Save";
   const part=!!a.part;if(el("sdPart")){el("sdPart").checked=part;if(el("sdPartHint"))el("sdPartHint").style.display=part?"inline":"none";if(el("sdFromWrap"))el("sdFromWrap").style.display=part?"inline-block":"none";if(el("sdTo2Wrap"))el("sdTo2Wrap").style.display=part?"inline-block":"none";if(part){setTimeSelectValue("sdFrom",a.startTime||"");setTimeSelectValue("sdTo2",a.endTime||"");}}
   const sel=el("sdType");if(sel){const opt=[...sel.options].find(o=>o.value===a.code);if(opt)sel.value=a.code;else{sel.value="Other…";el("sdTypeOther").style.display="inline-block";el("sdTypeOther").value=a.code;}}}
 async function delSpecDate(k,silent){const st=CFG[SETDEPT].staff.find(x=>x.n===AV.name),a=st&&st.availDates&&st.availDates[k];if(!st||!a)return false;const linked=_specDateLinkedRequests(a,k);if(!silent&&linked.length&&!(await uiConfirm("Remove these dates off and return "+linked.length+" linked leave request"+(linked.length===1?"":"s")+" to Pending? Schedule cells are cleared only where they still show "+(a.code||"OFF")+".","Remove")))return false;const weeks=_unstampSpecDateSchedule(SETDEPT,st.n,a),changed=_reopenSpecDateRequests(a,k);delete st.availDates[k];if(AV.editingSpecKey===k)AV.editingSpecKey=null;save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);if(changed.length){save("hotel_leaverequests",LEAVE_REQUESTS);changed.forEach(r=>pushLeaveRequest(r.id));}_pushSpecDateWeeks(SETDEPT,st.n,weeks);drawSpec();render();return true;}
 function syncOff(st){st.off=DOW.filter(d=>st.avail&&st.avail[d]&&st.avail[d].off);} // keep the legacy day-off list in sync
+// A completed date fills its blank partner. The end-date order check runs on blur, after native date editing has
+// finished, and Add/Done keep the same check as a backstop for keyboard or programmatic submission.
+function sdDatesChanged(which){const a=el("sdDate"),b=el("sdTo");if(!a||!b)return;const A=a.value,B=b.value,okA=isPlausibleFullDate(A),okB=isPlausibleFullDate(B);if(which==="from"&&okA&&!okB)b.value=A;else if(which==="to"&&okB&&!okA)a.value=B;}
+function sdEndDateBlurred(){const a=el("sdDate"),b=el("sdTo");if(!a||!b||!isPlausibleFullDate(a.value)||!isPlausibleFullDate(b.value)||b.value>=a.value)return;const prev=b.dataset.prev||"",back=(isPlausibleFullDate(prev)&&prev>=a.value)?prev:a.value;b.value=back;const shown=new Date(back+"T00:00:00").toLocaleDateString();uiAlert("The end date is before the start date. It was changed back to "+shown+".");}
 async function doneAvail(){if(el("sdDate")&&el("sdDate").value){const ok=await addSpecDate();if(ok===false)return;}closeAvail();}
 // Closing the Availability modal re-renders Settings, and renderSettings() restores the roster's horizontal and vertical
 // scroll (and every other Settings scroll area) before the browser paints, so the roster stays where it was.
@@ -36676,7 +36561,7 @@ async function cleanupFormerStaffSchedules(){
   save("hotel_assign",ASSIGN);
   if(DB&&remoteDeletes.length){
     for(const{dept,wk,name}of remoteDeletes){
-      await _deleteAssignmentRowRemote(dept,wk,name,"clean up former-staff schedule row");
+      try{await DB.from("assignments").delete().eq("dept",dept).eq("week",wk).eq("staff",name);}catch(e){console.warn("remote assignment cleanup delete skipped (non-fatal)",e);}
     }
   }
   render();
@@ -37246,6 +37131,9 @@ function costCenterGroupsForWeek(dept,wk,dimension){
   });
   return groups;
 }
+// From/To now move together the same way every other From/To pair in this app already does "if date wrong (from
+// date after to date) either show error or move with each other the way others do" — see
+// setCostCenterFrom()/setCostCenterTo() below, mirroring lrFromChanged()/lrToChanged()'s own exact behavior.
 // RENAMED — "# Staff" header replaced "replace # in # Staff column header" — a bare "#" symbol alone is
 // ambiguous/informal outside a numbered-list context with the plain word "Staff".
 //
@@ -37261,9 +37149,17 @@ function setCostCenterSort(key){
   if(COST_CENTER_SORT.key===key)COST_CENTER_SORT.dir*=-1;else{COST_CENTER_SORT.key=key;COST_CENTER_SORT.dir=(key==="name")?1:-1;}
   _renderCostCenterBody();
 }
-// Cost Center uses the shared auto date-range policy. Validation happens only after a field loses focus; the
-// untouched boundary receives the complete ISO date value, never a parsed date component or week-start rewrite.
-// The result table still uses a short debounce and lightweight re-render for responsiveness.
+// Cost Center's From/To handling now follows the EXACT SAME pattern as the "Review actual-hours overrides"
+// report "cost center changes of from and to dates weird. Just follow the rules that were set for the actual hours
+// overrides report dates", rather than a bespoke, more complex design of its own. That report's own real pattern,
+// confirmed by reading its code directly: (1) the date inputs are NEVER persisted anywhere or programmatically
+// rewritten — whatever the user typed stays exactly as typed, no silent "snap to week start" redisplay, which was
+// the cause of "click July 1, it shows June 25"; (2) there is NO "move from/to together" auto-correction at all —
+// an inverted range (From after To) simply produces zero matching rows via a plain range filter, with no special
+// error message and no auto-swap; (3) a short debounce + a LIGHTWEIGHT re-render of just the results (not the
+// whole modal) keeps typing responsive. Only the DEPARTMENT/DIMENSION selects still fully rebuild (their own
+// change can affect which dimension options are valid, e.g. Floor/zone only for Housekeeping), matching how
+// infrequently those are actually changed mid-session.
 let _costCenterRangeDebounce=null;
 function costCenterRangeChanged(){
   if(_costCenterRangeDebounce)clearTimeout(_costCenterRangeDebounce);
@@ -37284,8 +37180,8 @@ async function openCostCenterReport(){
       <label class="small" style="display:flex;align-items:center;gap:4px"><span style="white-space:nowrap">Group by: </span><select class="sfield small" id="ccDimension" onchange="setCostCenterDimension(this.value)"><option value="role" ${dimension==="role"?"selected":""}>Role</option><option value="floor" ${dimension==="floor"?"selected":""}${dept!=="HSK"?" disabled":""}>Floor/zone (${CFG.HSK.label} and ${CFG.DB.label} only)</option><option value="task" ${dimension==="task"?"selected":""}>Task/project code</option></select></label>
     </div>
     <div class="mrow" style="align-items:center;margin-bottom:10px">
-      <label class="small">From <input type="date" id="ccFrom" class="sfield small" value="${defFrom}" data-range-peer="ccTo" data-range-edge="from" data-range-policy="auto" onchange="costCenterRangeChanged()"></label>
-      <label class="small">To <input type="date" id="ccTo" class="sfield small" value="${defTo}" data-range-peer="ccFrom" data-range-edge="to" data-range-policy="auto" onchange="costCenterRangeChanged()"></label>
+      <label class="small">From <input type="date" id="ccFrom" class="sfield small" value="${defFrom}" onchange="costCenterRangeChanged()"></label>
+      <label class="small">To <input type="date" id="ccTo" class="sfield small" value="${defTo}" onchange="costCenterRangeChanged()"></label>
             <!-- This app has exactly 2 report-level "Export to Excel" buttons — this one, and the Time-off &
                attendance report's own (see exportScheduleExceptionsXLSX()'s own button) — and they sat in two
                genuinely DIFFERENT places: this one lived in the modal's own bottom footer, next to Close, while
@@ -37311,7 +37207,8 @@ function _renderCostCenterBody(){
   const dept=el("ccDept")?el("ccDept").value:(CFG._costCenterDept||DEPT);
   const dimension=el("ccDimension")?el("ccDimension").value:(CFG._costCenterDimension||"role");
   const fromRaw=el("ccFrom")?el("ccFrom").value:"",toRaw=el("ccTo")?el("ccTo").value:"";
-  // The centralized blur policy keeps a completed pair ordered. An incomplete pair has no report range yet.
+  // An inverted or incomplete range simply yields zero matching weeks below — no auto-correction, no error message,
+  // exactly matching the actual-hours-overrides report's own established behavior for the same case.
   const weeksInRange=[];
   if(fromRaw&&toRaw&&fromRaw<=toRaw){
     const fromWk=weekKey(mondayOfWeekStartThu(new Date(fromRaw+"T00:00:00")));
@@ -38650,9 +38547,31 @@ function renderLeaveTab(){
          is left on that placeholder at submit time — same ultimate default, but now a deliberate, traceable fallback
          in the code rather than an invisible artifact of array ordering. -->
     <select class="sfield small" id="lrType" autocomplete="off" style="width:clamp(110px,20vw,160px);min-width:0"><option value="">Select type…</option>${leaveRequestCodes.map(c=>`<option>${c}</option>`).join("")}</select>
-        <!-- Uses the shared auto date-range policy on blur. The untouched boundary moves only after native date editing finishes. -->
-    <span style="white-space:nowrap"><label class="small">From <input type="date" required class="sfield" id="lrFrom" data-range-peer="lrTo" data-range-edge="from" data-range-policy="auto"></label></span>
-    <span style="white-space:nowrap"><label class="small">To <input type="date" required class="sfield" id="lrTo" data-range-peer="lrFrom" data-range-edge="to" data-range-policy="auto"></label></span>
+        <!-- A one-time, non-destructive convenience — picking whichever date field is touched FIRST fills the OTHER
+           field with the same day ONLY IF IT'S STILL EMPTY, so a single-day leave request needs just one date
+           picked instead of two identical clicks; picking the second field afterward always overrides the
+           auto-filled value with whatever the user actually chooses. -->
+        <!-- The existing auto-fill-when-blank behavior is unchanged (still only fills the OTHER field the first
+           time, when it's genuinely empty) — this ADDS a second, separate case specifically for From: if To is
+           already set to some earlier date and From is then changed to something AFTER that To date (which would
+           otherwise leave an invalid/backwards range), To is automatically bumped forward to match the new From
+           date, rather than silently allowing (or blocking with an error at submit time) a range that ends before
+           it starts. -->
+        <!-- Answering the direct design question: "if From is changed to a date later than To, does it make more sense to
+         auto-change To to match, or leave To as-is and flag at submit?" Weighed both genuinely: auto-bumping To forward
+         (the previous behavior) guarantees a valid range with zero friction, but does so by SILENTLY overwriting a value
+         the person may have deliberately typed — if someone changes From by mistake (or to correct an earlier typo)
+         without intending to touch To at all, their real, chosen end date could be silently replaced with no visible
+         indication anything changed beneath their cursor. Leaving To untouched and flagging the resulting invalid range
+         explicitly at submit time (the SAME "To date is before From date" check already present in submitLeaveRequest()
+         below) costs one extra click to fix, but never alters what the person actually typed without their knowledge —
+         matching this app's own already-documented, broader design principle against silent data changes (e.g. "an
+         auto-filled/ estimated value must be selectable and backspaceable," "approving never erases an existing shift").
+         Given that existing precedent, the auto-bump-forward behavior is removed here; only the ORIGINAL still-blank-field
+         auto-fill (picking whichever date is touched FIRST, when the OTHER is genuinely still empty) is kept, since that
+         case can never overwrite a value the person already deliberately entered. -->
+    <span style="white-space:nowrap"><label class="small">From <input type="date" required class="sfield" id="lrFrom" onchange="lrFromChanged()"></label></span>
+    <span style="white-space:nowrap"><label class="small">To <input type="date" required class="sfield" id="lrTo" onchange="lrToChanged()"></label></span>
   </div>
   <div class="mrow" style="align-items:center">
     <span style="white-space:nowrap"><label class="small"><input type="checkbox" class="cbx" id="lrPart" onchange="el('lrStartWrap').style.display=el('lrEndWrap').style.display=this.checked?'inline-block':'none';el('lrTimeLbls').style.display=this.checked?'inline':'none'"> Part-day</label></span>
@@ -38883,7 +38802,6 @@ function renderLeaveTab(){
     // SAME revealLeaveDecision()/Approve/Deny flow as any current request.
     function leaveRowHtml(r,isPast){
       let statusCell;
-      const _revokeTip=r.approvalSource==="Specific dates off"?"Returns this request to Pending; linked Specific dates off remain":"Returns this request to Pending and removes unchanged approval stamps";
       const _frozen=isPast&&r.status!=="pending"; // only an ALREADY-DECIDED (approved/denied) request freezes once past — see comment above
       if(_frozen){
         // Frozen/non-actionable — plain pill, no click handler, no Revoke link. A decision was already made; per
@@ -38892,7 +38810,7 @@ function renderLeaveTab(){
         const _pc=r.status==="approved"?"ok":"err";
         const _pt=r.status==="approved"?"Approved":"Denied";
         statusCell=`<span class="pill ${_pc}" style="opacity:.7" title="This request's dates have already fully passed — the decision made at the time is not reopened">${_pt}</span>`;
-      } else if(r.status==="approved")statusCell=canDecideLeaveRequest(r)?`<span class="pill ok">Approved</span> <a href="javascript:void(0)" onclick="revokeLeaveApproval('${r.id}')" class="small" style="color:#b30000" title="${_revokeTip}">Revoke</a>`:`<span class="pill ok">Approved</span>`;
+      } else if(r.status==="approved")statusCell=canDecideLeaveRequest(r)?`<span class="pill ok">Approved</span> <a href="javascript:void(0)" onclick="revokeLeaveApproval('${r.id}')" class="small" style="color:#b30000" title="Undo this approval — un-stamps the schedule and returns to Pending">Revoke</a>`:`<span class="pill ok">Approved</span>`;
       // PROS considered: mistakes happen on Deny just as they do on Approve (wrong person, misread dates,
       // changed circumstances) — Approve already has a real undo path (Revoke), so Deny having NONE at all was a
       // genuine asymmetry with no principled reason behind it; a worker wrongly denied currently has no recourse
@@ -39552,8 +39470,16 @@ function renderViolationPointConfig(deptFilter){
 // silently excluding a recent entry. A user can still freely widen this range manually at any time.
 function _schedExcDefaultFrom(){const d=new Date();d.setDate(d.getDate()-14);return weekKey(d);}
 function _schedExcDefaultTo(fromIso){const d=new Date((fromIso||_schedExcDefaultFrom())+"T00:00:00");d.setMonth(d.getMonth()+1);return weekKey(d);}
-// This report uses the shared auto date-range policy on focusout. No partner date moves while a person is still
-// typing; once editing finishes, the untouched boundary receives the complete entered date if needed.
+// Per direct, explicit correction: The PREVIOUS round's auto-shift/clamp behavior here (moving the OTHER date
+// field the instant one changes) is now recognized as the wrong fit for a native <input type="date"> specifically:
+// unlike a plain text field (which only commits on Enter/blur), a date picker's own onchange can fire the moment a
+// single component (day/month/year) is picked in the popup calendar, or even mid-edit when typing digits directly
+// — silently snapping the OTHER field to a new value while a user is still actively interacting with the first one
+// is a jarring, unrequested side effect at that firing frequency, not the deliberate one-time "commit" moment a
+// plain Text input naturally has. By removing all auto-shift/clamp logic from this pair entirely — each field now
+// only ever holds exactly what the user directly set in it. An inverted range (From after To) is not specially
+// prevented; it simply and correctly yields zero rows (the underlying scan's own date-incrementing loop never
+// executes when fromIso>toIso), which is honest, harmless behavior — no silent correction, no popup, no surprise.
 // DEBOUNCED + DEFERRED — same "typing into a date field freezes the page" fix as staleActualRangeChanged()'s own
 // matching change (see that function's own full comment for the complete root- cause writeup: a native
 // date-picker's onchange firing multiple times in quick succession, each triggering a synchronous, potentially
@@ -39657,8 +39583,8 @@ function openCallOutReport(){
       </ul>
     </div>
     <div class="mrow" style="margin-bottom:8px;gap:8px;align-items:center;flex-wrap:wrap">
-      <label class="small">From <input type="date" required class="sfield small" id="excFromDate" value="${_defFrom}" data-range-peer="excToDate" data-range-edge="from" data-range-policy="auto" onchange="schedExcRangeChanged()"></label>
-      <label class="small">To <input type="date" required class="sfield small" id="excToDate" value="${_defTo}" data-range-peer="excFromDate" data-range-edge="to" data-range-policy="auto" onchange="schedExcRangeChanged()"></label>
+      <label class="small">From <input type="date" required class="sfield small" id="excFromDate" value="${_defFrom}" onchange="schedExcRangeChanged()"></label>
+      <label class="small">To <input type="date" required class="sfield small" id="excToDate" value="${_defTo}" onchange="schedExcRangeChanged()"></label>
       <label class="small">Type: <select id="excFilterType" class="sfield small" onchange="renderExceptionsTable()">
         <option value="all">All types</option>
         <option value="unassigned">Unassigned</option>
@@ -39869,28 +39795,40 @@ function openCallOutReport(){
   uiAlert("Leave request submitted for "+name+" ("+code+", "+from+(to!==from?"→"+to:"")+"). It is now visible to everyone and flagged for manager approval."+_partNote+_fairnessNote);
 }
 function stampApprovedLeave(req){
-  const st=(CFG[req.dept].staff||[]).find(x=>x.n===req.name),weeks=new Set();if(!st)return weeks;
-  st.availDates=st.availDates||{};const key="D"+req.from+"_"+req.to,existing=st.availDates[key];
-  // An independently entered date-off record keeps its own code, reason, and schedule effect. Approval links the
-  // request to that record instead of replacing it, so a later Revoke can return only the request to Pending.
-  if(existing&&!_isAutoAvail(existing)&&String(existing.reason||"").indexOf("Approved leave")!==0){
-    existing.linkedLeaveRequestIds=[...new Set((existing.linkedLeaveRequestIds||[]).concat(req.id))];
-    req.approvalSource="Specific dates off";req.approvalSpecKey=key;
-    return weeks;
-  }
-  const note="Approved leave"+(req.reason?": "+String(req.reason).replace(/\s+/g," ").trim():"");
-  st.availDates[key]={from:req.from,to:req.to,part:req.part,startTime:req.startTime,endTime:req.endTime,code:req.code,reason:note};
-  // Existing working shifts remain untouched and are reported as approval conflicts; non-working cells receive the
-  // leave code. Only person-weeks actually changed are returned for live synchronization.
+  const st=(CFG[req.dept].staff||[]).find(x=>x.n===req.name);if(!st)return;
+  st.availDates=st.availDates||{};const key="D"+req.from+"_"+req.to;
+  // Builds a single, clean annotation regardless of whether a reason was typed, with no embedded parens of its
+  // own (the cell tooltip code elsewhere wraps this reason in its own parens, so this string must not add a
+  // second set). This text only ever appears as a hover tooltip explaining why; the schedule cell itself already
+  // shows just the short code (e.g. "R-OFF").
+  const _leaveNote="Approved leave"+(req.reason?": "+String(req.reason).replace(/\s+/g," ").trim():"");
+  st.availDates[key]={from:req.from,to:req.to,part:req.part,startTime:req.startTime,endTime:req.endTime,code:req.code,reason:_leaveNote};
+  // IMPORTANT: approving a leave request must NEVER silently erase an existing shift assignment.
+  // If the person is already scheduled to WORK on a day being approved, that assignment is left untouched — only
+  // blank/OFF/non-working cells get the leave code stamped. The pre-existing "APPROVED LEAVE conflict" flag in
+  // Checks (Availability conflicts) already detects exactly this case (an approved request whose dates still show a
+  // working assignment) and will surface it in red for a human to resolve manually.
   for(let d=new Date(req.from+"T00:00:00");d<=new Date(req.to+"T00:00:00");d.setDate(d.getDate()+1)){
-    const iso=weekKey(new Date(d)),isFirst=(iso===req.from),isLast=(iso===req.to),fullDay=!req.part||(!isFirst&&!isLast);if(!fullDay)continue;
-    const wk=weekKey(mondayOfWeekStartThu(new Date(d))),dow=(d.getDay()-dowOffset()+7)%7;ASSIGN[req.dept]=ASSIGN[req.dept]||{};ASSIGN[req.dept][wk]=ASSIGN[req.dept][wk]||{};ASSIGN[req.dept][wk][st.n]=ASSIGN[req.dept][wk][st.n]||{};
-    const current=ASSIGN[req.dept][wk][st.n][dow];if(classify(current)==="work")continue;
-    ASSIGN[req.dept][wk][st.n][dow]=req.code;_markAssignDirty(req.dept,wk,st.n);weeks.add(wk);
-    if(ACTUAL[req.dept]&&ACTUAL[req.dept][wk])delete ACTUAL[req.dept][wk][st.n];
-    if(ACTUALD[req.dept]&&ACTUALD[req.dept][wk]&&ACTUALD[req.dept][wk][st.n])delete ACTUALD[req.dept][wk][st.n][dow];
+    const iso=weekKey(new Date(d));const isFirst=(iso===req.from),isLast=(iso===req.to);const fullDay=!req.part||(!isFirst&&!isLast);
+    if(fullDay){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
+      ASSIGN[req.dept]=ASSIGN[req.dept]||{};ASSIGN[req.dept][wk]=ASSIGN[req.dept][wk]||{};ASSIGN[req.dept][wk][st.n]=ASSIGN[req.dept][wk][st.n]||{};
+      const _existing=ASSIGN[req.dept][wk][st.n][dow];
+      if(classify(_existing)!=="work"){
+        ASSIGN[req.dept][wk][st.n][dow]=req.code; // safe to stamp — nothing to preserve
+        _markAssignDirty(req.dept,wk,st.n);
+        // A stale actual-hours override (whole-week "Hrs" cell, or a per-day ✎ entry) from BEFORE this leave
+        // was approved would otherwise keep counting toward the weekly total even though the day is now stamped as
+        // leave — e.g. A PT staffer approved for R-OFF/leave all week could still show a leftover 32.5h from an
+        // earlier, now-irrelevant entry. Clearing both here (mirroring setCell()'s own "a more recent edit
+        // supersedes a stale total" convention) keeps the displayed hours consistent with the schedule the moment
+        // leave is approved.
+        if(ACTUAL[req.dept]&&ACTUAL[req.dept][wk])delete ACTUAL[req.dept][wk][st.n];
+        if(ACTUALD[req.dept]&&ACTUALD[req.dept][wk]&&ACTUALD[req.dept][wk][st.n])delete ACTUALD[req.dept][wk][st.n][dow];
+      }
+      // Else: leave the existing working shift exactly as-is; the CONFLICT flag will catch it for manual review.
+    }
   }
-  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);return weeks;
+  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);
 }
 // #37: "if a shift is assigned FIRST then a leave request approved, it flags red in Checks — but should the
 // conflict be mentioned in the pop-up when Approve is clicked?" Answer implemented here: YES, at decision time,
@@ -40225,6 +40163,7 @@ function findLeaveApprovalConflicts(req){
   return conflicts;
 }
 async function approveLeaveRequest(id){
+  if(!EDIT){uiAlert("Enter edit mode (scheduler/manager) to approve requests.");return;}
   const req=LEAVE_REQUESTS[id];if(!req||req.status!=="pending")return;
   // Defense-in-depth: the department-scoped decide-access check (canDecideLeaveRequest()) is applied directly in
   // this action function, not only relied on to gate whether the UI reveals the Approve/Deny dropdown — so a
@@ -40280,11 +40219,12 @@ async function approveLeaveRequest(id){
   const _reasonNote=req.reason?("\n\nReason: "+(req.reasonTier?("Tier "+req.reasonTier+" · "):"")+req.reason):"";
   if(!(await uiConfirm(_pastCaution+"Approve "+req.name+"’s "+req.code+" request ("+req.from+(req.to!==req.from?"→"+req.to:"")+")?"+_reasonNote+conflictMsg+_sameDayOffNote,"Approve")))return;
   req.status="approved";req.decidedAt=new Date().toISOString();req.decidedBy=_actingUserNameForDept(req.dept);
-  const changedWeeks=stampApprovedLeave(req);
-  save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);_pushSpecDateWeeks(req.dept,req.name,changedWeeks);
+  stampApprovedLeave(req);
+  save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
 async function denyLeaveRequest(id){
+  if(!EDIT){uiAlert("Enter edit mode (scheduler/manager) to deny requests.");return;}
   const req=LEAVE_REQUESTS[id];if(!req||req.status!=="pending")return;
   if(!canDecideLeaveRequest(req)){uiAlert("You do not have edit access to "+CFG[req.dept].label+" to decide this request.");return;} // same defense-in-depth check as approveLeaveRequest — see comment there
   // Past-date freeze REMOVED here too (see approveLeaveRequest's own comment) — a still-pending request can be
@@ -40318,37 +40258,40 @@ async function denyLeaveRequest(id){
   save("hotel_leaverequests",LEAVE_REQUESTS);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
-// Revoking a request approval reverses only the state created by that approval. A request approved through
-// Specific dates off is unlinked and returned to Pending while the scheduler-entered date-off record remains.
-// A request approved from the Leave Requests tab removes its generated availability record and unchanged stamps.
+// An approval made in error (wrong person, wrong dates, wrong code) previously had NO way to undo — status was
+// a one-way ratchet once decided. Revoking is deliberately NOT the same as denying (denying is for a request that
+// was never valid; revoking is for "this WAS correctly approved, but something changed / it was a mistake and the
+// block should come off"). Cleanly reverses stampApprovedLeave(): removes the availDates block for these exact
+// dates, and clears the stamped schedule cell ONLY if it still holds exactly the code that was stamped (same
+// safe-clear pattern as elsewhere in this app) — so a day a scheduler has since manually changed to something else
+// is never silently overwritten. Sets status back to "pending" (not deleted) so the full decision history (who
+// approved, when) remains visible in "All requests" for transparency, and it can be re-approved or denied from a
+// clean slate.
 async function revokeLeaveApproval(id){
+  if(!EDIT){uiAlert("Enter edit mode (scheduler/manager) to revoke an approval.");return;}
   const req=LEAVE_REQUESTS[id];if(!req||req.status!=="approved")return;
-  if(!canDecideLeaveRequest(req)){uiAlert("You do not have edit access to "+CFG[req.dept].label+" to revoke this approval.");return;}
+  if(!canDecideLeaveRequest(req)){uiAlert("You do not have edit access to "+CFG[req.dept].label+" to revoke this approval.");return;} // same defense-in-depth check as approveLeaveRequest — see comment there
+  // KEPT (this is the ONE guard of the original three that's still correct under the refined design — see
+  // leaveRowHtml's own comment in renderLeaveTab): this function only ever runs on an ALREADY-APPROVED request
+  // (req.status!=="approved" is checked just above) — a real decision was made here, so per this app's own "editing
+  // history should be deliberate" principle, reversing that decision stays frozen once its dates are fully past,
+  // even though a still-PENDING request's own INITIAL decision (Approve/Deny, above) no longer has an equivalent
+  // freeze.
   if(leaveIsFullyPast(req)){uiAlert("This request's dates have already fully passed — the decision made at the time is not reopened.");return;}
-  const st=(CFG[req.dept].staff||[]).find(x=>x.n===req.name),linkedSpecific=req.approvalSource==="Specific dates off";
-  const specKey=req.approvalSpecKey||("D"+req.from+"_"+req.to),specEntry=st&&st.availDates&&st.availDates[specKey];
-  const effect=linkedSpecific
-    ? "The linked Specific dates off entry and its schedule stamps will remain; only this request returns to Pending."
-    : "The availability entry created by this approval and unchanged schedule stamps will be removed; the request returns to Pending.";
-  if(!(await uiConfirm("Revoke "+req.name+"’s "+req.code+" request ("+req.from+(req.to!==req.from?"→"+req.to:"")+")? "+effect,"Revoke")))return;
-  const affectedWeeks=new Set();
-  if(linkedSpecific){
-    if(specEntry&&Array.isArray(specEntry.linkedLeaveRequestIds)){
-      specEntry.linkedLeaveRequestIds=specEntry.linkedLeaveRequestIds.filter(x=>x!==id);
-      if(!specEntry.linkedLeaveRequestIds.length)delete specEntry.linkedLeaveRequestIds;
-    }
-    delete req.approvalSource;delete req.approvalSpecKey;
-  }else if(st){
-    const key="D"+req.from+"_"+req.to,entry=st.availDates&&st.availDates[key];
-    if(entry&&String(entry.reason||"").indexOf("Approved leave")===0)delete st.availDates[key];
+  if(!(await uiConfirm("Revoke "+req.name+"’s "+req.code+" request ("+req.from+(req.to!==req.from?"→"+req.to:"")+")? The schedule is un-stamped only where unchanged since approval; the request returns to Pending.","Revoke")))return;
+  const st=(CFG[req.dept].staff||[]).find(x=>x.n===req.name);
+  if(st&&st.availDates){const key="D"+req.from+"_"+req.to;delete st.availDates[key];}
+  if(st){
     for(let d=new Date(req.from+"T00:00:00");d<=new Date(req.to+"T00:00:00");d.setDate(d.getDate()+1)){
-      const iso=weekKey(new Date(d)),isFirst=(iso===req.from),isLast=(iso===req.to),fullDay=!req.part||(!isFirst&&!isLast);if(!fullDay)continue;
-      const wk=weekKey(mondayOfWeekStartThu(new Date(d))),dow=(d.getDay()-dowOffset()+7)%7,row=(ASSIGN[req.dept]&&ASSIGN[req.dept][wk]&&ASSIGN[req.dept][wk][st.n])||null;
-      if(row&&row[dow]===req.code){delete row[dow];_markAssignDirty(req.dept,wk,st.n);affectedWeeks.add(wk);}
+      const iso=weekKey(new Date(d));const isFirst=(iso===req.from),isLast=(iso===req.to);const fullDay=!req.part||(!isFirst&&!isLast);
+      if(!fullDay)continue;
+      const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
+      const row=(ASSIGN[req.dept]&&ASSIGN[req.dept][wk]&&ASSIGN[req.dept][wk][st.n])||null;
+      if(row&&row[dow]===req.code)delete row[dow]; // safe to clear — exactly matches what approval stamped, no later manual edit to lose
     }
   }
   req.status="pending";req.decidedAt=null;req.decidedBy=null;req.revokedAt=new Date().toISOString();req.revokedBy=_actingUserNameForDept(req.dept);
-  save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);_pushSpecDateWeeks(req.dept,req.name,affectedWeeks);
+  save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);pushLeaveRequest(id);
   renderLeaveTab();render();
 }
 // See the "Reconsider" link's own comment (in leaveRowHtml's status-cell markup) for the full pros/cons writeup
@@ -40359,6 +40302,7 @@ async function revokeLeaveApproval(id){
 // past — see that function's own comment): reconsidering a Deny doesn't undo anything that already happened to the
 // schedule, so there's nothing there to protect by freezing it.
 async function revokeLeaveDenial(id){
+  if(!EDIT){uiAlert("Enter edit mode (scheduler/manager) to reconsider a denial.");return;}
   const req=LEAVE_REQUESTS[id];if(!req||req.status!=="denied")return;
   if(!canDecideLeaveRequest(req)){uiAlert("You do not have edit access to "+CFG[req.dept].label+" to reconsider this request.");return;}
   if(!(await uiConfirm("Reopen "+req.name+"’s "+req.code+" request ("+req.from+(req.to!==req.from?"→"+req.to:"")+") for a fresh decision? It will return to Pending.","Reopen")))return;
@@ -40964,22 +40908,22 @@ function refreshRoomConflict(nmE){
     cell.innerHTML=`<span class="small muted" style="cursor:help" title="Also assigned to a Supervisor — likely an intentional inspection/spot-check overlap, not a scheduling error: ${esc(_label)}">ℹ ${conflicts.length}</span>`;
   }
 }
-function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),to=new Date(rec.to+"T00:00:00"),weeks=new Set();
+function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),to=new Date(rec.to+"T00:00:00");
   for(let d=new Date(from);d<=to;d.setDate(d.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(d)));const dow=(d.getDay()-dowOffset()+7)%7;
     ASSIGN[dept]=ASSIGN[dept]||{};ASSIGN[dept][wk]=ASSIGN[dept][wk]||{};ASSIGN[dept][wk][rec.name]=ASSIGN[dept][wk][rec.name]||{};
-    const before=ASSIGN[dept][wk][rec.name][dow];
-    if(remove){if(before===rec.code)delete ASSIGN[dept][wk][rec.name][dow];}
+    _markAssignDirty(dept,wk,rec.name);
+    if(remove){if((ASSIGN[dept][wk][rec.name]||{})[dow]===rec.code)delete ASSIGN[dept][wk][rec.name][dow];}
     else{ASSIGN[dept][wk][rec.name][dow]=rec.code;
       // Same stale-actual-hours-override clearing as stampApprovedLeave()/addSpecDate() — see those comments.
       if(ACTUAL[dept]&&ACTUAL[dept][wk])delete ACTUAL[dept][wk][rec.name];
       if(ACTUALD[dept]&&ACTUALD[dept][wk]&&ACTUALD[dept][wk][rec.name])delete ACTUALD[dept][wk][rec.name][dow];
-    }
-    const after=ASSIGN[dept][wk][rec.name][dow];if(before!==after){_markAssignDirty(dept,wk,rec.name);weeks.add(wk);}}
-  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);return weeks;
+    }}
+  save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);
 }
-function addLeaveRange(){if(!_dateRangeCommit("lvFrom","lvTo","auto")){uiAlert("Pick a date.");return;}const nm=el("lvName").value,code=el("lvType").value,f=el("lvFrom").value,t=el("lvTo").value;
+function addLeaveRange(){const nm=el("lvName").value,code=el("lvType").value,f=el("lvFrom").value;let t=el("lvTo").value;
+  if(!f){uiAlert("Pick a date.");return;}if(!t)t=f;if(new Date(t)<new Date(f)){uiAlert("From is after To.");return;}
   const rec={name:nm,code:code,from:f,to:t,reason:(el("lvReason")?el("lvReason").value:"")};logChange("leave",code+" "+nm+" "+f+"→"+t);LEAVES[SETDEPT]=LEAVES[SETDEPT]||[];LEAVES[SETDEPT].push(rec);save("hotel_leaves",LEAVES);
-  const affectedWeeks=stampLeave(SETDEPT,rec,false);save("hotel_assign",ASSIGN);_pushSpecDateWeeks(SETDEPT,rec.name,affectedWeeks);el("lvFrom").value="";el("lvTo").value="";drawLeaveList();uiAlert(code+" added for "+nm+".");render();
+  stampLeave(SETDEPT,rec,false);save("hotel_assign",ASSIGN);el("lvFrom").value="";el("lvTo").value="";drawLeaveList();uiAlert(code+" added for "+nm+".");render();
 }
 function drawLeaveList(){const box=el("lvList");if(!box)return;const today=new Date();today.setHours(0,0,0,0);
   // Auto-drop entries whose TO date has passed (schedule stamps remain)
@@ -40987,7 +40931,7 @@ function drawLeaveList(){const box=el("lvList");if(!box)return;const today=new D
   const list=LEAVES[SETDEPT]||[];
   box.innerHTML=list.length?("<b>Active/upcoming:</b><br>"+list.map((r,i)=>`• ${esc(r.name)} — ${r.code}${esc(parenWrap(r.reason))} ${r.from}→${r.to} <a href="javascript:void(0)" onclick="removeLeave(${i});return false">remove</a>`).join("<br>")):"<span class='muted'>No upcoming leave. (Past leave stays stamped on the schedule.)</span>";
 }
-function removeLeave(i){const r=(LEAVES[SETDEPT]||[])[i];if(!r)return;const affectedWeeks=stampLeave(SETDEPT,r,true);save("hotel_assign",ASSIGN);_pushSpecDateWeeks(SETDEPT,r.name,affectedWeeks);LEAVES[SETDEPT].splice(i,1);save("hotel_leaves",LEAVES);drawLeaveList();render();}
+function removeLeave(i){const r=(LEAVES[SETDEPT]||[])[i];if(!r)return;stampLeave(SETDEPT,r,true);save("hotel_assign",ASSIGN);LEAVES[SETDEPT].splice(i,1);save("hotel_leaves",LEAVES);drawLeaveList();render();}
 /* CLEAR (day / week) ---------- */
 // Pastes the IMMEDIATELY PRIOR week's schedule (same weekday-for-weekday, e.g. This Thursday gets last
 // Thursday's value) into the currently-viewed week, then runs the SAME hard-block conflict checks the single-cell
@@ -41421,7 +41365,19 @@ function applyCopyWeekPlan(cleanList,approvedConflicts){
   render();
   flashNote("Copied "+pasted+" cell(s) from "+prevWk+" into "+curWk+" ("+approvedConflicts.length+" conflict(s) resolved during review).");
 }
-// Clear offers whole-week, single-day, and multi-week date-range scopes. Structured day/date controls prevent free-text date and weekday errors.
+// A single "Clear…" entry point, replacing the two separate always-visible "Clear week"/"Clear a day…" buttons
+// — opens a plain choice menu, with a genuinely NEW third option (a full date RANGE spanning potentially more than
+// one week, not just a single day or the one currently-displayed week) added alongside the two pre-existing
+// choices.
+//
+// Confirmed a genuine gap: "Single day" used a free-text uiPrompt ("Type: Thu, Fri, Sat...") — a real mistype
+// (a typo, extra whitespace, a non-English day abbreviation) either silently failed ("Not a day name") or, worse,
+// could theoretically match the wrong thing if not careful. "Date range" used two SEPARATE free-text uiPrompt
+// calls asking for a "YYYY-MM-DD" string typed by hand — exactly the same mistype risk a real <input type="date">
+// exists specifically to eliminate. Replaced BOTH with one real, structured modal per Clear action: "Single day"
+// is now a genuine dropdown (every value is a real day name, impossible to mistype); "Date range" now uses two
+// real date-picker inputs (matching the SAME from/to auto-shift-if-inverted behavior already established for the
+// Schedule Exceptions Report's own date range — see schedExcRangeChanged() for that shared pattern).
 async function clearMenu(){
   const pick=await uiDialog("Clear:",["Cancel","Whole week","Single day","Date range…"]);
   if(pick==="Whole week")clearScope("week");
@@ -41439,19 +41395,27 @@ function openClearDayPicker(){
   document.body.appendChild(bg);
   bg.addEventListener("mousedown",e=>{if(e.target===bg)bg.remove();});
 }
-// The structured clear-range picker uses real date inputs and the shared auto range policy.
+// — the structured "Date range" picker (real date inputs, not free-text "YYYY-MM-DD" typing) — same
+// auto-shift-if-inverted convention as the Schedule Exceptions Report's own From/To pair (see that feature's own
+// schedExcRangeChanged() function for the identical pattern, applied here to its own pair of
+// ids instead).
 function openClearRangePicker(){
   const bg=document.createElement("div");bg.className="modalbg";bg.id="clearRangeModal";bg.style.display="flex";
   const _def=weekKey(WEEK_START);
   bg.innerHTML=`<div class="modal">
     <h2>Clear a date range</h2>
-    <label class="small">From <input type="date" required class="sfield" id="clearRangeFrom" value="${_def}" data-range-peer="clearRangeTo" data-range-edge="from" data-range-policy="auto"></label>
-    <label class="small">To <input type="date" required class="sfield" id="clearRangeTo" value="${_def}" data-range-peer="clearRangeFrom" data-range-edge="to" data-range-policy="auto"></label>
+    <label class="small">From <input type="date" required class="sfield" id="clearRangeFrom" value="${_def}" onchange="clearRangeFromChanged()"></label>
+    <label class="small">To <input type="date" required class="sfield" id="clearRangeTo" value="${_def}" onchange="clearRangeToChanged()"></label>
     <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="document.getElementById('clearRangeModal').remove()">Cancel</button><button class="brand" onclick="const f=document.getElementById('clearRangeFrom').value,t=document.getElementById('clearRangeTo').value;document.getElementById('clearRangeModal').remove();clearScope('range',null,f,t);">Clear</button></div>
   </div>`;
   document.body.appendChild(bg);
   bg.addEventListener("mousedown",e=>{if(e.target===bg)bg.remove();});
 }
+// Reuses _syncDateRangePair() (see lrFromChanged()'s own comment) — a deliberate improvement over this pair's
+// previous standalone logic: the untouched field is now also auto-filled when left empty (matching the same
+// single-day convenience the Leave Requests date pair already had), not just the from>to inversion clamp.
+function clearRangeFromChanged(){_syncDateRangePair("clearRangeFrom","clearRangeTo",true);}
+function clearRangeToChanged(){_syncDateRangePair("clearRangeFrom","clearRangeTo",false);}
 async function clearScope(kind,dayIdx,fromIso,toIso){
   if(!EDIT||weekLocked())return; const dept=CFG[DEPT];
   // Answer: yes. Previously this always proceeded straight to a confirmation dialog, a version snapshot, and a
@@ -41463,14 +41427,14 @@ async function clearScope(kind,dayIdx,fromIso,toIso){
     const hasAny=dept.staff.some(s=>{for(let d=0;d<7;d++){if(cellVal(s.n,d))return true;}return false;});
     if(!hasAny){uiAlert(dept.label+"'s schedule this week is empty — nothing to clear.");return;}
     if(!(await uiConfirm("Clear ALL assignments for "+dept.label+" this week? (A version is saved first.)","Clear")))return;
-    saveSnapshotQuiet("Before Clear week"); dept.staff.forEach(s=>{for(let d=0;d<7;d++)setCellQuiet(s.n,d,"");}); save("hotel_assign",ASSIGN);pushWeekAll(DEPT,weekKey(WEEK_START));TOUCH();render();return; } // Silent/synchronous, matching applyCopyWeekPlan()'s own snapshot call (see its comment), so the "version saved first" backup this line's own confirmation dialog promises is actually taken before the clear, not after.
+    saveSnapshotQuiet("Before Clear week"); dept.staff.forEach(s=>{for(let d=0;d<7;d++)setCellQuiet(s.n,d,"");}); save("hotel_assign",ASSIGN);TOUCH();render();return; } // Silent/synchronous, matching applyCopyWeekPlan()'s own snapshot call (see its comment), so the "version saved first" backup this line's own confirmation dialog promises is actually taken before the clear, not after.
   // — dayIdx now arrives as a real, already-validated day index straight from openClearDayPicker()'s own
   // dropdown (no free-text day name to parse/mistype at all anymore).
   if(kind==="day"){ const di=dayIdx;
     const hasAny=dept.staff.some(s=>cellVal(s.n,di));
     if(!hasAny){uiAlert(DOW[di]+" is empty for "+dept.label+" — nothing to clear.");return;}
     if(!(await uiConfirm("Clear all "+DOW[di]+" assignments for "+dept.label+"?","Clear")))return;
-    saveSnapshotQuiet("Before Clear day"); dept.staff.forEach(s=>setCellQuiet(s.n,di,"")); save("hotel_assign",ASSIGN);pushWeekAll(DEPT,weekKey(WEEK_START));TOUCH();render();return; } // Same silent/synchronous snapshot pattern as the "week" branch just above.
+    saveSnapshotQuiet("Before Clear day"); dept.staff.forEach(s=>setCellQuiet(s.n,di,"")); save("hotel_assign",ASSIGN);TOUCH();render();return; } // Same silent/synchronous snapshot pattern as the "week" branch just above.
   // — a genuine date RANGE clear, potentially spanning MULTIPLE weeks (not limited to the 0-6 day-index space
   // of the currently-displayed week the way "week"/"day" above both are) — iterates real calendar dates
   // directly via weekKey()/mondayOfWeekStartThu(), touching each affected week's own ASSIGN data in turn, so a
@@ -41539,8 +41503,6 @@ function TOUCH(scope){try{if(typeof TOUCHED==="undefined")return;const key=scope
 // exact corner, with no indication anything had ever changed there. Rebuilt generically over DEPT_KEYS (not a
 // hardcoded FO/HSK pair) so a future department added to that array needs no further edit here either.
 function lastEditedLine(){
-  // TOUCHED is browser-profile local and is never a server-authoritative edit time. Different devices can display
-  // different footer timestamps even while pointed at the same project; review/live comparisons decide sync state.
   const parts=[];
   DEPT_KEYS.forEach(d=>{const t=TOUCHED[d];if(t)parts.push(((CFG[d]||{}).label||d)+" "+new Date(t).toLocaleString());});
   const se=TOUCHED.SET;if(se)parts.push("Settings "+new Date(se).toLocaleString());
@@ -42558,14 +42520,13 @@ function mergeDuplicateStaff(dept,canonicalName,aliasName){
 function renameStaffEverywhere(dept,oldName,newName){
   const D=CFG[dept];if(!D)return;
   const st=(D.staff||[]).find(x=>x.n===oldName);if(!st)return;
-  st.n=newName;const _assignmentWeeks=[];
-  Object.keys(ASSIGN[dept]||{}).forEach(wk=>{const wkObj=ASSIGN[dept][wk];if(wkObj&&wkObj[oldName]){wkObj[newName]=wkObj[oldName];delete wkObj[oldName];_markAssignDirty(dept,wk,oldName);_markAssignDirty(dept,wk,newName);_assignmentWeeks.push(wk);}});
+  st.n=newName;
+  Object.keys(ASSIGN[dept]||{}).forEach(wk=>{const wkObj=ASSIGN[dept][wk];if(wkObj&&wkObj[oldName]){wkObj[newName]=wkObj[oldName];delete wkObj[oldName];}});
   Object.keys(ACTUALD[dept]||{}).forEach(wk=>{const wkObj=ACTUALD[dept][wk];if(wkObj&&wkObj[oldName]){wkObj[newName]=wkObj[oldName];delete wkObj[oldName];}});
   DEPT_KEYS.forEach(_d=>{Object.keys((FLOORS||{})[_d]||{}).forEach(wk=>{const wkObj=FLOORS[_d][wk];if(wkObj&&wkObj[oldName]!=null){wkObj[newName]=wkObj[oldName];delete wkObj[oldName];}});});
   if(ACCRUALS[dept]&&ACCRUALS[dept][oldName]){ACCRUALS[dept][newName]=ACCRUALS[dept][oldName];delete ACCRUALS[dept][oldName];}
   Object.keys(CHECKINS[dept]||{}).forEach(wk=>{const wkObj=CHECKINS[dept][wk];if(wkObj&&wkObj[oldName]){wkObj[newName]=wkObj[oldName];delete wkObj[oldName];}});
   save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_actuald",ACTUALD);save("hotel_floors",FLOORS);save("hotel_accruals",ACCRUALS);save("hotel_checkins",CHECKINS);
-  if(DB)_assignmentWeeks.forEach(wk=>{pushWeekAll(dept,wk,new Set([newName]));_deleteAssignmentRowRemote(dept,wk,oldName,"rename staff schedule row");});
 }
 if(!CFG._marceloFullNameV2){
   const _hasBareMarcelo=(CFG.HSK.staff||[]).some(s=>s.n==="Marcelo");
@@ -43500,21 +43461,6 @@ function seedRoster(){try{
  }catch(e){console.warn("roster seed skipped",e);}}
 /* BOOT ---------- */
 (function boot(){
-  // A stored v2.3 schedule has never been through the v2.4 row-integrity review. On this browser's first v2.4
-  // load, every existing person-week object is protected, including an empty object that represents a deliberate
-  // clear. The version and browser marker are written directly so the migration itself cannot auto-push config.
-  try{
-    const _migDone=localStorage.getItem("hotel_v23_integrity_migrated")==="1";
-    if(!_migDone&&CFG&&CFG.meta&&CFG.meta.version==="2.3"){
-      _markAllAssignmentRowsProtected();
-      CFG.meta.version=APP_VERSION;
-      localStorage.setItem("hotel_cfg",JSON.stringify(CFG));
-      localStorage.setItem("hotel_v23_integrity_migrated","1");
-      _setV23ReviewRequired(true);
-      _setPushFailureLatched(true);
-      setPending(true);
-    }
-  }catch(e){console.warn("v2.3 integrity migration skipped",e);}
   // Paint the auth badge first, so its initial appearance is the one it keeps rather than a placeholder that
   // changes a moment later.
   try{updateAuth();}catch(e){}
@@ -43915,10 +43861,6 @@ function seedRoster(){try{
   try{const _tsRemoved=enforceStaffTombstones();if(_tsRemoved.length){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}console.info("Re-applied "+_tsRemoved.length+" permanent staff deletion(s) at boot:",_tsRemoved);}}catch(e){console.warn("boot tombstone enforcement skipped (non-fatal):",e);}
   seedPTORequests();
   try{const _t=new Date();_t.setHours(0,0,0,0);DEPT_KEYS.forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.availDates){Object.keys(st.availDates).forEach(k=>{const a=st.availDates[k];if(a.to&&new Date(a.to)<_t){delete st.availDates[k];}});}});});try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}catch(e){}
-  // A v2.3 migration starts before boot fixups so it can block connection immediately. Re-run only the row
-  // enumeration here, after every fixup/rename/seed above, so rows created or renamed during boot receive the same
-  // protection before any live pull can begin.
-  try{if(_v23ReviewRequired){_markAllAssignmentRowsProtected();setPending(true);_setPushFailureLatched(true);}}catch(e){console.warn("post-fixup v2.3 row protection skipped",e);}
   // Lazily freeze settings for weeks that are now PAST but never snapshotted (captures the settings in effect
   // through that week)
   try{DEPT_KEYS.forEach(dp=>{const savedDept=DEPT;DEPT=dp;const ws=mondayOfWeekStartThu(new Date());for(let k=1;k<=8;k++){const d=new Date(ws);d.setDate(d.getDate()-7*k);const wk=weekKey(d);if(!((SETHIST[dp]||{})[wk])){const _cur=WEEK_START;WEEK_START=d;snapshotSettings(dp,wk);WEEK_START=_cur;}}DEPT=savedDept;});}catch(e){}
@@ -44009,7 +43951,6 @@ function seedRoster(){try{
   // the exact same "restore before first paint" convention _loadViewModeOnBoot() already uses.
   try{_loadEditSessionOnBoot();}catch(e){console.warn("edit-session restore skipped (non-fatal):",e);}
   syncNav();render();fitHeader();
-  if(_v23ReviewRequired)setTimeout(()=>flashNote("Existing v2.3 schedule is protected. Connect, then complete Review & upload with Schedule selected."),700);
   // Starts the local reminder engine (see its own extensive comment) if this device previously enabled
   // notifications; also re-registers the service worker unconditionally (idempotent, cheap, and needed so a
   // returning PWA install keeps its offline/installability behavior even before notifications are enabled).
