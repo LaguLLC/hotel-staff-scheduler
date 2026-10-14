@@ -3047,6 +3047,7 @@
          a plain two-state toggle for every viewer, exactly as requested: "Disconnect" whenever live, "Connect…" whenever
          not — see syncNav()'s own comment for the full before/after reasoning. -->
     <button class="brand" id="headerConnect" onclick="headerConnectOrDisconnect()" style="display:none" title="Connect to the shared live copy — available even if Settings is hidden from view-only users">Connect…</button>
+    <button class="ghostw" id="headerReviewUpload" onclick="reviewAndUpload()" style="display:none" title="Review this device's pending changes and retry the upload. Do not disconnect first.">Review &amp; upload…</button>
     <!-- The initial label uses the same inline SVG padlock that updateAuthBadge() writes, not the emoji.
          The emoji renders yellow on every platform that has a colour glyph for it, so the badge appeared
          yellow on first paint and turned white the moment any code path refreshed it - two appearances for
@@ -12549,7 +12550,7 @@ function _undoRestore(snapStr){
   // What the restore actually changed is worked out here, BEFORE the globals are swapped, so the push below is
   // limited to the affected rows rather than re-uploading every week of both departments on every undo click.
   try{
-    const _sc={weeks:[],demandWeeks:[],leaveIds:[]};
+    const _sc={weeks:[],rows:[],demandWeeks:[],leaveIds:[]};
     // Yes, this is a genuinely standard, widely-expected convention (most editors with undo/redo — word
     // processors, spreadsheets, code editors — scroll the affected location into view, since an undo/redo the
     // person can't currently see happening is easy to miss or misjudge as "nothing happened"). Computed HERE,
@@ -12566,8 +12567,9 @@ function _undoRestore(snapStr){
         const curWk=cur[wk]||{},nxtWk=nxt[wk]||{};
         if(JSON.stringify(curWk)!==JSON.stringify(nxtWk)){
           _sc.weeks.push([dp,wk]);
+          const _names=new Set([...Object.keys(curWk),...Object.keys(nxtWk)]);
+          _names.forEach(nm=>{if(JSON.stringify(_normalizedAssignRow(curWk[nm]))!==JSON.stringify(_normalizedAssignRow(nxtWk[nm])))_sc.rows.push([dp,wk,nm]);});
           if(!_undoCellHint){
-            const _names=new Set([...Object.keys(curWk),...Object.keys(nxtWk)]);
             for(const nm of _names){
               const cd=curWk[nm]||{},nd=nxtWk[nm]||{};
               const _days=new Set([...Object.keys(cd),...Object.keys(nd)]);
@@ -12682,11 +12684,7 @@ function _undoRestore(snapStr){
     // this the same way every other write path already is protected, with no special-casing needed here.
     try{
       const _now=Date.now();
-      Object.keys(ASSIGN||{}).forEach(dept=>{
-        Object.keys(ASSIGN[dept]||{}).forEach(wk=>{
-          Object.keys(ASSIGN[dept][wk]||{}).forEach(nm=>{_markAssignDirty(dept,wk,nm);});
-        });
-      });
+      (_sc.rows||[]).forEach(([dept,wk,nm])=>_markAssignDirty(dept,wk,nm));
       _cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.DB=_now;_cfgDirtyStamp.appWide=_now;
       // DEMAND was never stamped here at all — see _demandDirtyStamp's own comment for the confirmed
       // "undo does nothing / the value comes back" bug this closes. Every week present in the restored DEMAND
@@ -12707,24 +12705,10 @@ function _undoRestore(snapStr){
     // own in-flight echo - or simply the next routine pull - put them straight back. Undo has to be as real a
     // change as the edit it reverses, so the reverted weeks are pushed here. Scoped to weeks that ACTUALLY
     // differ from what was on screen a moment ago, so an undo of a roster-only change sends nothing.
-    try{
-      if(DB&&_undoPrePushSnapshot){
-        const _pre=_undoPrePushSnapshot;
-        Object.keys(DEMAND||{}).forEach(wk=>{
-          if(JSON.stringify((_pre.DEMAND||{})[wk])!==JSON.stringify(DEMAND[wk]))
-            {try{pushDemand(wk);}catch(e){}}
-        });
-        DEPT_KEYS.forEach(dp=>{
-          const before=((_pre.ASSIGN||{})[dp])||{},after=(ASSIGN||{})[dp]||{};
-          const weeks=new Set([...Object.keys(before),...Object.keys(after)]);
-          weeks.forEach(wk=>{
-            if(JSON.stringify(before[wk])!==JSON.stringify(after[wk]))
-              {try{pushWeekAll(dp,wk);}catch(e){}}
-          });
-        });
-      }
-    }catch(ePush){console.warn("undo/redo remote push skipped (non-fatal):",ePush);}
+    // The restored rows are pushed once, after the local restore finishes, using _undoPushScope below.
     render();
+    // Undo/redo preserves the current tab and viewport. It no longer navigates to Settings or scrolls the schedule.
+    _undoScrollHint=null;_undoCfgScrollHint=null;_undoDemandScrollHint=null;
     // ONE shared helper now does the actual scroll+flash for all three hint types below (schedule cell, demand
     // cell, settings control), so the visual behavior — the exact highlight color/duration/transition — can never
     // again drift apart between them the way it easily could when each was implemented as its own separate,
@@ -12863,7 +12847,7 @@ function _undoRestore(snapStr){
   // the next pull.
   if(DB&&_undoPushScope){
     try{
-      (_undoPushScope.weeks||[]).forEach(([dp,wk])=>{try{pushWeekAll(dp,wk);}catch(e){}});
+      const byWeek=new Map();(_undoPushScope.rows||[]).forEach(([dp,wk,nm])=>{const k=dp+"|"+wk;if(!byWeek.has(k))byWeek.set(k,{dp,wk,names:new Set()});byWeek.get(k).names.add(nm);});byWeek.forEach(x=>{try{pushWeekAll(x.dp,x.wk,x.names);}catch(e){}});
       (_undoPushScope.demandWeeks||[]).forEach(wk=>{try{pushDemand(wk);}catch(e){}});
       (_undoPushScope.leaveIds||[]).forEach(id=>{try{pushLeaveRequest(id);}catch(e){}});
     }catch(ePush){console.warn("undo/redo live push skipped (non-fatal):",ePush);}
@@ -13463,6 +13447,7 @@ DEPT_KEYS.forEach(_d=>{const _b=el("btn"+_d);if(_b)_b.classList.toggle("active",
     else if(_awaitingSyncChoice||_syncReviewPending){hc.style.display="inline";hc.textContent="Reviewing…";hc.title="Answer the review dialog first. Cancel there keeps this device local.";hc.onclick=headerConnectOrDisconnect;}
     else{hc.style.display="inline";hc.textContent="Disconnect";hc.title="Disconnect this device from the shared live copy (Settings has the same control) — this same header button always shows Connect… again afterward, so it's never a dead end.";hc.onclick=headerConnectOrDisconnect;}
   }
+  if(el("headerReviewUpload"))el("headerReviewUpload").style.display=(DB&&(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired))?"inline":"none";
   // README: genuinely has zero week-scoped content — stays disabled, no further nuance needed. LEAVE REQUESTS:
   // confirmed correct to keep disabled — "All requests" is a single flat list spanning every date ever submitted,
   // not organized by week at all; there's no "this week's leave requests" view for Prev/Next to usefully scroll
@@ -15560,7 +15545,7 @@ function renderDemand(){
       // to edit it, and re-saving would then permanently overwrite the real 68.53% with a rounded 69% — an actual,
       // if subtle, DATA-LOSS bug this display fix also happens to close). Rounded to 2 decimal places (matching the
       // read-only display's own new precision) instead of 0.
-      const _vv=_impliedZero?"":((k==="occ"&&v!=="")?Math.round(v*10000)/100:disp);
+      const _vv=_impliedZero?"":((k==="occ"&&v!=="")?(Math.round(v*10000)/100).toFixed(2):disp);
       const _impliedColor=_impliedZero?"#9aa5b1":"#333";
       // A read-only demand cell can be non-interactive for 3 distinct reasons, each needing its own explanation
       // rather than one identical, unlabeled dash: (1) opts.readOnly — Arrivals/Departures/Occupancy % on the HSK
@@ -15642,6 +15627,7 @@ function renderDemand(){
         const hasBasis=(dd.ooo!=null)||(dd.house!=null)||(dd.unassigned!=null)||(dd.occ!=null);
         const auto=Math.round(creditsFor(wk,i,true)*100)/100;
         const val=(dd.credits!=null)?dd.credits:"";
+        const creditMax=_creditsMax();
         const dro=(!EDIT||weekLocked());
         // The tooltip now also states WHICH credit-formula mode is active (see the new Settings toggle and
         // creditsFor()'s own comment) whenever a real, data-driven figure is being shown — so hovering a Credits
@@ -15656,7 +15642,7 @@ function renderDemand(){
         // estimate/placeholder, not real data" (e.g. The schedule grid's projected-vs-actual hours color) — so it's
         // visually clear at a glance which figures are real vs. Still just defaults.
         const _valColor=(dd.credits!=null||hasBasis)?"#333":"#9aa5b1";
-        h+=`<td>${dro?`<span class="cell" data-dk="credits" data-day="${i}" onclick="lockedClick()" title="${esc(_basisTitle)}" style="cursor:pointer;display:inline-block;width:100%;text-align:center;color:${_valColor}">${val!==""?val:(auto!=null?auto:"–")}</span>`:`<input class="cell" type="number" min="0" step="0.01" style="width:60px;text-align:center;color:${_valColor}" value="${val!==""?val:(auto!=null?auto:"")}" data-auto-value="${auto!=null?auto:""}" data-auto-shown="${val===""?"1":"0"}" title="${esc(_basisTitle)}" data-dk="credits" data-day="${i}">`}</td>`;
+        h+=`<td>${dro?`<span class="cell" data-dk="credits" data-day="${i}" onclick="lockedClick()" title="${esc(_basisTitle)}" style="cursor:pointer;display:inline-block;width:100%;text-align:center;color:${_valColor}">${val!==""?val:(auto!=null?auto:"–")}</span>`:`<input class="cell" type="number" min="0" max="${creditMax}" step="0.01" style="width:60px;text-align:center;color:${_valColor}" value="${val!==""?val:(auto!=null?auto:"")}" data-auto-value="${auto!=null?auto:""}" data-auto-shown="${val===""?"1":"0"}" title="${esc(_basisTitle)}" data-dk="credits" data-day="${i}">`}</td>`;
       }
       h+=`</tr>`;
     })();
@@ -15772,7 +15758,7 @@ function renderDemand(){
       else if(k==="credits"){
         const _autoShown=e.target.dataset.autoShown==="1",_autoValue=e.target.dataset.autoValue;
         if(_autoShown&&raw===String(_autoValue)){delete DEMAND[_dk][i][k];}
-        else DEMAND[_dk][i][k]=Math.max(0,Math.round(num*100)/100);
+        else{const mx=_creditsMax();const capped=Math.max(0,Math.min(mx,Math.round(num*100)/100));DEMAND[_dk][i][k]=capped;if(capped!==num)e.target.value=capped.toFixed(2);}
       } // decimal override of the auto-calculated credits; no upper cap
       else if(k==="ooo"||k==="house"||k==="unassigned"){
         // Matches the same fix applied to the input's own max= attribute above — OOO/House-use are
@@ -16428,55 +16414,13 @@ function personDayBreakdown(s){
 // PTO/leave accrual policy before running real payroll — different leave types (PTO vs LWOP, which is explicitly
 // UNPAID per its own name) may need entirely different hours or may need to be excluded from pay entirely, a policy
 // question this app cannot answer on its own.
+function _openCsvScopeModal(title,hint,roomsOnly){return new Promise(res=>{const bg=document.createElement("div");bg.className="modalbg";bg.id="csvScopeModal";bg.style.display="flex";const from=weekKey(WEEK_START),to=weekKey(dayDate(6)),keys=DEPT_KEYS.filter(d=>!roomsOnly||isRoomsDept(d));const render=()=>{const dept=bg.querySelector("#csvDept").value,scope=bg.querySelector("#csvScope").value,depts=_exportDeptKeys(dept,roomsOnly),rows=_exportRosterRows(depts).filter(x=>!roomsOnly||roomAssignRolesFor(x.dept).includes(x.staff.role)),w=bg.querySelector("#csvScopeValue");if(scope==="role"){const roles=[...new Set(rows.map(x=>x.staff.role))].sort();w.innerHTML=`<label class="small">Role <select id="csvRole" class="sfield"><option value="">Select…</option>${roles.map(r=>`<option value="${esc(r)}">${esc(pluralRoleLabel(r))}</option>`).join("")}</select></label>`;}else if(scope==="staff")w.innerHTML=_exportCheckPanelHtml(rows,"csvStaffChecks");else w.innerHTML=`<span class="small muted">All eligible staff in the selected department scope</span>`;};bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><h2>${esc(title)}</h2><div class="small muted" style="margin-bottom:8px">${esc(hint)}</div><div class="mrow" style="align-items:flex-end;flex-wrap:wrap"><label class="small">Department <select id="csvDept" class="sfield"><option value="" selected>Select… / All departments</option>${keys.map(d=>`<option value="${d}">${esc(deptLabel(d))}</option>`).join("")}</select></label><label class="small">Scope <select id="csvScope" class="sfield"><option value="all">All staff</option><option value="role">Role</option><option value="staff">Staff members</option></select></label><span id="csvScopeValue" class="mrow" style="align-items:flex-end;min-width:0"></span></div><div class="mrow"><label class="small">From <input type="date" id="csvFrom" class="sfield" value="${from}" data-range-peer="csvTo" data-range-edge="from" data-range-policy="auto"></label><label class="small">To <input type="date" id="csvTo" class="sfield" value="${to}" data-range-peer="csvFrom" data-range-edge="to" data-range-policy="auto"></label></div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Continue</button></div></div>`;document.body.appendChild(bg);bg.querySelector("#csvDept").onchange=render;bg.querySelector("#csvScope").onchange=render;render();const done=v=>{if(!v){bg.remove();res(null);return;}if(!_dateRangeCommit("csvFrom","csvTo","auto")){uiAlert("Enter a date range.");return;}const dept=bg.querySelector("#csvDept").value,scope=bg.querySelector("#csvScope").value,o={dept,scope,depts:_exportDeptKeys(dept,roomsOnly),from:bg.querySelector("#csvFrom").value,to:bg.querySelector("#csvTo").value,role:(bg.querySelector("#csvRole")||{}).value,staffKeys:bg.querySelector("#csvStaffChecks")?[...bg.querySelectorAll("#csvStaffChecks input:checked")].map(x=>x.value):[]};if(scope==="role"&&!o.role){uiAlert("Select a role.");return;}if(scope==="staff"&&!o.staffKeys.length){uiAlert("Select at least one staff member.");return;}bg.remove();res(o);};bg.querySelector('[data-c="cancel"]').onclick=()=>done(false);bg.querySelector('[data-c="ok"]').onclick=()=>done(true);bg.addEventListener("mousedown",e=>{if(e.target===bg)done(false);});});}
 async function exportPayroll(){
-  const dept=CFG[DEPT];
-  const _proceed=await uiConfirm(
-    "Payroll & Time export (CSV) — "+dept.label+", week of "+weekKey(WEEK_START)+"\n\n"+
-    "This exports one row per person per day: REG/OT hours for worked days (split at the 40h/week mark), or the "+
-    "exact leave code (PTO/LWOP/etc.) for a leave day.\n\n"+
-    "⚠ Leave-day hours are an ESTIMATE (7.5h, this app's standard shift-hours figure) — confirm this matches "+
-    "your actual PTO/leave accrual policy before running real payroll; some codes (e.g. LWOP — unpaid) may need "+
-    "different handling entirely.\n\n"+
-    "⚠ This is a GENERIC export, not a certified Paycom/Dayforce template — Paycom's own confirmed integration "+
-    "path is a one-time column-mapping setup on their side for file-based bulk import (requires their paid API/"+
-    "implementation agreement); this file provides the underlying data for that, not a guaranteed drop-in match.\n\n"+
-    "Continue?","Continue");
-  if(!_proceed)return;
-  // Per re-reading the actual meeting transcript directly, not a paraphrase: the previous wording here said Paycom
-  // "restricts this to 2 people per department" — but the transcript's OWN clarification (Cynthia, directly
-  // asked "two people max?": "No, no, it's not two people max... They only have... By role and like specific
-  // people... It's just by role") confirms this is genuinely ROLE-BASED access control, not a hard numeric cap
-  // — a department happening to have exactly 2 roles with access (department head + 2nd department head) is a
-  // CONSEQUENCE of how those roles are currently configured, not a fixed "2" ceiling Paycom itself enforces.
-  // Reworded to state the real mechanism (role-based access) rather than the inaccurate "capped at 2"
-  // characterization, which could otherwise mislead someone into thinking a 3rd person could never be granted
-  // access — in reality, Paycom's own admin tools could grant a 3rd role/person visibility if the hotel chose
-  // to.
-  const includeRate=await uiConfirm(
-    "Include each person's hourly Rate $/h in this file?\n\n"+
-    "Pay-rate data is sensitive — Paycom itself restricts payroll/roster visibility by ROLE (confirmed: department "+
-    "head + one designated second role per department, not a fixed headcount cap — a hotel admin could grant "+
-    "additional roles access within Paycom itself). "+
-    "Only include it if everyone who will handle this specific file is authorized to see pay rates.\n\n"+
-    "Include rate adds a Rate $/h column. Leave out exports hours and pay codes only.","Include rate","Leave out");
-  const wk=weekKey(WEEK_START);
-  const header=["Employee Name","Department","Role","Type","Date","Day","Pay Code","Hours"].concat(includeRate?["Rate $/h"]:[]);
-  const rows=[header];
-  dept.staff.filter(s=>s.employed!==false).forEach(s=>{
-    const bd=personDayBreakdown(s);const rate=includeRate?rateOf(s).toFixed(2):null;
-    bd.forEach(d=>{
-      const dateStr=weekKey(dayDate(d.day));const dayName=DOW[d.day];
-      if(d.isLeave){rows.push([s.n,dept.label,s.role,s.type,dateStr,dayName,d.leaveCode,HRS_PER_SHIFT.toFixed(1)].concat(includeRate?[rate]:[]));}
-      else if(d.unk){rows.push([s.n,dept.label,s.role,s.type,dateStr,dayName,"UNREADABLE — enter a time window (e.g. 14:00-22:30) before exporting",""].concat(includeRate?[""]:[]));}
-      else{
-        if(d.reg>0)rows.push([s.n,dept.label,s.role,s.type,dateStr,dayName,"REG",d.reg.toFixed(2)].concat(includeRate?[rate]:[]));
-        if(d.ot>0)rows.push([s.n,dept.label,s.role,s.type,dateStr,dayName,"OT",d.ot.toFixed(2)].concat(includeRate?[rate]:[]));
-      }
-    });
-  });
-  const csv=rows.map(r=>r.map(c=>`"${String(c==null?"":c).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download=_appendDownloadStamp(dept.label.replace(/ /g,"_")+"_Payroll_"+wk+".csv");a.click();
+  const opts=await _openCsvScopeModal("Payroll & Time export","All active roster members are included by default. Choose a department, role, or one or more staff members, and any date range from one day upward.",false);if(!opts)return;
+  const includeRate=await uiConfirm("Include each person's hourly Rate $/h in this file?\n\nPay-rate data is sensitive. Include it only if everyone handling this file is authorized.","Include rate","Leave out");
+  const header=["Employee Name","Department","Role","Type","Date","Day","Pay Code","Hours"].concat(includeRate?["Rate $/h"]:[]),rows=[header];
+  _scopeStaffRows(opts).forEach(({dept:dp,staff})=>{const rate=includeRate?rateOf(staff).toFixed(2):null;let currentWk=null,cum=0;for(let dt=new Date(opts.from+"T00:00:00");dt<=new Date(opts.to+"T00:00:00");dt.setDate(dt.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(dt)));if(wk!==currentWk){currentWk=wk;cum=0;}const day=Math.round((new Date(weekKey(dt)+"T00:00:00")-new Date(wk+"T00:00:00"))/86400000),v=cellValFor(dp,wk,staff.n,day),cls=classify(v);let dayHrs=0,unk=false;if(cls==="leave"){rows.push([staff.n,deptLabel(dp),staff.role,staff.type,weekKey(dt),DOW[day],String(v).toUpperCase(),HRS_PER_SHIFT.toFixed(1)].concat(includeRate?[rate]:[]));continue;}if(!(cls==="work"||cls==="special"))continue;const hh=shiftHours(v);if(hh==null)unk=true;else{const ch=countedShiftHours(v);dayHrs=Math.max(0,(ch||0)-getBreakHrsFor(ch||0));}if(unk){rows.push([staff.n,deptLabel(dp),staff.role,staff.type,weekKey(dt),DOW[day],"UNREADABLE — enter a time window",""].concat(includeRate?[""]:[]));continue;}const before=cum;cum=Math.round((cum+dayHrs)*2)/2;const reg=Math.max(0,Math.min(cum,OT_AFTER)-Math.min(before,OT_AFTER)),ot=Math.max(0,(cum-before)-reg);if(reg>0)rows.push([staff.n,deptLabel(dp),staff.role,staff.type,weekKey(dt),DOW[day],"REG",reg.toFixed(2)].concat(includeRate?[rate]:[]));if(ot>0)rows.push([staff.n,deptLabel(dp),staff.role,staff.type,weekKey(dt),DOW[day],"OT",ot.toFixed(2)].concat(includeRate?[rate]:[]));}});
+  if(rows.length===1){uiAlert("No payroll rows were found in that scope and date range.");return;}const csv=rows.map(r=>r.map(c=>`"${String(c==null?"":c).replace(/"/g,'""')}"`).join(",")).join("\n"),a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=_appendDownloadStamp("Payroll_"+opts.from+"_to_"+opts.to+".csv");a.click();
 }
 // Paycom's "Schedule Import" screen (Time Management) accepts a CSV that populates the Schedule Detail tab of each
 // employee's timecard, either as scheduled PUNCHES (In-Duty/Out-Duty pairs, for a work shift) or an Hours entry
@@ -16897,85 +16841,7 @@ function fmtMMDDYYYY(d){return String(d.getMonth()+1).padStart(2,"0")+"/"+String
 // real room-assignment push needs, but NOT a full room-by-room list the way HotLync's own Housekeeping module
 // (which pulls individual room numbers/status from a connected PMS) natively produces. This is a real, disclosed
 // scope difference, not a placeholder pretending to be the full feature.
-async function exportRoomAssignments(){
-  // Same reasoning as openRoomAssignments(): follow whichever department the person is actually looking at.
-  // Same reasoning as openRoomAssignments(): the department is chosen here, not inherited from the page.
-  const _xrRooms=DEPT_KEYS.filter(d=>isRoomsDept(d));
-  if(!_xrRooms.length){uiAlert("No department in this app is scheduled by room.");return;}
-  let _xrDept=(arguments.length&&arguments[0])?arguments[0]:null;
-  if(!_xrDept||!isRoomsDept(_xrDept))_xrDept=_xrRooms[0];
-  // Was hardcoded to CFG.HSK, so exporting from Dusit Beach silently produced Dusit Thani's roster.
-  // Which department, asked here rather than assumed from whichever tab is behind the dialog. "Both" is a real
-  // option: the two rooms departments are different properties, and a manager covering both should not have to
-  // export twice and join the files by hand.
-  const _roomDepts=_xrRooms;
-  let _xrDepts=[_xrDept];
-  if(_roomDepts.length>1){
-    // A dropdown rather than one button per department: three buttons for two departments and "Both" took a
-    // whole dialog to ask a question with one answer.
-    const _labels=_roomDepts.map(d=>CFG[d].label);
-    const _opts=_labels.concat(["Both departments"]);
-    const _pick=await uiSelect("Export room assignments for:",_opts,_opts[0],"Export");
-    if(!_pick)return;
-    _xrDepts=(_pick==="Both departments")?_roomDepts.slice():[_roomDepts[_labels.indexOf(_pick)]];
-  }
-  const dept=CFG[_xrDepts[0]];
-  const _proceed=await uiConfirm(
-    "Room Assignments export (CSV) — "+dept.label+", week of "+weekKey(WEEK_START)+"\n\n"+
-    "One row per person per scheduled day, with their floor or zone and any rooms assigned that day.\n\n"+
-    "Room numbers come from this app's own Room Assignments picker; a day with no entries exports with the "+
-    "floor or zone only.\n\n"+
-    "Continue?","Continue");
-  if(!_proceed)return;
-  // Which weeks to export, asked here. Exporting only "the week the schedule tab happens to be showing" meant
-  // navigating the schedule to a past week purely to export it, then navigating back.
-  const _wkFrom=await uiPrompt("Export from week starting (YYYY-MM-DD):",weekKey(WEEK_START));
-  if(!_wkFrom||_wkFrom==="Cancel")return;
-  const _wkTo=await uiPrompt("...through week starting (same date for a single week):",_wkFrom);
-  if(!_wkTo||_wkTo==="Cancel")return;
-  const _weeks=[];
-  try{
-    let cur=new Date(_wkFrom+"T00:00:00");
-    const last=new Date(_wkTo+"T00:00:00");
-    if(isNaN(cur)||isNaN(last)){uiAlert("Those dates could not be read. Use YYYY-MM-DD.");return;}
-    let guard=0;
-    while(cur<=last&&guard++<260){_weeks.push(weekKey(cur));cur=new Date(cur.getTime()+7*86400000);}
-  }catch(e){}
-  if(!_weeks.length){uiAlert("No weeks in that range.");return;}
-  const wk=weekKey(WEEK_START);
-  // Three faults fixed together: roles were looked up for "HSK" regardless of which department was being
-  // exported, room numbers were never included even though the confirmation promised them, and the file name
-  // said HSK whatever was chosen. A Department column is added, since "Both" can put two in one file.
-  const header=["Department","Employee Name","Role","Type","Date","Day","Shift","Floor/Zone","Rooms"];
-  const rows=[header];
-  // Reads ASSIGN directly for each week in the chosen range, rather than cellVal(), which only ever answers
-  // for the week currently on screen.
-  const _prevDeptX=DEPT;
-  _xrDepts.forEach(d=>{
-    DEPT=d;
-    const D=CFG[d];if(!D)return;
-    const roles=roomAssignRolesFor(d);
-    _weeks.forEach(w=>{
-      const weekAssign=((ASSIGN[d]||{})[w])||{};
-      (D.staff||[]).filter(st2=>st2.employed!==false&&roles.includes(st2.role)).forEach(st2=>{
-        const days=weekAssign[st2.n]||{};
-        const zone=(((FLOORS[d]||{})[w]||{})[st2.n])||"";
-        for(let i=0;i<7;i++){
-          const v=days[i];if(!v||classify(v)!=="work")continue;
-          const roomList=(((ROOM_ASSIGN[d]||{})[w]||{})[i]||{})[st2.n]||[];
-          const dt=new Date(new Date(w+"T00:00:00").getTime()+i*86400000);
-          rows.push([D.label,st2.n,st2.role,st2.type,weekKey(dt),DOW[i],v,zone,roomList.join(" ")]);
-        }
-      });
-    });
-  });
-  DEPT=_prevDeptX;
-  if(rows.length===1){uiAlert("Nobody is scheduled in a room-assigned role this week, so there is nothing to export.");return;}
-  const csv=rows.map(r=>r.map(c=>`"${String(c==null?"":c).replace(/"/g,'""')}"`).join(",")).join("\n");
-  const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-  a.download=_appendDownloadStamp((_xrDepts.length>1?"Room_Assignments":(CFG[_xrDepts[0]].label.replace(/\s+/g,"_")+"_Room_Assignments"))+"_"+_weeks[0]+(_weeks.length>1?("_to_"+_weeks[_weeks.length-1]):"")+".csv");
-  a.download=_appendDownloadStamp("HSK_Room_Assignments_"+wk+".csv");a.click();
-}
+async function exportRoomAssignments(){const opts=await _openCsvScopeModal("Room Assignments export","Choose one or all room-scheduled departments, a role or staff member scope, and any exact date range — including one day.",true);if(!opts)return;const header=["Department","Employee Name","Role","Type","Date","Day","Shift","Floor/Zone","Rooms"],rows=[header];_scopeStaffRows(opts).filter(x=>isRoomsDept(x.dept)&&roomAssignRolesFor(x.dept).includes(x.staff.role)).forEach(({dept:dp,staff})=>{for(let dt=new Date(opts.from+"T00:00:00");dt<=new Date(opts.to+"T00:00:00");dt.setDate(dt.getDate()+1)){const wk=weekKey(mondayOfWeekStartThu(new Date(dt))),day=Math.round((new Date(weekKey(dt)+"T00:00:00")-new Date(wk+"T00:00:00"))/86400000),v=((((ASSIGN[dp]||{})[wk]||{})[staff.n]||{})[day]);if(!v||classify(v)!=="work")continue;const zone=(((FLOORS[dp]||{})[wk]||{})[staff.n])||"",roomList=(((ROOM_ASSIGN[dp]||{})[wk]||{})[day]||{})[staff.n]||[];rows.push([deptLabel(dp),staff.n,staff.role,staff.type,weekKey(dt),DOW[day],v,zone,roomList.join(" ")]);}});if(rows.length===1){uiAlert("Nobody is scheduled in a room-assigned role in that scope and date range.");return;}const csv=rows.map(r=>r.map(c=>`"${String(c==null?"":c).replace(/"/g,'""')}"`).join(",")).join("\n"),a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=_appendDownloadStamp("Room_Assignments_"+opts.from+"_to_"+opts.to+".csv");a.click();}
 // Researched (real, verified web sources): Paycom has no public self-serve API — a live, two-way connection
 // genuinely is not possible without Paycom's own paid commercial API agreement (confirmed pricing: typically
 // several thousand dollars per year, separate from whatever base modules — payroll, time & attendance, biometric
@@ -22052,7 +21918,7 @@ function setStatus(txt,color){
   // unsynced, an error - is still allowed through, because those remain true regardless of the answer.
   if((_awaitingSyncChoice||_reviewUploadInProgress)&&txt==="live"){txt="reviewing";color="#c9891b";}
   else if(txt==="live"&&(_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired||(PENDING&&_outstandingPushes===0))){txt="unsynced";color="#e0a800";}
-  const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();clearSyncError();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
+  const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();showUnsyncedHelp();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
   requestAnimationFrame(_syncTagRowAlign); // the error pill/"Reconnect" link above are optional content that changes .tag's own width -- see .tag.wrappedRow's own comment
   // Mirrors this SAME color onto the compact app-mode-only status dot (see that element's own comment) — this is
   // the ONE place sync color/text is ever actually decided in this whole app, so mirroring it here (rather than
@@ -22107,17 +21973,13 @@ function reportRealtimeChannelError(where,error){
 function clearSyncError(){
   if(_statusFlickerTimer){clearTimeout(_statusFlickerTimer);_statusFlickerTimer=null;}
   if(SYNC_ERR)SYNC_ERR=null;
-  setStatus(DB?"live":"local",DB?"#2c9e5f":"#c7d0da");
+  setStatus(DB?(PENDING||_pushFailureLatched||_hasProtectedAssignRows()?"unsynced":"live"):"local",DB?(PENDING||_pushFailureLatched||_hasProtectedAssignRows()?"#e0a800":"#2c9e5f"):"#c7d0da");
 }
 window.addEventListener("offline",()=>{if(DB)setStatus("unsynced","#e0a800");});
 window.addEventListener("online",async()=>{if(DB){if(PENDING){await maybeUploadOnConnect(true);if(DB)setStatus("live","#2c9e5f");}else{setStatus("live","#2c9e5f");}}});
 async function _freshLiveAssignmentsForReview(){
-  try{
-    const{data,error}=await DB.from("assignments").select("*");
-    if(error)return{ok:false,error,map:{}};
-    const map={};(data||[]).forEach(r=>{((map[r.dept]=map[r.dept]||{})[r.week]=map[r.dept][r.week]||{})[r.staff]=JSON.parse(JSON.stringify(r.days||{}));});
-    return{ok:true,error:null,map};
-  }catch(error){return{ok:false,error,map:{}};}
+  try{const got=await _fetchAllRows("assignments","*");if(!got.ok)return{ok:false,error:got.error,map:{}};const map={};got.data.forEach(r=>{((map[r.dept]=map[r.dept]||{})[r.week]=map[r.dept][r.week]||{})[r.staff]=JSON.parse(JSON.stringify(r.days||{}));});_syncDiag("verify read","assignments",got.data.length,"ok");return{ok:true,error:null,map,count:got.data.length};}
+  catch(error){_syncDiag("verify read","assignments",0,"error",error);return{ok:false,error,map:{}};}
 }
 async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return {failed:true};}
   if(!opts.fromReview){console.warn("pushPending refused: it is only sent from the review (reviewAndUpload / connect).");return {failed:true};}
@@ -22127,7 +21989,7 @@ async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supa
   const _PR=_lastPulledRows,_only=!!opts.onlyChanged;
   const _tally={schedule:0,demand:0,leave:0,checkin:0,skipped:0,failed:false};
   const _scheduleCleanup=new Set();
-  const _fail=()=>{_reviewUploadInProgress=false;setPending(true);setStatus("unsynced","#e0a800");_tally.failed=true;flashNote("Upload incomplete — at least one row failed. This device remains unsynced; use Review & upload to retry.");return _tally;};
+  const _fail=()=>{_reviewUploadInProgress=false;setPending(true);setStatus("unsynced","#e0a800");_tally.failed=true;_syncDiag("review upload","all",_tally.schedule+_tally.demand+_tally.leave,"error",SYNC_ERR||"Incomplete upload");flashNote("Upload incomplete — keep this tab open. Use Review & upload in the header to inspect and retry; do not disconnect first.");syncNav();return _tally;};
   let _freshAssign=null;
   if(_want("schedule")&&_only){
     const fresh=await _freshLiveAssignmentsForReview();
@@ -22161,10 +22023,11 @@ async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supa
     const mismatched=[];
     _scheduleCleanup.forEach(key=>{const p=_parseAssignRowKey(key);if(!p)return;const local=((((ASSIGN[p.dept]||{})[p.wk]||{})[p.name])||{}),live=(((verified.map[p.dept]||{})[p.wk]||{})[p.name]||{});if(!_sameValue(_normalizedAssignRow(local),_normalizedAssignRow(live)))mismatched.push(p);});
     if(mismatched.length){
-      const first=mismatched[0];const message=mismatched.length+" reviewed schedule row(s) did not appear on live after upload; first: "+first.dept+" / "+first.wk+" / "+first.name;
+      const first=mismatched[0];const message=mismatched.length+" reviewed schedule row(s) did not appear on live after upload; first: "+deptLabel(first.dept)+" / "+first.wk+" / "+first.name;
       reportSyncError("verify reviewed schedule upload",{message});_setPushFailureLatched(true);_tally.verifyFailed=mismatched.map(p=>_assignRowKey(p.dept,p.wk,p.name));return _fail();
     }
     _tally.verifiedScheduleRows=_scheduleCleanup.size;
+    _syncDiag("verify","assignments",_scheduleCleanup.size,"ok");
   }
   if(_want("demand"))for(const wk of Object.keys(DEMAND)){
     if(_only&&_PR.ok.demand&&_sameValue(_nullIfEmpty(DEMAND[wk]),_nullIfEmpty(_PR.demand[wk]))){_tally.skipped++;continue;}
@@ -22295,7 +22158,7 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
         fields.forEach(f=>{
           const a=lv[f],b=rv[f];
           if((a==null?"":String(a))===(b==null?"":String(b)))return;
-          const line=`Demand ${wk} ${DOW[d]!=null?DOW[d]:d} — ${DEMAND_FIELD_LABELS[f]||f}: local ${a==null?"blank":a} · live ${b==null?"blank":b}`;
+          const line=`Demand ${wk} ${DOW[d]!=null?DOW[d]:d} — ${DEMAND_FIELD_LABELS[f]||f}: local ${_formatDiffValue("demand",f,a)} · live ${_formatDiffValue("demand",f,b)}`;
           changes.push(line);
           if(b!=null&&b!==""&&a!==b&&localDem[wk])conflicts.push(line);
         });
@@ -22314,11 +22177,12 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
       const lv=localLR[id],rv=liveLR[id];
       if(lv&&rv&&_sameValue(rv,lv))return;
       if(!lv&&!rv)return;
-      const nameForLine=(lv&&lv.name)||(rv&&rv.name)||id;
-      const codeForLine=(lv&&lv.code)||(rv&&rv.code)||"?";
-      const fromForLine=(lv&&lv.from)||(rv&&rv.from)||"?";
+      if(_emptyLeaveRequestRecord(lv)||_emptyLeaveRequestRecord(rv)){if(_emptyLeaveRequestRecord(lv)&&_emptyLeaveRequestRecord(rv))return;}
+      const nameForLine=(lv&&lv.name)||(rv&&rv.name)||"Unknown person";
+      const codeForLine=(lv&&lv.code)||(rv&&rv.code)||"Unspecified type";
+      const fromForLine=(lv&&lv.from)||(rv&&rv.from)||"date not recorded";
       const _localDelete=!!(_leaveIds&&_leaveIds.has(id)&&!lv&&rv);
-      const line=`Leave request ${nameForLine} (${codeForLine}, ${fromForLine}) — ${_localDelete?"deleted locally · live has request":(!lv&&rv)?"live only":(lv&&rv)?"differs":"local only"}`;
+      const line=`Leave request — ${nameForLine} (${codeForLine}, ${fromForLine}) — ${_localDelete?"deleted on this device; live still has it":(!lv&&rv)?"live only":(lv&&rv)?"values differ":"device only"}`;
       changes.push(line);
       if(_localDelete||(lv&&rv))conflicts.push(line);
     });
@@ -22654,7 +22518,7 @@ function _availEntryParts(a){
   const date=(a.from===a.to)?fmtD(a.from):(fmtD(a.from)+"–"+fmtD(a.to));
   let detail;
   if(a.part&&(a.startTime||a.endTime))detail="Unavailable "+(a.startTime||"?")+"–"+(a.endTime||"?");
-  else detail="Off all day"+((a.code&&String(a.code).toUpperCase()!=="OFF")?" ("+a.code+")":"");
+  else{const code=String(a.code||"OFF").toUpperCase();detail=(code==="OFF"?"Off all day":code+", full day");}
   if(a.reason)detail+=" — "+a.reason;
   if(a.autoFromSchedule)detail+=", from schedule";
   return {date,detail};
@@ -23179,7 +23043,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
         +(!S.items.length?"differences that are not itemized":"");
       return `<div class="ucSec" style="border:1px solid var(--line);border-radius:6px;margin:${_mt} 0 6px">
         <label ${S.tip?`title="${esc(S.tip)}"`:""} style="display:flex;align-items:center;padding:6px 8px;cursor:pointer;background:#f3f6fa;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:3;border-bottom:1px solid var(--line)"><input type="checkbox" class="cbx ucSecChk" data-sec="${S.k}" ${tick?"checked":""} ${(_isRoster&&unsafe)?"disabled":""}><b style="margin-left:6px">${S.t}</b><span class="small" style="margin-left:6px">\u2014 ${counts}</span></label>
-        <div style="padding:2px 8px 6px;font-size:11.5px">${_isRoster&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">Uploading adds people who are missing from the live copy. For people on both rosters, local values replace live's, except when blank.</div>`:""}${sectionBody(S)}</div>
+        <div style="padding:2px 8px 6px;font-size:11.5px">${S.k==="people"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">Uploading adds people who are missing from the live copy and applies local active/inactive status. People found only on live are kept unless they were deleted on this device.</div>`:S.k==="details"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">For people on both rosters, uploading replaces live roster details with this device's values, except when a field is blank on this device.</div>`:""}${sectionBody(S)}</div>
       </div>`;
     }).join("");
     // Personal, device-only settings (own notification choices, expanded panels) are never part of any section.
@@ -23255,7 +23119,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     const _ack=bg.querySelector("#ucAckRemove");
     if(_ack)_ack.onchange=()=>{["people","details"].forEach(k=>{const r=bg.querySelector('.ucSecChk[data-sec="'+k+'"]');if(r){r.disabled=!_ack.checked;r.checked=_ack.checked;}});refresh();};
     const names=keys=>SECS.filter(S=>keys.indexOf(S.k)>=0).map(S=>S.t).join(", ");
-    const countedSections=list=>list.map(S=>nfmt(S.items.length)+" "+(S.items.length===1?"change":"changes")+" in "+S.t).join(", ");
+    const countedSections=list=>list.map(S=>`<li><b>${nfmt(S.items.length)} in ${esc(S.t)}</b>${S.conf.length?` (${nfmt(S.conf.length)} ${S.conf.length===1?"value will":"values will"} overwrite existing live data)`:""}</li>`).join("");
     const send=()=>{
       const t=ticked();
       // Sections with nothing itemized are always sent: they hold nothing that differs, and leaving one out would
@@ -23269,10 +23133,10 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     let _okFn=send;
     const titleEl=bg.querySelector("#ucTitle"),bodyEl=bg.querySelector("#ucBody"),mainEl=bg.querySelector("#ucMain"),confEl=bg.querySelector("#ucConfirm");
     const _title0=titleEl.textContent;
-    const askConfirm=(title,msg,okLabel,fn,focusBtn)=>{
+    const askConfirm=(title,msg,okLabel,fn,focusBtn,html)=>{
       _okFn=fn;
       titleEl.textContent=title;
-      bg.querySelector("#ucConfirmText").textContent=msg;
+      if(html)bg.querySelector("#ucConfirmText").innerHTML=msg;else bg.querySelector("#ucConfirmText").textContent=msg;
       bg.querySelector("#ucOk").textContent=okLabel;
       bodyEl.style.display="none";mainEl.style.display="none";confEl.style.display="block";
       bg.querySelector("#ucBack").onclick=()=>{titleEl.textContent=_title0;confEl.style.display="none";bodyEl.style.display="";mainEl.style.display="flex";if(focusBtn)focusBtn.focus();};
@@ -23284,10 +23148,11 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       const drop=SECS.filter(S=>S.shown&&t.indexOf(S.k)<0&&S.items.length);
       if(!over.length&&!drop.length){send();return;}
       const selectedShown=SECS.filter(S=>S.shown&&t.indexOf(S.k)>=0);
-      let msg="Upload "+countedSections(selectedShown)+"?";
-      if(over.length)msg+="\n\nThis will replace "+nfmt(over.reduce((n,S)=>n+S.conf.length,0))+" conflicting live "+(over.reduce((n,S)=>n+S.conf.length,0)===1?"value":"values")+" in "+names(over.map(S=>S.k))+".";
-      if(drop.length)msg+="\n\nLocal values for "+nfmt(drop.reduce((n,S)=>n+S.items.length,0))+" "+(drop.reduce((n,S)=>n+S.items.length,0)===1?"item":"items")+" in "+names(drop.map(S=>S.k))+" will be discarded and replaced by the live ones.";
-      askConfirm("Confirm upload selection",msg,"Upload",send,goBtn);
+      const total=selectedShown.reduce((n,S)=>n+S.items.length,0),conf=selectedShown.reduce((n,S)=>n+S.conf.length,0);
+      let msg=`<div>Upload the following ${nfmt(total)} ${total===1?"change":"changes"}?</div><ul style="margin:8px 0 8px 20px">${countedSections(selectedShown)}</ul>`;
+      if(conf)msg+=`<div>${nfmt(conf)} of the selected ${conf===1?"change will":"changes will"} overwrite existing values in ${esc(_humanJoin(selectedShown.filter(S=>S.conf.length).map(S=>S.t)))}.</div>`;
+      if(drop.length)msg+=`<div style="margin-top:8px">Not uploaded: ${esc(_humanJoin(drop.map(S=>S.t)))}. This device will take the live values for those sections.</div>`;
+      askConfirm("Confirm upload selection",msg,"Upload",send,goBtn,true);
     };
     const discardBtn=bg.querySelector("#ucDiscard");
     discardBtn.onclick=()=>{
@@ -24021,12 +23886,8 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   }:null;
   const errors=[]; // {label, err}
   async function pullTable(tableName,label,onRows){
-    try{
-      const {data,error}=await DB.from(tableName).select("*");
-      if(error){errors.push({label,err:error});return;}
-      onRows(data||[]);
-      _lastPulledRows.ok[tableName]=true;
-    }catch(e){errors.push({label,err:e});}
+    try{const got=await _fetchAllRows(tableName,"*");if(!got.ok){errors.push({label,err:got.error});return;}onRows(got.data);_lastPulledRows.ok[tableName]=true;}
+    catch(e){_syncDiag("pull",tableName,0,"error",e);errors.push({label,err:e});}
   }
   // See _assignDirtyStamp's own comment (near _syncApplying) for the full "set a shift, export shows 0" cause
   // this closes. Captured IMMEDIATELY BEFORE this fetch begins — any local edit made at or after this exact
@@ -24281,7 +24142,9 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       }
     },1200);
   }
-  _adoptDraftHidingFromCfg();
+
+  if(_dedupeRosterRecords()){const _p=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=_p;}console.info("Merged duplicate roster records by exact name after live pull.");}
+  _normaliseLeaveDeptKeys();  _adoptDraftHidingFromCfg();
   await pullAuditLog();
   save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);
   // This final save("hotel_cfg",CFG) — needed purely to PERSIST locally whatever pullAll() just retrieved from live
@@ -24765,6 +24628,49 @@ async function pushCheckin(dept,wk,name){
 /* DATA UTILS ---------- */
 function exportDownloadStamp(d){d=d||new Date();return "DL_"+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"-"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0");}
 function _appendDownloadStamp(name,d){const i=name.lastIndexOf(".");const stamp=exportDownloadStamp(d);return i>0?name.slice(0,i)+"_"+stamp+name.slice(i):name+"_"+stamp;}
+const SYNC_DIAG_KEY="hotel_sync_diagnostics",SYNC_DIAG_MAX=200;
+let SYNC_DIAG_LOG=load(SYNC_DIAG_KEY,[]);if(!Array.isArray(SYNC_DIAG_LOG))SYNC_DIAG_LOG=[];
+function _syncDiag(op,table,count,status,error){
+  const row={ts:new Date().toISOString(),op:String(op||""),table:String(table||""),rows:Number(count)||0,status:String(status||"ok")};
+  if(error)row.error=String(error&&error.message?error.message:error).slice(0,500);
+  SYNC_DIAG_LOG.unshift(row);SYNC_DIAG_LOG=SYNC_DIAG_LOG.slice(0,SYNC_DIAG_MAX);
+  try{localStorage.setItem(SYNC_DIAG_KEY,JSON.stringify(SYNC_DIAG_LOG));}catch(e){}
+}
+function viewSyncDiagnostics(){
+  const rows=SYNC_DIAG_LOG.length?SYNC_DIAG_LOG.map(x=>`<tr><td class="small">${esc(formatSubmittedAt(x.ts))}</td><td>${esc(x.op)}</td><td>${esc(x.table)}</td><td>${nfmt(x.rows)}</td><td>${esc(x.status)}</td><td class="small" style="text-align:left">${esc(x.error||"—")}</td></tr>`).join(""):`<tr><td colspan="6" class="muted">No sync activity has been logged on this device yet.</td></tr>`;
+  openGenericViewModal("Sync diagnostics",`<p class="small muted">This bounded device-only log keeps the last ${SYNC_DIAG_MAX} push, pull, and verification results. It records operation, table, row count, and error text only — never schedule values, staff names, credentials, or file contents.</p><div class="tblwrap" style="max-height:55vh"><table class="autoTable"><thead><tr><th>When</th><th>Operation</th><th>Table</th><th>Rows</th><th>Status</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></div>`);
+}
+function downloadSyncDiagnostics(){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify({generatedAt:new Date().toISOString(),entries:SYNC_DIAG_LOG},null,2)],{type:"application/json"}));a.download=_appendDownloadStamp("hotel_sync_diagnostics.json");a.click();}
+async function _fetchAllRows(tableName,selectExpr){
+  const pageSize=1000,out=[];let from=0,page=0;
+  while(true){
+    let q=DB.from(tableName).select(selectExpr||"*");if(q&&typeof q.range==="function")q=q.range(from,from+pageSize-1);
+    const {data,error}=await q;if(error){_syncDiag("pull",tableName,out.length,"error",error);return{ok:false,data:out,error};}
+    const batch=data||[];out.push(...batch);page++;_syncDiag("pull page",tableName,batch.length,"ok");
+    if(batch.length<pageSize)break;if(page>100){const error={message:"Pagination safety limit reached"};_syncDiag("pull",tableName,out.length,"error",error);return{ok:false,data:out,error};}from+=pageSize;
+  }
+  _syncDiag("pull",tableName,out.length,"ok");return{ok:true,data:out,error:null};
+}
+function deptLabel(key){return (CFG&&CFG[key]&&CFG[key].label)||String(key||"");}
+function deptKeyFromAny(value){const v=String(value||"").trim();if(DEPT_KEYS.includes(v))return v;const low=v.toLowerCase();return DEPT_KEYS.find(k=>String((CFG[k]||{}).label||"").toLowerCase()===low)||v;}
+function _normaliseLeaveDeptKeys(){let changed=false;Object.values(LEAVE_REQUESTS||{}).forEach(r=>{if(!r||typeof r!=="object")return;const k=deptKeyFromAny(r.dept);if(k!==r.dept&&DEPT_KEYS.includes(k)){r.dept=k;changed=true;}});return changed;}
+function _dedupeRosterRecords(){
+  let changed=false;
+  DEPT_KEYS.forEach(dp=>{const D=CFG[dp];if(!D||!Array.isArray(D.staff))return;const out=[],by=new Map();
+    D.staff.forEach(st=>{if(!st||!st.n)return;const k=String(st.n).trim().toLowerCase();const prior=by.get(k);if(!prior){const c=JSON.parse(JSON.stringify(st));by.set(k,c);out.push(c);return;}changed=true;
+      Object.keys(st).forEach(f=>{const v=st[f];if(f==="availDates"){prior[f]=Object.assign({},prior[f]||{},v||{});return;}if(f==="hireDate"&&v){if(!prior[f]||v<prior[f])prior[f]=v;return;}if((prior[f]===undefined||prior[f]===null||prior[f]==="")&&v!==undefined&&v!==null&&v!=="")prior[f]=v;});
+      if(st.employed!==false)prior.employed=true;
+    });D.staff=out;
+  });return changed;
+}
+function _formatDiffValue(kind,key,v){if(v==null||v==="")return "blank";if(kind==="demand"&&key==="occ"){const n=Number(v);return isNaN(n)?String(v):(n*100).toFixed(2)+"%";}if(typeof v==="number")return nfmt(v);return String(v);}
+function _humanJoin(list){list=(list||[]).filter(Boolean);return list.length<2?(list[0]||""):list.length===2?list[0]+" and "+list[1]:list.slice(0,-1).join(", ")+", and "+list[list.length-1];}
+function _creditsMax(){const R=roomsRules(),rooms=Number(R.roomsTotal)||421,extra=Math.max(0,Number(R.twoCreditExtra)||0),mult=Math.max(0,Number(R.creditMult)||1);return Math.round((rooms+extra)*mult*100)/100;}
+function showUnsyncedHelp(){
+  const msg="Unsynced means this device still has one or more changes that were not confirmed on the live copy. Keep this tab open. Do not Disconnect and do not choose Discard local unless you intend to throw those changes away. Use Review & upload to inspect and retry them. Export a JSON backup first if the changes are important.";
+  return uiDialog(msg,["Close","Download JSON backup","Review & upload"],false,"","Close","Close").then(x=>{if(x==="Download JSON backup")exportJSON();else if(x==="Review & upload")reviewAndUpload();});
+}
+
 function _xlsxCellStyle(horizontal,bold,fill){const s={alignment:{horizontal:horizontal||"left",vertical:"center",wrapText:false}};if(bold)s.font={bold:true};if(fill)s.fill={patternType:"solid",fgColor:{rgb:fill}};return s;}
 function _styleScheduleWorksheet(ws,aoa,occRows){
   const range=XLSX.utils.decode_range(ws["!ref"]||"A1:A1"),roleRows=new Set();
@@ -24772,21 +24678,23 @@ function _styleScheduleWorksheet(ws,aoa,occRows){
   for(let r=range.s.r;r<=range.e.r;r++)for(let c=range.s.c;c<=range.e.c;c++){const a=XLSX.utils.encode_cell({r,c}),cell=ws[a];if(!cell)continue;cell.s=_xlsxCellStyle(c===0?"left":"center",r===0||roleRows.has(r),r===0?"D9E2F3":(roleRows.has(r)?"EAF0F7":null));}
   (occRows||[]).forEach(r=>{for(let c=1;c<(aoa[r-1]||[]).length;c++){const a=XLSX.utils.encode_cell({r:r-1,c});if(ws[a]&&typeof ws[a].v==="number")ws[a].z="0.00%";}});
 }
-function exportJSON(){_pruneEmptyLeaveRequestRecords();const blob={cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS};const s=JSON.stringify(blob,null,2);const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([s],{type:"application/json"}));a.download=_appendDownloadStamp("hotel_schedule_backup.json");a.click();}
+function exportJSON(){_pruneEmptyLeaveRequestRecords();const blob={cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS};if(CFG._includeDiagnosticsInBackup)blob.syncDiagnostics=SYNC_DIAG_LOG;const s=JSON.stringify(blob,null,2);const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([s],{type:"application/json"}));a.download=_appendDownloadStamp("hotel_schedule_backup.json");a.click();}
 function _showOverwriteReview(title,items,okLabel){
   return new Promise(res=>{
     const bg=document.createElement("div");bg.className="modalbg";bg.id="overwriteReviewModal";bg.style.display="flex";
-    const list=(items||[]).length?_renderPlainItemsList(items):`<div class="small muted">No differences were found.</div>`;
+    const grouped=()=>{const by={};(items||[]).forEach(x=>{const c=_categorizeConflictLine(String(x).replace(/\bcurrent\b/g,"local").replace(/\bbackup\b/g,"live"));(by[c]=by[c]||[]).push(x);});return _CONFLICT_CATEGORY_ORDER.filter(c=>by[c]&&by[c].length).map(c=>`<details style="margin-top:4px"${by[c].length<=2?" open":""}><summary style="cursor:pointer"><b>${esc(c)}</b> (${nfmt(by[c].length)})</summary>${_renderCategoryItemsList(by[c])}</details>`).join("");};
+    const list=(items||[]).length?grouped():`<div class="small muted">No differences were found.</div>`;
     bg.innerHTML=`<div class="modal" style="max-width:640px;width:96%"><h2>${esc(title)}</h2><div class="small muted" style="margin-bottom:8px">Review the changes before replacing data on this device. Nothing has been changed yet.</div><div style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${list}</div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">${esc(okLabel||"Apply")}</button></div></div>`;
     document.body.appendChild(bg);bg.dataset.ownKeys="1";const done=v=>{bg.remove();res(v);};bg.querySelectorAll("button").forEach(b=>b.onclick=()=>done(b.dataset.c==="ok"));bg.addEventListener("mousedown",e=>{if(e.target===bg)done(false);});bg.tabIndex=-1;bg.focus({preventScroll:true});
   });
 }
 function _backupImportDiff(target){
-  const cur={assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS},nxt={assign:target.assign,demand:target.demand,leaveRequests:target.leaveRequests};
+  const cleanLeave=o=>{const x={};Object.keys(o||{}).forEach(id=>{const v=o[id];if(v&&typeof v==="object"&&Object.keys(v).length)x[id]=v;});return x;};
+  const cur={assign:ASSIGN,demand:DEMAND,leaveRequests:cleanLeave(LEAVE_REQUESTS)},nxt={assign:target.assign,demand:target.demand,leaveRequests:cleanLeave(target.leaveRequests)};
   const a=analyzeUploadChanges(cur,nxt),collapsed=_collapseScheduleLines(a.changes,a.conflicts),localCfg={FO:CFG.FO,HSK:CFG.HSK,DB:CFG.DB,appWide:(()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>o[k]=CFG[k]);return o;})()},nextCfg={FO:target.cfg.FO,HSK:target.cfg.HSK,DB:target.cfg.DB,appWide:(()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>o[k]=target.cfg[k]);return o;})()},c=analyzeCfgChanges(localCfg,nextCfg);
   return collapsed.changes.concat(c.changes).map(x=>String(x).replace(/\blocal\b/g,"current").replace(/\blive\b/g,"backup"));
 }
-function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const b=JSON.parse(r.result),target={cfg:b.cfg||CFG,assign:b.assign||ASSIGN,demand:b.demand||DEMAND,leaveRequests:b.leaveRequests||LEAVE_REQUESTS,checkins:b.checkins||CHECKINS};const diff=_backupImportDiff(target);if(!diff.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}if(!(await _showOverwriteReview("Import full backup?",diff,"Import backup")))return;try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify({cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS,savedAt:new Date().toISOString()}));}catch(e2){}const beforeAssign=ASSIGN,beforeDemand=DEMAND,beforeLeave=LEAVE_REQUESTS;CFG=target.cfg;ASSIGN=target.assign;DEMAND=target.demand;LEAVE_REQUESTS=target.leaveRequests;CHECKINS=target.checkins;_pruneEmptyLeaveRequestRecords();_markChangedAssignmentRows(beforeAssign,ASSIGN);new Set([...Object.keys(beforeDemand||{}),...Object.keys(DEMAND||{})]).forEach(wk=>{if(!_sameValue((beforeDemand||{})[wk],(DEMAND||{})[wk]))_markDemandDirty(wk);});new Set([...Object.keys(beforeLeave||{}),...Object.keys(LEAVE_REQUESTS||{})]).forEach(id=>{if(!_sameValue((beforeLeave||{})[id],(LEAVE_REQUESTS||{})[id]))_protectLeaveId(id);});const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);setPending(true);_setPushFailureLatched(true);setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");render();flashNote("Backup imported locally — Review & upload is required before it can replace live data.");}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
+function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const b=JSON.parse(r.result),target={cfg:b.cfg||CFG,assign:b.assign||ASSIGN,demand:b.demand||DEMAND,leaveRequests:b.leaveRequests||LEAVE_REQUESTS,checkins:b.checkins||CHECKINS};const diff=_backupImportDiff(target);if(!diff.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}if(!(await _showOverwriteReview("Import full backup?",diff,"Import backup")))return;try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify({cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS,savedAt:new Date().toISOString()}));}catch(e2){}const beforeAssign=ASSIGN,beforeDemand=DEMAND,beforeLeave=LEAVE_REQUESTS;CFG=target.cfg;ASSIGN=target.assign;DEMAND=target.demand;LEAVE_REQUESTS=target.leaveRequests;CHECKINS=target.checkins;_dedupeRosterRecords();_normaliseLeaveDeptKeys();_pruneEmptyLeaveRequestRecords();_markChangedAssignmentRows(beforeAssign,ASSIGN);new Set([...Object.keys(beforeDemand||{}),...Object.keys(DEMAND||{})]).forEach(wk=>{if(!_sameValue((beforeDemand||{})[wk],(DEMAND||{})[wk]))_markDemandDirty(wk);});new Set([...Object.keys(beforeLeave||{}),...Object.keys(LEAVE_REQUESTS||{})]).forEach(id=>{if(!_sameValue((beforeLeave||{})[id],(LEAVE_REQUESTS||{})[id]))_protectLeaveId(id);});const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);setPending(true);_setPushFailureLatched(true);setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");render();flashNote("Backup imported locally — Review & upload is required before it can replace live data.");}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
 /* XLSX EXPORT (approximate the hotel's sheet layout) ---------- */
 let _scheduleExcelExportOpen=false;
 function _scheduleExcelDateGroups(fromIso,toIso){
@@ -24807,60 +24715,16 @@ function _exportRaNumbers(deptKey,wk,day){
   const D=CFG[deptKey]||CFG.HSK,R=D.rules||{},floor=((D.coverage||{})["Room Attendants"]||{}).min||0,c=_exportCreditsForDept(deptKey,wk,day,false),per=R.creditsPerRA||14;
   const formula=(c==null||isNaN(c))?null:(c===0?0:Math.ceil(c/per));const needed=formula==null?floor:(formula===0?0:Math.max(floor,formula));return{credits:_exportCreditsForDept(deptKey,wk,day,true),formula,needed,floor,per};
 }
-function _scheduleExcelSubjectStaff(opts){const D=CFG[opts.dept]||{},all=D.staff||[];if(opts.subject==="staff")return all.filter(s=>s.n===opts.staff);if(opts.subject==="staffMulti"){const wanted=new Set(opts.staffList||[]);return all.filter(s=>wanted.has(s.n));}if(opts.subject==="role")return all.filter(s=>s.role===opts.role);return all.slice();}
-function _buildScheduleExcelSheets(opts){
-  const D=CFG[opts.dept],groups=_scheduleExcelDateGroups(opts.from,opts.to),staff=_scheduleExcelSubjectStaff(opts),sheets=[];
-  groups.forEach((dates,wk)=>{
-    const subject=opts.subject==="staff"?opts.staff:opts.subject==="staffMulti"?((opts.staffList||[]).length+" selected staff"):opts.subject==="role"?pluralRoleLabel(opts.role):D.label;
-    const aoa=[[subject+" — "+D.label+" Schedule"].concat(dates.map(x=>DOW[x.day]+" "+fmt(x.date)))];const occRows=[];
-    const addDemand=(label,fn)=>{const row=[label].concat(dates.map(x=>fn(x.day)));aoa.push(row);return aoa.length;};
-    addDemand("Occupancy",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).occ);return v==null?"":v;});occRows.push(aoa.length);
-    addDemand("Arrivals",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).arr);return v==null?"":v;});
-    addDemand("Departures",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).dep);return v==null?"":v;});
-    if(isRoomsDept(opts.dept)){
-      addDemand("OOO / OOS rooms",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).ooo);return v==null?"":v;});
-      addDemand("House-use rooms",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).house);return v==null?"":v;});
-      addDemand("Unassigned rooms",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).unassigned);return v==null?"":v;});
-      addDemand("Credits",i=>{const v=_exportCreditsForDept(opts.dept,wk,i,true);return v==null?"":Math.round(v*100)/100;});
-      addDemand("Formula RAs (credits ÷ "+((D.rules||{}).creditsPerRA||14)+")",i=>{const v=_exportRaNumbers(opts.dept,wk,i).formula;return v==null?"":v;});
-      addDemand("Room Attendants Needed (incl. minimum "+((((D.coverage||{})["Room Attendants"]||{}).min)||0)+")",i=>_exportRaNumbers(opts.dept,wk,i).needed);
-      addDemand("Checkouts per scheduled RA",i=>{const dd=((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i])||{};if(dd.arr==null&&dd.dep==null)return"";const co=Math.max(dd.arr||0,dd.dep||0),n=_exportWorkingCount(opts.dept,wk,"Room Attendants",i);return n?Math.round(co/n*10)/10:(co?"No RAs scheduled":0);});
-    }else{
-      addDemand("Events",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).events);return v==null?"":v;});
-      addDemand("Transportation",i=>{const v=(((DEMAND[demandKeyFor(opts.dept,wk)]||{})[i]||{}).transportation);return v==null?"":v;});
-    }
-    aoa.push([]);const roles=[];staff.forEach(st=>{if(!roles.includes(st.role))roles.push(st.role);});roles.forEach(role=>{const rows=staff.filter(st=>st.role===role);if(!rows.length)return;aoa.push([pluralRoleLabel(role)]);rows.forEach(st=>aoa.push([st.n+" ("+st.type+")"].concat(dates.map(x=>cellValFor(opts.dept,wk,st.n,x.day)||"OFF"))));});
-    sheets.push({name:wk,aoa,occRows});
-  });return sheets;
-}
-function _renderScheduleExcelSubjectOptions(){
-  const dept=el("sxDept")&&el("sxDept").value,subject=el("sxSubject")&&el("sxSubject").value,D=CFG[dept]||{},wrap=el("sxSubjectValue");if(!wrap)return;
-  if(subject==="role")wrap.innerHTML=`<label class="small">Role <select id="sxRole" class="sfield">${(D.roles||[]).map(r=>`<option value="${esc(r)}">${esc(pluralRoleLabel(r))}</option>`).join("")}</select></label>`;
-  else if(subject==="staff")wrap.innerHTML=`<label class="small">Staff member <select id="sxStaff" class="sfield">${(D.staff||[]).map(st=>`<option value="${esc(st.n)}">${esc(st.n)} (${esc(st.type||"")})</option>`).join("")}</select></label>`;
-  else if(subject==="staffMulti")wrap.innerHTML=`<label class="small" style="width:100%">Staff members <select id="sxStaffMulti" class="sfield" multiple size="8" style="width:100%;height:auto">${(D.staff||[]).map(st=>`<option value="${esc(st.n)}">${esc(st.n)} (${esc(st.type||"")})</option>`).join("")}</select></label><span class="small muted">Use Ctrl/Command or Shift to select more than one person.</span>`;
-  else wrap.innerHTML=`<span class="small muted">Every roster row in the selected department</span>`;
-}
+function _exportDeptKeys(value,roomsOnly){let keys=(value&&DEPT_KEYS.includes(value))?[value]:DEPT_KEYS.slice();if(roomsOnly)keys=keys.filter(isRoomsDept);return keys;}
+function _exportRosterRows(deptKeys){const out=[];deptKeys.forEach(dp=>(CFG[dp].staff||[]).filter(s=>s.employed!==false).forEach(s=>out.push({dept:dp,staff:s})));return out;}
+function _scopeStaffRows(opts){let rows=_exportRosterRows(opts.depts||_exportDeptKeys(opts.dept));if(opts.scope==="role")rows=rows.filter(x=>x.staff.role===opts.role);if(opts.scope==="staff")rows=rows.filter(x=>(opts.staffKeys||[]).includes(x.dept+"|"+x.staff.n));return rows;}
+function _exportCheckPanelHtml(rows,id){return `<div style="width:100%;border:1px solid var(--line);border-radius:8px;padding:6px"><div class="mrow" style="justify-content:space-between"><b class="small">Staff members</b><span><button type="button" class="mini" onclick="document.querySelectorAll('#${id} input[type=checkbox]').forEach(x=>x.checked=true)">Select all</button> <button type="button" class="mini" onclick="document.querySelectorAll('#${id} input[type=checkbox]').forEach(x=>x.checked=false)">Deselect all</button></span></div><div id="${id}" style="max-height:220px;overflow:auto;margin-top:4px">${rows.map(x=>`<label class="small" style="display:flex;align-items:center;gap:6px;padding:3px 2px"><input type="checkbox" class="cbx" value="${esc(x.dept+"|"+x.staff.n)}"> ${esc(x.staff.n)} <span class="muted">— ${esc(deptLabel(x.dept))}, ${esc(pluralRoleLabel(x.staff.role))}</span></label>`).join("")}</div></div>`;}
+function _renderScheduleExcelScope(){const dept=el("sxDept").value,scope=el("sxScope").value,depts=_exportDeptKeys(dept),wrap=el("sxScopeValue");const rows=_exportRosterRows(depts);if(scope==="role"){const roles=[...new Set(rows.map(x=>x.staff.role))].sort();wrap.innerHTML=`<label class="small">Role <select id="sxRole" class="sfield"><option value="">Select…</option>${roles.map(r=>`<option value="${esc(r)}">${esc(pluralRoleLabel(r))}</option>`).join("")}</select></label>`;}else if(scope==="staff")wrap.innerHTML=_exportCheckPanelHtml(rows,"sxStaffChecks");else wrap.innerHTML=`<span class="small muted">All active roster members in the selected department scope</span>`;}
+function _buildScheduleExcelSheets(opts){const sheets=[];opts.depts.forEach(dp=>{const D=CFG[dp],groups=_scheduleExcelDateGroups(opts.from,opts.to),staff=_scopeStaffRows(opts).filter(x=>x.dept===dp).map(x=>x.staff);groups.forEach((dates,wk)=>{const subject=opts.scope==="role"?pluralRoleLabel(opts.role):opts.scope==="staff"?(staff.length+" selected staff"):D.label;const aoa=[[subject+" — "+D.label+" Schedule"].concat(dates.map(x=>DOW[x.day]+" "+fmt(x.date)))],occRows=[];const addDemand=(label,fn)=>{aoa.push([label].concat(dates.map(x=>fn(x.day))));return aoa.length;};addDemand("Occupancy",i=>{const v=(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).occ);return v==null?"":v;});occRows.push(aoa.length);addDemand("Arrivals",i=>{const v=(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).arr);return v==null?"":v;});addDemand("Departures",i=>{const v=(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).dep);return v==null?"":v;});if(isRoomsDept(dp)){addDemand("OOO / OOS rooms",i=>(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).ooo)??"");addDemand("House-use rooms",i=>(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).house)??"");addDemand("Unassigned rooms",i=>(((DEMAND[demandKeyFor(dp,wk)]||{})[i]||{}).unassigned)??"");addDemand("Credits",i=>{const v=_exportCreditsForDept(dp,wk,i,true);return v==null?"":Math.round(v*100)/100;});}aoa.push([]);const roles=[...new Set(staff.map(x=>x.role))];roles.forEach(role=>{const rr=staff.filter(x=>x.role===role);if(!rr.length)return;aoa.push([pluralRoleLabel(role)]);rr.forEach(st=>aoa.push([st.n+" ("+st.type+")"].concat(dates.map(x=>cellValFor(dp,wk,st.n,x.day)||"OFF"))));});sheets.push({name:(dp+"_"+wk).slice(0,31),aoa,occRows});});});return sheets;}
 function closeScheduleExcelExport(){_scheduleExcelExportOpen=false;_removeModalById("scheduleExcelExportModal");}
-function openScheduleExcelExport(){
-  if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}_scheduleExcelExportOpen=true;
-  const bg=document.createElement("div");bg.className="modalbg";bg.id="scheduleExcelExportModal";bg.style.display="flex";const from=weekKey(WEEK_START),to=weekKey(dayDate(6));
-  bg.innerHTML=`<div class="modal" style="max-width:620px;width:96%"><h2>Export schedule to Excel</h2><div class="small muted" style="margin-bottom:10px">Choose whose schedule to include and the exact dates. Demand rows are included for every exported week.</div>
-    <div class="mrow"><label class="small">Subject <select id="sxSubject" class="sfield" onchange="_renderScheduleExcelSubjectOptions()"><option value="department">Department</option><option value="role">Role</option><option value="staff">Single staff member</option><option value="staffMulti">Multiple staff members</option></select></label><label class="small">Department <select id="sxDept" class="sfield" onchange="_renderScheduleExcelSubjectOptions()">${DEPT_KEYS.map(d=>`<option value="${d}" ${d===DEPT?"selected":""}>${esc(CFG[d].label)}</option>`).join("")}</select></label></div>
-    <div class="mrow" id="sxSubjectValue"></div>
-    <div class="mrow"><label class="small">From <input type="date" required id="sxFrom" class="sfield" value="${from}" data-range-peer="sxTo" data-range-edge="from" data-range-policy="auto"></label><label class="small">To <input type="date" required id="sxTo" class="sfield" value="${to}" data-range-peer="sxFrom" data-range-edge="to" data-range-policy="auto"></label></div>
-    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeScheduleExcelExport()">Cancel</button><button class="brand" onclick="submitScheduleExcelExport()">Download Excel</button></div></div>`;
-  document.body.appendChild(bg);_renderScheduleExcelSubjectOptions();bg.addEventListener("mousedown",e=>{if(e.target===bg)closeScheduleExcelExport();});
-}
-function submitScheduleExcelExport(){
-  if(!_dateRangeCommit("sxFrom","sxTo","auto")){uiAlert("Enter a date range.");return;}const subject=el("sxSubject").value,dept=el("sxDept").value,opts={subject,dept,from:el("sxFrom").value,to:el("sxTo").value,role:el("sxRole")&&el("sxRole").value,staff:el("sxStaff")&&el("sxStaff").value,staffList:el("sxStaffMulti")?[...el("sxStaffMulti").selectedOptions].map(o=>o.value):[]};
-  if(subject==="role"&&!opts.role){uiAlert("Select a role.");return;}if(subject==="staff"&&!opts.staff){uiAlert("Select a staff member.");return;}if(subject==="staffMulti"&&!opts.staffList.length){uiAlert("Select at least one staff member.");return;}closeScheduleExcelExport();exportXLSX(opts);
-}
-function exportXLSX(opts){
-  if(!opts){openScheduleExcelExport();return;}if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}
-  const wb=XLSX.utils.book_new(),sheets=_buildScheduleExcelSheets(opts);if(!sheets.length){uiAlert("No dates to export.");return;}
-  sheets.forEach(sh=>{const ws=XLSX.utils.aoa_to_sheet(sh.aoa);ws["!cols"]=[{wch:38}].concat((sh.aoa[0]||[]).slice(1).map(()=>({wch:18})));ws["!rows"]=(sh.aoa||[]).map(()=>({hpt:20}));_styleScheduleWorksheet(ws,sh.aoa,sh.occRows);XLSX.utils.book_append_sheet(wb,ws,sh.name.slice(0,31));});
-  const subject=opts.subject==="staff"?opts.staff:opts.subject==="staffMulti"?((opts.staffList||[]).length+"_staff"):opts.subject==="role"?pluralRoleLabel(opts.role):(CFG[opts.dept]||{}).label;XLSX.writeFile(wb,_appendDownloadStamp("Schedule_"+String(subject||opts.dept).replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_"+opts.from+"_to_"+opts.to+".xlsx"),{cellStyles:true});
-}
+function openScheduleExcelExport(){if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}_scheduleExcelExportOpen=true;const bg=document.createElement("div");bg.className="modalbg";bg.id="scheduleExcelExportModal";bg.style.display="flex";const from=weekKey(WEEK_START),to=weekKey(dayDate(6));bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><h2>Export schedule to Excel</h2><div class="small muted" style="margin-bottom:10px">Choose the department scope, who to include, and any date range from one day upward. “Staff members” accepts one or many people by ordinary checkbox clicks.</div><div class="mrow" style="align-items:flex-end;flex-wrap:wrap"><label class="small">Department <select id="sxDept" class="sfield" onchange="_renderScheduleExcelScope()"><option value="" selected>Select… / All departments</option>${DEPT_KEYS.map(d=>`<option value="${d}">${esc(deptLabel(d))}</option>`).join("")}</select></label><label class="small">Scope <select id="sxScope" class="sfield" onchange="_renderScheduleExcelScope()"><option value="all">All staff</option><option value="role">Role</option><option value="staff">Staff members</option></select></label><span id="sxScopeValue" class="mrow" style="align-items:flex-end;min-width:0"></span></div><div class="mrow"><label class="small">From <input type="date" required id="sxFrom" class="sfield" value="${from}" data-range-peer="sxTo" data-range-edge="from" data-range-policy="auto"></label><label class="small">To <input type="date" required id="sxTo" class="sfield" value="${to}" data-range-peer="sxFrom" data-range-edge="to" data-range-policy="auto"></label></div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="closeScheduleExcelExport()">Cancel</button><button class="brand" onclick="submitScheduleExcelExport()">Download Excel</button></div></div>`;document.body.appendChild(bg);_renderScheduleExcelScope();bg.addEventListener("mousedown",e=>{if(e.target===bg)closeScheduleExcelExport();});}
+function submitScheduleExcelExport(){if(!_dateRangeCommit("sxFrom","sxTo","auto")){uiAlert("Enter a date range.");return;}const dept=el("sxDept").value,scope=el("sxScope").value,opts={dept,scope,depts:_exportDeptKeys(dept),from:el("sxFrom").value,to:el("sxTo").value,role:el("sxRole")&&el("sxRole").value,staffKeys:el("sxStaffChecks")?[...el("sxStaffChecks").querySelectorAll('input:checked')].map(x=>x.value):[]};if(scope==="role"&&!opts.role){uiAlert("Select a role.");return;}if(scope==="staff"&&!opts.staffKeys.length){uiAlert("Select at least one staff member.");return;}closeScheduleExcelExport();exportXLSX(opts);}
+function exportXLSX(opts){if(!opts){openScheduleExcelExport();return;}if(!window.XLSX){uiAlert("Excel library didn't load (need internet).");return;}const wb=XLSX.utils.book_new(),sheets=_buildScheduleExcelSheets(opts);if(!sheets.length){uiAlert("No dates or staff to export.");return;}sheets.forEach(sh=>{const ws=XLSX.utils.aoa_to_sheet(sh.aoa);ws["!cols"]=[{wch:38}].concat((sh.aoa[0]||[]).slice(1).map(()=>({wch:18})));ws["!rows"]=(sh.aoa||[]).map(()=>({hpt:20}));_styleScheduleWorksheet(ws,sh.aoa,sh.occRows);XLSX.utils.book_append_sheet(wb,ws,sh.name);});const subject=opts.scope==="role"?pluralRoleLabel(opts.role):opts.scope==="staff"?(opts.staffKeys.length+"_staff"):(opts.dept?deptLabel(opts.dept):"All_departments");XLSX.writeFile(wb,_appendDownloadStamp("Schedule_"+String(subject).replace(/[^A-Za-z0-9]+/g,"_").replace(/^_|_$/g,"")+"_"+opts.from+"_to_"+opts.to+".xlsx"),{cellStyles:true});}
 /* VERSION HISTORY (snapshots of THIS dept+week over time) ---------- */
 let SNAPS=load("hotel_snaps",{});   // SNAPS[dept][week] = [{ts, note, days:{staff:{d:v}}}]
 function autoSnap(){try{const wk=weekKey(WEEK_START);SNAPS[DEPT]=SNAPS[DEPT]||{};const arr=SNAPS[DEPT][wk]=SNAPS[DEPT][wk]||[];const last=arr[0];const now=Date.now();
@@ -32121,6 +31985,7 @@ truncate table public.snapshots;
 <li><b>A native HTML <code>table-layout:fixed</code> table with a colgroup does not proportionally redistribute width when a column is later hidden via <code>display:none</code></b> — the fixed layout algorithm locks in column widths once and never recalculates them. If a table's columns can be conditionally hidden and the table should always fill its container, switch that state to <code>table-layout:auto</code> instead.</li>
 <li><b>A CSS selector targeting "the last N cells" of a table row (e.g. <code>:nth-last-child(-n+2)</code>) only reaches exactly those N cells</b> — a related label/header cell sitting before that range is not automatically covered and must be hidden with its own explicit selector referencing its own actual position.</li>
 <li><b>Overflowing-text safeguards</b> — a checklist of the specific patterns that have caused real "text overflows its border" reports in this app, checked BEFORE shipping any new label/row, not only after a report: (1) a flex container (<code>display:flex</code>) holding more than one child, at least one of which is variable-length text (a sentence, a name, a select with long option text) — must also set <code>flex-wrap:wrap</code>, unless every child is guaranteed to always fit on one line at every supported width. A flex row with no wrap has no fallback once its children's combined natural width exceeds the container — the last child (often an input/select) gets pushed straight past the edge, not merely cramped. (2) A <code>&lt;select&gt;</code>/<code>&lt;input&gt;</code> given a hardcoded <code>min-width</code> inside a flex row — the min-width is a hard floor the browser will never shrink below regardless of how little room is actually available; pair any such min-width with either <code>max-width:100%</code> on that same element, or a generous <code>flex-wrap:wrap</code> on its parent (ideally both). (3) <code>white-space:nowrap</code> applied to a span/div whose content is dynamic (a name, a note, a value pulled from data) without a paired <code>overflow:hidden;text-overflow:ellipsis</code> (or a parent that can grow/scroll) — nowrap alone only prevents wrapping, it does nothing to stop the element from simply extending past its container. (4) A percentage-based <code>&lt;col&gt;</code> width (in a <code>table-layout:fixed</code> table) with no accompanying <code>min-width</code> on the table itself — percentages have no floor on their own; on a narrow enough container they shrink indefinitely, forcing cell content to wrap and inflating row height, rather than the table simply overflowing into its own scrollable wrapper the way a fixed-pixel-width column already would. Give the table a min-width matching a comfortable fixed-width equivalent so a narrow container triggers horizontal scroll, not column-narrowing.</li>
+<li><b>Undo and redo preserve the current tab, week, and viewport</b> — they apply the data change in place and must not navigate to Settings, another department/week, or scroll to a changed cell. A result may be highlighted only if it is already visible without moving the page.</li>
 <li><b>Page-jump-on-re-render safeguards</b> — any function that replaces an element's own <code>innerHTML</code> (or recreates a scrollable wrapper element from scratch inside a template string) resets that element's <code>scrollLeft</code>/<code>scrollTop</code> to 0 as a direct consequence, even when the visible content looks unchanged to the user — this reads exactly like an unwanted "jump" (left, right, or up) whenever the rebuild is triggered by an action that has nothing to do with scrolling (committing a cell edit, a successful PIN unlock, toggling a checkbox). Before shipping any new render path that replaces a scrollable container's content: capture that container's own <code>scrollLeft</code>/<code>scrollTop</code> immediately before the replacement, and restore both via <code>requestAnimationFrame</code> (after layout, not synchronously) immediately after — see <code>render()</code>'s own grid-wrapper fix and <code>renderMobileScheduleView()</code>'s own matching fix (which additionally has to re-query the wrapper by id post-rebuild, since that specific wrapper element is destroyed and recreated, not merely have its content replaced) for the reference pattern. A focused/active element being destroyed by the same innerHTML replacement is a related, second cause of an apparent "jump" (the browser can shift focus to <code>&lt;body&gt;</code>, which may itself scroll) — see <code>renderSettings()</code>'s own <code>_activeId</code> capture/restore for that half of the pattern.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
@@ -32623,6 +32488,7 @@ function _renderSettingsInner(){
        for the full reasoning: an explicit inline style is guaranteed to win over any class-selector-based rule,
        sidestepping whatever the underlying cause of the class-only approach not visibly working turns out to be). -->
   <div class="cfgrow"><input class="sfield small" style="min-width:260px;color:#6b7a8d" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield small" style="min-width:220px;color:#6b7a8d" id="supaKey2" placeholder="Anon public key" value="${key}">${DB?'<button class="btn30" onclick="disconnect()">Disconnect</button>':'<button class="brand btn30" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button class="btn30" onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button class="btn30" onclick="supaLogin()">🔑 Sign in</button>'} ${_v23ReviewRequired?'<span class="pill" style="background:#fde9c8;color:#7a4b00">Pre-v2.4 schedule review required</span>':''} ${(DB&&(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired))?'<button class="btn30" onclick="reviewAndUpload()" title="Compares this device with the live copy and shows the same review as connecting. Nothing is sent until you choose.">⬆ Review &amp; upload…</button>':''}</div>
+  <div class="cfgrow"><button class="btn30" onclick="viewSyncDiagnostics()">View sync diagnostics…</button><button class="btn30" onclick="downloadSyncDiagnostics()">Download sync log</button><label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG._includeDiagnosticsInBackup?"checked":""} onchange="CFG._includeDiagnosticsInBackup=this.checked;save('hotel_cfg',CFG)"> Include the bounded diagnostic log in JSON backups</label><span class="small muted">If Unsynced, keep this tab open and use Review &amp; upload; do not disconnect first.</span></div>
   <!-- Compare moved into Backup & versions, with the other read-only "what does the other copy hold" tools. -->
     <!-- The previous markup here had a genuinely UNCLOSED <div class="cfgrow"> around the old standalone "Schedule
        exceptions report" button — every element that followed was silently nested INSIDE that same flex-row div
@@ -37613,7 +37479,7 @@ function showAudit(){
   const _html=rows.length?(`<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th>When</th><th>User</th><th>Dept</th><th style="text-align:left">Change</th></tr></thead><tbody>`+rows.map(r=>`<tr><td class="small" style="white-space:nowrap">${esc(new Date(r.ts).toLocaleString())}</td><td class="small" style="overflow-wrap:break-word">${r.user?(esc(r.user)+(r._inferred?' <span class="muted" title="No user was recorded for this entry. Shown as the department\'s manager account, which is who its changes are made under.">(assumed)</span>':'')):'<span class="muted">\u2014</span>'}</td><td class="small" style="text-align:center">${esc(r.dept)}</td><td class="small" style="text-align:left;overflow-wrap:break-word">${esc(r.detail)}</td></tr>`).join("")+"</tbody></table></div>"):"<span class='muted'>No changes logged yet.</span>";
   openGenericViewModal("Change log (most recent 200)",_gapNote+_html);
 }
-function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,dept,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${r.dept}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=_appendDownloadStamp("hotel_audit_log.csv");a.click();}
+function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,department,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${deptLabel(r.dept)}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=_appendDownloadStamp("hotel_audit_log.csv");a.click();}
 /* LEAVE RANGES (Settings-managed; stamped to schedule; auto-drop when past) ---------- */
 let LEAVES=load("hotel_leaves",{});
 // FLOORS was keyed FLOORS[week][name], with no department anywhere in it - fine while Housekeeping was the only
@@ -38845,7 +38711,7 @@ function renderLeaveTab(){
     <button class="brand" onclick="submitLeaveRequest()">Submit request</button>
   </div>
   <hr>
-  <div class="cfgrow"><b>All requests</b> <span class="small muted">Approve/Deny requires edit access for that request’s department (or manager access).</span></div>
+  <div class="cfgrow"><b>All requests</b> <span class="small muted">Current and past requests are both shown below. Approve/Deny requires edit access for that request’s department (or manager access).</span></div>
     <!-- A simple, genuinely useful filter+sort layer on top of the existing list, without disrupting any of its
        established per-row visibility/decision logic: Sort picks WHICH field orders the list (defaulting to the
        original "most recent submission first"); Filter narrows to one Status. Both are plain client-side controls
@@ -39041,7 +38907,7 @@ function renderLeaveTab(){
       // the request to Pending for a fresh decision, mirroring revokeLeaveApproval()'s own "return to Pending, not
       // silently delete" pattern, so the full history stays visible either way.
       else if(r.status==="denied")statusCell=`<span class="pill err">Denied</span>${r.autoDenied?` <span class="pill" style="background:#f4f6f8;color:#6b7a8d" title="${esc(r.autoDenyReason||'')}">Auto</span>`:""}${canDecideLeaveRequest(r)?` <a href="javascript:void(0)" onclick="revokeLeaveDenial('${r.id}')" class="small" style="color:#1b4b8a" title="Reopens this request for a fresh Approve/Deny decision">Reconsider</a>`:""}`;
-      else statusCell=`<span class="pill warn" data-lrid="${r.id}" style="cursor:pointer" title="Click to Approve/Deny (requires ${r.dept} edit access)${isPast?' — dates have passed, but this is still undecided':''}" onclick="revealLeaveDecision('${r.id}')">Pending</span>`;
+      else statusCell=`<span class="pill warn" data-lrid="${r.id}" style="cursor:pointer" title="Click to Approve/Deny (requires ${esc(deptLabel(r.dept))} edit access)${isPast?' — dates have passed, but this is still undecided':''}" onclick="revealLeaveDecision('${r.id}')">Pending</span>`;
       // — a hard-to-miss flag for a request submitted specifically THROUGH the auto-deny "request special
       // consideration" escape hatch (see submitLeaveRequest()'s own comment for the full feature and its disclosed
       // limitation: this app cannot directly message a manager, so this visible in-tab flag is the real mechanism a
@@ -39093,7 +38959,7 @@ function renderLeaveTab(){
       // added explicit text-align:left to both, matching the same "identifying/descriptive column data
       // left-aligned, even though its own header stays centered" convention now applied consistently across this
       // app's other tables (roster Name, coverage heatmap Role).
-      return `<tr${_rowStyle}><td class="small ${_rc0.cls}" style="text-align:left;${_rc0.style}">${formatSubmittedAt(r.submittedAt)}</td><td class="${_rc1.cls}" style="text-align:left;${_rc1.style}">${esc(r.name)}</td><td>${r.dept}</td>${_midCells}<td>${r.from}</td><td>${r.to}</td>${_tailCells}<td class="small">${statusCell}</td></tr>`;
+      return `<tr${_rowStyle}><td class="small ${_rc0.cls}" style="text-align:left;${_rc0.style}">${formatSubmittedAt(r.submittedAt)}</td><td class="${_rc1.cls}" style="text-align:left;${_rc1.style}">${esc(r.name)}</td><td>${esc(deptLabel(r.dept))}</td>${_midCells}<td>${r.from}</td><td>${r.to}</td>${_tailCells}<td class="small">${statusCell}</td></tr>`;
     }
     // — the real colgroup this table always lacked (see _lrTh()'s own comment for the full root- cause
     // writeup). Submitted(130px)/Name(110px) are EXACT, matching their own hardcoded sticky left offsets (0 and
@@ -39116,7 +38982,7 @@ function renderLeaveTab(){
     if(pastRows.length){
       // Same colgroup fix applied here too — this second, "Past requests" table shares the exact same header
       // row/column structure as the main table above and was equally missing a colgroup.
-      h+=`<details style="margin-top:10px"><summary class="small" style="cursor:pointer"><b>Past requests (${pastRows.length})</b> — dates fully elapsed, kept for history</summary>
+      h+=`<details style="margin-top:10px" open><summary class="small" style="cursor:pointer"><b>Past requests (${pastRows.length})</b> — expanded by default; dates fully elapsed, kept for history</summary>
       <div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table style="table-layout:fixed;min-width:${_lrTableWidth}px;width:100%">${_lrColgroup}<thead><tr>${_headerCells}</tr></thead><tbody>`;
       pastRows.forEach(r=>{h+=leaveRowHtml(r,true);});
       h+=`</tbody></table></div></details>`;
@@ -43654,6 +43520,7 @@ function seedRoster(){try{
       setPending(true);
     }
   }catch(e){console.warn("v2.3 integrity migration skipped",e);}
+  try{if(_dedupeRosterRecords())localStorage.setItem("hotel_cfg",JSON.stringify(CFG));_normaliseLeaveDeptKeys();_pruneEmptyLeaveRequestRecords();}catch(e){console.warn("canonical data cleanup skipped",e);}
   // Paint the auth badge first, so its initial appearance is the one it keeps rather than a placeholder that
   // changes a moment later.
   try{updateAuth();}catch(e){}
