@@ -58,8 +58,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   /* COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): CSS comments in this block use
-     the standard CSS block-comment syntax only -- never line comments or HTML comment delimiters. State facts and reasoning only --
-     no "," "," or quoted-complaint narration. */  /* Audited every mobile/desktop schedule-formatting pair directly. Most already share ONE definition safely
+     the standard CSS block-comment syntax only -- never line comments or HTML comment delimiters. State facts and reasoning only; do not narrate session history or quote complaints. */  /* Audited every mobile/desktop schedule-formatting pair directly. Most already share ONE definition safely
      (.small/.muted/.todaydot are single shared classes both views' own JS literally emits, so either can never
      drift from the other; .rolelabel/.mobRoleLabel each reference the SAME var(--brand) custom property below, not
      a second hardcoded hex, so a brand-color change already propagates to both automatically). The one genuine gap
@@ -72,6 +71,7 @@
      <col> element under table-layout:fixed — verified directly, not assumed), so changing this one value is now
      the only edit either surface needs. */  :root{--brand:#1b2a4a;--line:#dfe4ea;--ok:#0e7c46;--warn:#b8860b;--err:#b30000;--bg:#f4f6f8;--focusrowcol:rgba(27,111,201,.065);--namecolWidth:150px;}
   *{box-sizing:border-box;}
+  html{-webkit-text-size-adjust:100%;text-size-adjust:100%;}
     /* The PREVIOUS round's fix here (overflow-x:hidden on html/body, plus the same on .wrap and .card below) is
        the confirmed cause of BOTH newly-reported regressions, not two separate bugs. Per the CSS spec's "computed
        overflow" rule, setting overflow-x to anything other than "visible" on an element forces the OTHER axis
@@ -1151,6 +1151,9 @@
        in the same row. */  #demandBody table td,#demandBody table th{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line);}
   #demandBody table tr:last-child td{box-shadow:none;} /* matches the existing "no border under the last row" convention used by every other table (.tblwrap>table tr:last-child td{border-bottom:none}) — replicated here via box-shadow since this table no longer uses a real border-bottom to suppress */
   #demandBody table td:first-child,#demandBody table th:first-child{position:sticky;left:0;z-index:5;border-right:none;box-shadow:inset 0 -1px 0 var(--line),1px 0 0 var(--line);} /* combines the same row-separator fix above with the pre-existing sticky-column vertical-edge line, in ONE box-shadow declaration (a second, separate box-shadow rule can't merge with this one — only the last-declared box-shadow value ever applies) */
+  /* The frozen label/name cells paint their horizontal separator as part of their own background and as an overlaid line, avoiding dependence on a neighboring non-sticky cell's paint cycle. */
+  #demandBody table td:first-child,#grid tbody tr:not(.rolerow) td:first-child{background-image:linear-gradient(to bottom,transparent calc(100% - 1px),var(--line) 0);background-repeat:no-repeat;}
+  #demandBody table td:first-child::after,#grid tbody tr:not(.rolerow) td:first-child::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--line);pointer-events:none;z-index:3;}
     /* Verified this is genuinely the LAST row in the FO demand table, since Valet is the final neededRow() call
        for FO: the previous rule zeroed out BOTH the bottom border-suppression AND the sticky column's own vertical
        divider line on the last row — dismissed at the time as "a trivial cosmetic trade-off with no functional
@@ -2876,16 +2879,22 @@
   .exportDateRow input{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
   .exportStaffPanel{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:8px}
   .exportStaffList{max-height:220px;overflow:auto;margin-top:6px;border-top:1px solid var(--line);padding-top:4px}
-  .exportStaffToggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;min-height:30px;cursor:pointer;column-gap:6px;min-width:0}
+  .exportStaffToggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:center;min-height:0;padding:1px 0;cursor:pointer;column-gap:6px;min-width:0}
   .exportStaffToggleText{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;min-width:0;overflow-wrap:anywhere}
   .exportStaffList label{display:grid!important;grid-template-columns:auto minmax(0,1fr);align-items:start!important;gap:6px!important;min-width:0}
   .exportStaffLine{min-width:0;line-height:1.35;overflow-wrap:anywhere}
+  .weekHoursInput{width:54px;text-align:center;font:inherit;font-size:11.5px;line-height:1.2;height:24px;box-sizing:border-box}
+  #coverageMinTable select{width:100%;min-width:0}
+  .compareDropZone{border:1px dashed #9eabb9;border-radius:8px;padding:12px;text-align:center;background:#fafbfc;cursor:pointer}
+  .compareDropZone.dragover{border-color:#1b6fc9;background:#eef3fb}
   #grid tbody tr:not(.rolerow) td{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line)}
   #carryoverBanner{margin:0 2px 8px}
   .carryoverNotice{text-align:left;font-size:12px;line-height:1.4}
   .carryoverTitle{display:block}
-  .carryoverRows{display:flex;flex-wrap:wrap;align-items:center;column-gap:14px;row-gap:2px;margin-top:2px;padding-left:22px;min-width:0}
-  .carryoverPerson{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;min-width:0}
+  .carryoverRows{display:flex;flex-wrap:wrap;align-items:center;column-gap:14px;row-gap:2px;margin-top:2px;padding-left:22px;min-width:0;max-width:100%;box-sizing:border-box}
+  /* A long name/time/status row may wrap within the notice instead of widening or clipping the page. */
+  .carryoverPerson{display:inline-flex;flex:0 1 auto;flex-wrap:wrap;align-items:center;gap:4px;white-space:normal;min-width:0;max-width:100%;overflow-wrap:anywhere}
+  .carryoverPerson>.clockflag{flex:0 0 auto}
   .mobWeekHours,.mobWeekCost{white-space:nowrap;font-size:11px}
   .syncDiagModal{display:flex;flex-direction:column;overflow:hidden!important}
   .syncDiagModal>h2,.syncDiagModal>.mrow{flex:0 0 auto}
@@ -2912,8 +2921,7 @@
 </head>
 <body>
 <!-- COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): comments in this body use
-   standard HTML comment syntax only -- never CSS's or JS's own comment syntax. State facts and reasoning only --
-   no "," "," or quoted-complaint narration. -->
+   standard HTML comment syntax only -- never CSS's or JS's own comment syntax. State facts and reasoning only; do not narrate session history or quote complaints. -->
 <header>
     <!-- to model this after the reference "4 1.html" exactly, and after direct side-by-side headless-browser testing
        at 10+ widths confirmed the reference's OWN flat structure never loses/clips a button at any width — unlike
@@ -3334,8 +3342,7 @@
 </div></div>
 <script>
 // COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): JS comments in this block use
-// or a standard block comment -- never HTML's <!-- --> comment syntax. State facts and reasoning only -- no ","
-// "," or quoted-complaint narration.
+// or a standard block comment -- never HTML's <!-- --> comment syntax. State facts and reasoning only; do not narrate session history or quote complaints.
 const APP_VERSION="2.5";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 function _versionIsBefore24(v){const m=String(v||"").match(/^(\d+)(?:\.(\d+))?/);if(!m)return true;const a=+m[1],b=+(m[2]||0);return a<2||(a===2&&b<4);}
@@ -12687,7 +12694,7 @@ function _undoRestore(snapStr,actionLocation){
         if(_undoCfgHint)_undoCfgHint.label=(actionLocation&&actionLocation.kind==="settings"&&actionLocation.label)||_lastSettingsEditLabel||null;
       }catch(eCfgDiff){_undoCfgHint=null;}
     }
-    if(actionLocation&&actionLocation.kind==="settings")_undoCfgHint={dept:actionLocation.dept||null,key:actionLocation.key||"",label:actionLocation.label||null,path:actionLocation.path||null};
+    if(actionLocation&&actionLocation.kind==="settings")_undoCfgHint={dept:actionLocation.dept||null,key:actionLocation.key||"",label:actionLocation.label||null,path:actionLocation.path||null,control:actionLocation.control||null};
     _undoCfgScrollHint=_undoCfgHint;
     // A real THIRD gap alongside ASSIGN/CFG: DEMAND (the occupancy/ arrivals/departures/credits table) was
     // tracked for the PUSH-scope logic just below (`_sc.demandWeeks`, unchanged), but never diffed for a SCROLL
@@ -12847,6 +12854,7 @@ function _undoRestore(snapStr,actionLocation){
     // department tab — never worse than before.
     try{
       if(_undoCfgScrollHint){
+        const _cfgScrollHint=_undoCfgScrollHint;
         if(VIEW!=="settings"){
           // Ensures setView()'s OWN existing scroll-restore (SCROLLMEM["settings"], see that function's own
           // final line) lands at the TOP of the page instead of whatever position was last remembered for
@@ -12855,15 +12863,15 @@ function _undoRestore(snapStr,actionLocation){
           SCROLLMEM["settings"]=0;
           setView("settings");
         }
-        if(_undoCfgScrollHint.dept&&SETDEPT!==_undoCfgScrollHint.dept)setSetDept(_undoCfgScrollHint.dept);
+        if(_cfgScrollHint.dept&&SETDEPT!==_cfgScrollHint.dept)setSetDept(_cfgScrollHint.dept);
         if(VIEW==="settings"){
-          const _capturedLabel=_undoCfgScrollHint.label;
-          const _fallbackLabel=(APP_WIDE_SETTING_LABELS||{})[_undoCfgScrollHint.key]||_undoCfgScrollHint.key;
+          const _capturedLabel=_cfgScrollHint.label;
+          const _fallbackLabel=(APP_WIDE_SETTING_LABELS||{})[_cfgScrollHint.key]||_cfgScrollHint.key;
           requestAnimationFrame(()=>{
             try{
               const _body=document.getElementById("settingsBody");
-              const _control=_settingsControlFromAnchor(_body,_undoCfgScrollHint.control);let _target=_control?(_control.closest("label,.cfgrow,.mrow,tr,fieldset,.twoCreditScaleRow")||_control):null;
-              if(!_target&&_body&&Array.isArray(_undoCfgScrollHint.path))_target=_settingsNodeFromPath(_body,_undoCfgScrollHint.path);
+              const _control=_settingsControlFromAnchor(_body,_cfgScrollHint.control);let _target=_control?(_control.closest("label,.cfgrow,.mrow,tr,fieldset,.twoCreditScaleRow")||_control):null;
+              if(!_target&&_body&&Array.isArray(_cfgScrollHint.path))_target=_settingsNodeFromPath(_body,_cfgScrollHint.path);
               if(!_target&&_body&&_capturedLabel){
                 // Exact match first (the ordinary, expected case — the SAME container, rebuilt with
                 // identical static text); falls back to substring containment purely as a defensive net
@@ -13486,6 +13494,7 @@ function _syncViewerVisibilityClass(){
   }catch(e){}
 }
 function syncNav(){_syncViewerVisibilityClass();const hv=CFG.hideForViewers&&!partialEditDepts().length;if(el("btnSET"))el("btnSET").style.display=hv?"none":"";if(el("btnREAD"))el("btnREAD").style.display=hv?"none":"";if(el("checksCard"))el("checksCard").style.display=(demandOrChecksHiddenFromViewer()||checksHiddenForNonManagers())?"none":"";if(el("demandCard"))el("demandCard").style.display=demandOrChecksHiddenFromViewer()?"none":"";
+  if(el("carryoverBanner"))el("carryoverBanner").style.display=VIEW==="schedule"?"":"none";
   // The relocated "This week at a glance" card (see its own comment in the static HTML for the full "moved out of
   // the Checks card, higher up the page" reasoning) needs this SAME visibility rule applied independently now that
   // it's a separate DOM element from #checksCard, rather than a child that inherited #checksCard's own display:none
@@ -15190,7 +15199,7 @@ function render(){
       // case being conflated with 0; checking `!=null` (true for 0) instead of a truthy check (false for 0) shows
       // "0" honestly whenever that's the real, computed answer.
       const _ah=actualHrs(s.n);const _proj=wk2.hrs;const _isAct=_ah!=null;const _shown=_isAct?_ah:_proj;const _tot=_isAct?_ah:_proj;const _ot=_tot>40;
-      h+=`<td class="small" style="${_ot?'background:#fdecec':''}"><input value="${_shown}" ${EDIT?"":"disabled"} onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_proj}" style="width:52px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')};font-weight:${_ot?'700':'400'}">${wk2.unk?` <span class="pill warn" title="Unreadable hours">?</span>`:""}</td><td class="small" title="${wk2.reg}h reg + ${wk2.ot}h OT @ $${rateOf(s)}/h" style="color:#0e7c46">${(+wk2.cost)?"$"+fmtNum(+wk2.cost,2):"—"}${otBadge(wk2,rateOf(s))}</td></tr>`;
+      h+=`<td class="small" style="${_ot?'background:#fdecec':''}"><input class="weekHoursInput" type="number" min="0" max="168" step="0.5" value="${_shown}" ${EDIT?"":"disabled"} onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_proj}" style="border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')};font-weight:${_ot?'700':'400'}">${wk2.unk?` <span class="pill warn" title="Unreadable hours">?</span>`:""}</td><td class="small" title="${wk2.reg}h reg + ${wk2.ot}h OT @ $${rateOf(s)}/h" style="color:#0e7c46">${(+wk2.cost)?"$"+fmtNum(+wk2.cost,2):"—"}${otBadge(wk2,rateOf(s))}</td></tr>`;
     });
   });
   // Department weekly totals
@@ -30307,7 +30316,7 @@ function renderMobileScheduleView(){
       // device) even once the cell's own CSS truncates the visible text with an ellipsis.
       const _fullNameLabel=s.n+(s.type?" ("+(TYPE_LABEL[s.type]||s.type)+")":"");
       const _wk2=personWeek(s),_ah=actualHrs(s.n),_isAct=_ah!=null,_shown=_isAct?_ah:_wk2.hrs,_ot=_shown>40;
-      const _hours=EDIT?`<input value="${_shown}" onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_wk2.hrs}" style="width:54px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#596575')}">`:`${_shown}h`;
+      const _hours=EDIT?`<input class="weekHoursInput" type="number" min="0" max="168" step="0.5" value="${_shown}" onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_wk2.hrs}" style="border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#596575')}">`:`${_shown}h`;
       bodyRows.push(`<tr><td title="${esc(_fullNameLabel)}">${esc(s.n)}${s.type?` <span class="small muted typebadge">(${esc(TYPE_LABEL[s.type]||s.type)})</span>`:""}</td>${cells.join("")}<td class="mobWeekHours" style="${_ot?'background:#fdecec;color:#b30000;font-weight:700':''}">${_hours}${_wk2.unk?' <span class="pill warn">?</span>':''}</td><td class="mobWeekCost" title="${_wk2.reg}h regular + ${_wk2.ot}h overtime" style="color:#0e7c46">${(+_wk2.cost)?'$'+fmtNum(+_wk2.cost,2):'—'}${otBadge(_wk2,rateOf(s))}</td></tr>`);
     });
   });
@@ -33198,20 +33207,8 @@ function _renderSettingsInner(){
   <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked — click to enter your PIN"></div>':''}
   <fieldset ${(_histWk||!_canEditDeptNow)?"disabled":""} style="border:none;margin:0;padding:0">
   <div class="cfgrow"><b>Coverage minimums</b> ${_histWk?'<span class="small muted">(historical — showing what was in effect this week; return to the current week to edit)</span>':""}</div>
-    <!-- The Role column still had NO width cap at all (a bare <col> claims 100% of whatever space Min/Per don't use,
-       and the table itself was forced to width:100%) — on a wide/full screen this stretched Role far beyond what
-       its actual text needs, leaving a large empty gap before the narrow Min/Per columns. Capped Role at a
-       generous-but-bounded max-width and switched the table itself from width:100% to width:auto (still capped at
-       max-width:100% so it never overflows its container) so the table stops forcing itself to fill 100% of the
-       available width when its content doesn't need it. -->
-    <!-- Again "coverage minimum table should take up the screen width, with columns adjusting proportionally instead of role
-       column being the only one stretching": the previous round's fix used fixed pixel widths for Min/Per and capped the
-       table at width:auto specifically to stop Role from being the ONLY column that grew — but that also stopped the table
-       from filling the available screen width at all, which is a genuine, separate complaint from "Role is too wide."
-       Switched to PERCENTAGE-based column widths (70/15/15) with table width:100% — now every column scales together
-       proportionally as the container resizes, so the table always fills the full available width, but Role never grows
-       disproportionately relative to Min/Per the way it did before. -->
-  <div class="tblwrap" style="overflow:auto;border-radius:8px"><table id="coverageMinTable" data-kbnav="1" style="table-layout:fixed;width:100%;max-width:100%;min-width:0"><colgroup><col style="width:70%"><col style="width:15%"><col style="width:15%"></colgroup><tr><th style="text-align:center">Role</th><th style="text-align:center">Min</th><th style="text-align:center">Per</th></tr>
+    <!-- The 60/18/22 column split scales across ordinary widths. A 360px table minimum keeps Min and Per usable; the existing tblwrap contains horizontal overflow on narrower screens so the page itself stays bounded. -->
+  <div class="tblwrap" style="overflow:auto;border-radius:8px"><table id="coverageMinTable" data-kbnav="1" style="table-layout:fixed;width:100%;max-width:100%;min-width:360px"><colgroup><col style="width:60%"><col style="width:18%"><col style="width:22%"></colgroup><tr><th style="text-align:center">Role</th><th style="text-align:center">Min</th><th style="text-align:center">Per</th></tr>
     <!-- This Role column previously used the raw roleLabel(role) with no pluralization — same fix as the schedule
        grid's own role-header row, applied here for the identical reason (this table lists roles as CATEGORIES with
        a shared minimum, not one specific person). Every role that ever appears in a coverage- minimums table (FO:
@@ -36079,7 +36076,7 @@ function actualHrs(nm){const wk=weekKey(WEEK_START);return (((ACTUAL[DEPT]||{})[
 // check) — harmless in practice since both copies were byte-for-byte identical (so "last one silently wins" changed
 // nothing behaviorally), but removed as dead, redundant code that could otherwise mislead a future edit into fixing
 // only one copy and not realizing an identical twin still existed elsewhere.
-function setActual(nm,v){const wk=weekKey(WEEK_START);ACTUAL[DEPT]=ACTUAL[DEPT]||{};ACTUAL[DEPT][wk]=ACTUAL[DEPT][wk]||{};if(v===""||v==null||isNaN(+v))delete ACTUAL[DEPT][wk][nm];else ACTUAL[DEPT][wk][nm]=+v;save("hotel_actual",ACTUAL);TOUCH();render();}
+function setActual(nm,v){const wk=weekKey(WEEK_START);ACTUAL[DEPT]=ACTUAL[DEPT]||{};ACTUAL[DEPT][wk]=ACTUAL[DEPT][wk]||{};if(v===""||v==null||isNaN(+v))delete ACTUAL[DEPT][wk][nm];else ACTUAL[DEPT][wk][nm]=Math.max(0,Math.min(168,+v));save("hotel_actual",ACTUAL);TOUCH();render();}
 let AV={name:null,editingSpecKey:null};
 const DAYMAP={SU:"Sun",SUN:"Sun",M:"Mon",MON:"Mon",T:"Tue",TU:"Tue",TUE:"Tue",W:"Wed",WED:"Wed",TH:"Thu",THU:"Thu",F:"Fri",FRI:"Fri",S:"Sat",SAT:"Sat"};
 function daysFromToken(tok){tok=tok.toUpperCase();const map={"MW":["Mon","Wed"],"MWF":["Mon","Wed","Fri"],"TTH":["Tue","Thu"],"MTH":["Mon","Tue","Wed","Thu"],"WEEKDAYS":["Mon","Tue","Wed","Thu","Fri"],"WEEKDAY":["Mon","Tue","Wed","Thu","Fri"],"WEEKENDS":["Sat","Sun"],"WEEKEND":["Sat","Sun"]};if(map[tok])return map[tok];
@@ -36837,18 +36834,25 @@ function downloadBatchUserResultsCSV(){
 // section. It belongs with the other read-only "what does the other copy hold" tools, so it is now opened from
 // Backup & versions into its own modal - which also means it can be read without scrolling Settings, and closed
 // when done rather than sitting there.
+let _COMPARE_BACKUP=null;
+function _compareSourceChanged(){const fileMode=(el("cmpSource")||{}).value==="file";const p=el("cmpFilePanel");if(p)p.style.display=fileMode?"block":"none";}
+function _compareSetBackupFile(file){if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const raw=JSON.parse(rd.result),cfg=JSON.parse(JSON.stringify(raw.cfg||raw.CFG||{})),assign=JSON.parse(JSON.stringify(raw.assign||raw.ASSIGN||{}));if(!cfg.FO||!assign.FO)throw new Error("The file does not contain the scheduler roster and schedule sections.");DEPT_KEYS.forEach(d=>{cfg[d]=cfg[d]||{staff:[]};assign[d]=assign[d]||{};});_normaliseStaffNamesInState(cfg,assign,{});_COMPARE_BACKUP={name:file.name,cfg,assign};const n=el("cmpFileName");if(n)n.textContent=file.name+" loaded";}catch(e){_COMPARE_BACKUP=null;uiAlert("Could not use this comparison file: "+(e.message||e));}};rd.readAsText(file);}
+function _compareWireDrop(){const z=el("cmpDropZone"),inp=el("cmpFileInput");if(!z||!inp)return;z.onclick=()=>inp.click();inp.onchange=()=>_compareSetBackupFile(inp.files&&inp.files[0]);["dragenter","dragover"].forEach(t=>z.addEventListener(t,e=>{e.preventDefault();z.classList.add("dragover");}));["dragleave","drop"].forEach(t=>z.addEventListener(t,e=>{e.preventDefault();z.classList.remove("dragover");}));z.addEventListener("drop",e=>_compareSetBackupFile(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]));}
 async function showCompareModal(){
+  _COMPARE_BACKUP=null;
   const bg=document.createElement("div");bg.className="modalbg";bg.id="cmpModal";bg.style.display="flex";
-  bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%;max-height:86vh;overflow:auto">
-    <h2>Compare this device against the shared copy</h2>
-    <p class="small muted">Reads only. Shows what the shared copy holds for <b>${esc(CFG[SETDEPT||DEPT].label)}</b>, week of <b>${esc(weekKey(WEEK_START))}</b>, next to what this device holds. Nothing is uploaded or changed.</p>
-    <div id="syncCompareBox"><span class="small muted">Asking the server\u2026</span></div>
-    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="_removeModalById('cmpModal')">Close</button></div>
+  const from=weekKey(WEEK_START),to=weekKey(dayDate(6));
+  bg.innerHTML=`<div class="modal" style="max-width:820px;width:96%;max-height:88vh;overflow:auto">
+    <h2>Compare this device with another copy</h2>
+    <p class="small muted">Choose a fresh read of the connected live copy or upload a full scheduler JSON backup. The comparison checks actual roster records and schedule cell values within the selected department, people, and dates; it does not upload or change anything.</p>
+    <div class="exportScopeGrid" style="grid-template-columns:minmax(180px,1fr)"><label class="small">Comparison source <select id="cmpSource" class="sfield" onchange="_compareSourceChanged()"><option value="live">Connected live copy (fresh read)</option><option value="file">Uploaded backup JSON</option></select></label></div>
+    <div id="cmpFilePanel" style="display:none;margin-top:10px"><div id="cmpDropZone" class="compareDropZone"><b>Drop a scheduler JSON backup here</b><br><span class="small muted">or click to choose a file</span><input id="cmpFileInput" type="file" accept="application/json,.json" style="display:none"></div><div id="cmpFileName" class="small muted" style="margin-top:4px"></div></div>
+    <div style="margin-top:10px">${_exportScopeControlsHtml("cmp",false,from,to)}</div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:12px"><button onclick="_removeModalById('cmpModal')">Close</button><button class="brand" onclick="runScopedComparison()">Run comparison</button></div>
+    <div id="syncCompareBox" style="margin-top:8px"></div>
   </div>`;
-  document.body.appendChild(bg);
-  bg.addEventListener("mousedown",e=>{if(e.target===bg)_removeModalById("cmpModal");});
-  _wireModalKeys(bg,()=>_removeModalById("cmpModal"));
-  try{await compareWithServer();}catch(e){}
+  document.body.appendChild(bg);_renderExportScopeControls("cmp",false);_compareWireDrop();_compareSourceChanged();
+  bg.addEventListener("mousedown",e=>{if(e.target===bg)_removeModalById("cmpModal");});_wireModalKeys(bg,()=>_removeModalById("cmpModal"));
 }
 async function backupMenu(){
   // The 3 Paycom-import options (Actual hours CSV/Excel, Punch times) that used to live in THIS menu have moved
@@ -43625,59 +43629,44 @@ function deliberatelyDeletedStaff(dept){
     return Object.keys(t).sort().map(n=>({name:n,on:t[n],stillOnRoster:inRoster.has(n)}));
   }catch(e){return [];}
 }
-// "The app on the phone still doesn't show the schedules that show on the computer."
-//
-// I have twice named a cause for this and twice been wrong, so this is a measurement rather than another theory.
-// It asks the server directly what it holds for the department and week currently on screen, compares that
-// against what this device holds, and prints both. It writes nothing.
-//
-// Reading it: "Server has / this device has" should match. If the server has rows this device does not, the pull
-// is being applied incompletely on this device. If the server itself is missing them, the device that made those
-// edits never successfully pushed, and the phone is innocent — the fix belongs on that other device. The roster
-// line matters just as much as the schedule line, because the grid draws one row per person on the roster and
-// looks up shifts by name: a device missing roster entries shows blank cells even with every shift present.
-async function compareWithServer(){
-  const box=el("syncCompareBox");if(!box)return;
-  if(!DB){box.innerHTML='<div class="mflag">Not connected to the shared live copy, so there is nothing to compare against. Connect first (Settings &rarr; Live sync).</div>';return;}
-  box.innerHTML='<span class="small muted">Asking the server\u2026</span>';
-  const dept=SETDEPT||DEPT, wk=weekKey(WEEK_START);
-  const rows=[];
-  const cell=(a,b)=>`<tr><td>${a}</td><td>${b}</td></tr>`;
-  try{
-    // Schedule rows for exactly this department and week.
-    const{data:aRows,error:aErr}=await DB.from("assignments").select("staff,days").eq("dept",dept).eq("week",wk);
-    if(aErr){rows.push(cell("Schedule rows",`<b>Could not read</b> \u2014 ${esc(aErr.message||String(aErr))}`));}
-    else{
-      const serverNames=new Set((aRows||[]).filter(r=>r.days&&Object.keys(r.days).length).map(r=>r.staff));
-      const localObj=((ASSIGN[dept]||{})[wk])||{};
-      const localNames=new Set(Object.keys(localObj).filter(n=>localObj[n]&&Object.keys(localObj[n]).length));
-      const missingHere=[...serverNames].filter(n=>!localNames.has(n)).sort();
-      const missingThere=[...localNames].filter(n=>!serverNames.has(n)).sort();
-      rows.push(cell("Schedule rows, week of "+wk,`Server has <b>${serverNames.size}</b> \u00B7 this device has <b>${localNames.size}</b>`));
-      if(missingHere.length)rows.push(cell("On the server, not on this device",`<b style="color:#b30000">${missingHere.length}</b> \u2014 ${esc(missingHere.slice(0,12).join(", "))}${missingHere.length>12?" \u2026":""}<br><span class="muted">The pull is not being applied here. Disconnect and reconnect, then run this again.</span>`));
-      if(missingThere.length)rows.push(cell("On this device, not on the server",`<b style="color:#c9891b">${missingThere.length}</b> \u2014 ${esc(missingThere.slice(0,12).join(", "))}${missingThere.length>12?" \u2026":""}<br><span class="muted">Two quite different things look like this, and it is worth knowing which: either these shifts were entered here and have not been uploaded yet, or the person was permanently deleted on another device \u2014 which removes their rows from the server while this device keeps its own copy. If a name here is someone you know was deleted, that is the second case, and re-deleting them here will make it stick.</span>`));
-      if(!missingHere.length&&!missingThere.length)rows.push(cell("Schedule match",`<b style="color:#2c7a4b">Identical</b> for this department and week.`));
-    }
-    // The roster, which is what the grid draws its rows from.
-    const{data:cRows,error:cErr}=await DB.from("app_config").select("data").eq("id","depts");
-    if(cErr){rows.push(cell("Roster",`<b>Could not read</b> \u2014 ${esc(cErr.message||String(cErr))}`));}
-    else{
-      const sd=((cRows&&cRows[0]&&cRows[0].data)||{})[dept]||null;
-      if(!sd){rows.push(cell("Roster",`<b>The server holds no roster yet</b> for ${esc(CFG[dept].label)} \u2014 nothing has ever been pushed to the shared copy.`));}
-      else{
-        const serverStaff=new Set((sd.staff||[]).map(x=>x.n));
-        const localStaff=new Set(((CFG[dept]||{}).staff||[]).map(x=>x.n));
-        const missHere=[...serverStaff].filter(n=>!localStaff.has(n)).sort();
-        const missThere=[...localStaff].filter(n=>!serverStaff.has(n)).sort();
-        rows.push(cell("Roster",`Server has <b>${serverStaff.size}</b> \u00B7 this device has <b>${localStaff.size}</b>`));
-        if(missHere.length)rows.push(cell("On the server roster, not here",`<b style="color:#b30000">${missHere.length}</b> \u2014 ${esc(missHere.slice(0,12).join(", "))}${missHere.length>12?" \u2026":""}<br><span class="muted">This device cannot draw their rows, so their shifts appear blank even when present. Disconnect and reconnect.</span>`));
-        if(missThere.length)rows.push(cell("On this roster, not on the server",`<b style="color:#c9891b">${missThere.length}</b> \u2014 ${esc(missThere.slice(0,12).join(", "))}${missThere.length>12?" \u2026":""}`));
-        if(!missHere.length&&!missThere.length)rows.push(cell("Roster match",`<b style="color:#2c7a4b">Identical</b>.`));
-      }
-    }
-  }catch(e){rows.push(cell("Comparison failed",esc(e.message||String(e))));}
-  box.innerHTML=`<div class="tblwrap" style="overflow:auto;border-radius:8px;margin-top:6px"><table class="small leftAlignCells autoTable checkResultTbl"><tr><th style="text-align:center">Check</th><th style="text-align:center">Result</th></tr>${rows.join("")}</table></div>`;
+// The comparison reads actual roster records and schedule-cell values. Its source is either a fresh live read or a user-selected full JSON backup; department, people, and date filters use the same scope controls as schedule export. It is read-only.
+function _compareRosterMap(cfg,dept){return new Map((((cfg||{})[dept]||{}).staff||[]).filter(x=>x&&x.n).map(x=>[x.n,x]));}
+function _compareNameInScope(dept,name,opts,localRoster,otherRoster){
+  if(opts.scope==="staff")return (opts.staffKeys||[]).includes(dept+"|"+name);
+  if(opts.scope!=="role")return true;
+  const st=localRoster.get(name)||otherRoster.get(name)||{};
+  return opts.role===GRID_NO_ROLE?(!st.role||!String(st.role).trim()||!((((localRoster.get(name)?CFG:(window._cmpOtherCfg||{}))[dept]||{}).roles||[]).includes(st.role))):st.role===opts.role;
 }
+async function _freshLiveComparisonSource(){
+  if(!DB)throw new Error("Not connected. Connect first or choose Uploaded backup JSON.");
+  const got=await _fetchAllRows("assignments","*");if(!got.ok)throw (got.error||new Error("Could not read live schedule rows."));
+  const assign={};DEPT_KEYS.forEach(d=>assign[d]={});got.data.forEach(r=>{if(!DEPT_KEYS.includes(r.dept))return;assign[r.dept][r.week]=assign[r.dept][r.week]||{};assign[r.dept][r.week][_canonicalStaffName(r.dept,r.staff,CFG)]=JSON.parse(JSON.stringify(r.days||{}));});
+  const cr=await DB.from("app_config").select("data").eq("id","depts");if(cr.error)throw cr.error;const data=((cr.data&&cr.data[0])||{}).data||{};
+  const cfg={};DEPT_KEYS.forEach(d=>cfg[d]=JSON.parse(JSON.stringify(data[d]||{staff:[],roles:[]})));
+  return{name:"Connected live copy (fresh read)",cfg,assign};
+}
+function _comparisonRows(source,opts){
+  const diffs=[],groups=_scheduleExcelDateGroups(opts.from,opts.to);let checkedCells=0,checkedPeople=0;
+  window._cmpOtherCfg=source.cfg;
+  opts.depts.forEach(dept=>{
+    const localRoster=_compareRosterMap(CFG,dept),otherRoster=_compareRosterMap(source.cfg,dept),names=new Set([...localRoster.keys(),...otherRoster.keys()]);
+    groups.forEach((dates,wk)=>{Object.keys(((ASSIGN[dept]||{})[wk])||{}).forEach(n=>names.add(n));Object.keys(((source.assign[dept]||{})[wk])||{}).forEach(n=>names.add(n));});
+    [...names].sort().filter(n=>_compareNameInScope(dept,n,opts,localRoster,otherRoster)).forEach(name=>{
+      checkedPeople++;const a=localRoster.get(name),b=otherRoster.get(name),state=x=>!x?"Missing":(x.employed===false?"Inactive":"Active");
+      if(state(a)!==state(b))diffs.push({cat:"Roster status",dept:deptLabel(dept),item:name,local:state(a),other:state(b)});
+      else if(a&&b){["role","type"].forEach(k=>{const av=String(a[k]||""),bv=String(b[k]||"");if(av!==bv)diffs.push({cat:"Roster detail",dept:deptLabel(dept),item:name+" — "+(k==="role"?"Role":"Type"),local:av||"Blank",other:bv||"Blank"});});}
+      groups.forEach((dates,wk)=>dates.forEach(d=>{checkedCells++;const av=String((((ASSIGN[dept]||{})[wk]||{})[name]||{})[d.day]||"").trim(),bv=String((((source.assign[dept]||{})[wk]||{})[name]||{})[d.day]||"").trim();if(av!==bv)diffs.push({cat:"Schedule",dept:deptLabel(dept),item:name+" — "+d.iso,local:av||"Blank",other:bv||"Blank"});}));
+    });
+  });
+  delete window._cmpOtherCfg;return{diffs,checkedCells,checkedPeople};
+}
+async function runScopedComparison(){
+  const box=el("syncCompareBox");if(!box)return;const opts=_readExportScopeControls("cmp",false);if(!opts)return;box.innerHTML='<span class="small muted">Reading and comparing…</span>';
+  try{const mode=el("cmpSource").value,source=mode==="file"?_COMPARE_BACKUP:await _freshLiveComparisonSource();if(!source)throw new Error("Choose or drop a scheduler JSON backup first.");const r=_comparisonRows(source,opts),label=esc(source.name),detail=r.diffs.length?r.diffs.map(x=>`<tr><td>${esc(x.cat)}</td><td>${esc(x.dept)}</td><td style="text-align:left">${esc(x.item)}</td><td style="text-align:left">${esc(x.local)}</td><td style="text-align:left">${esc(x.other)}</td></tr>`).join(""):`<tr><td colspan="5" style="text-align:left;color:#2c7a4b"><b>Exact match</b> for the selected roster status, roles/types, dates, and schedule cells.</td></tr>`;
+    box.innerHTML=`<div class="small" style="margin-bottom:6px"><b>Source:</b> ${label}<br><b>Checked:</b> ${nfmt(r.checkedPeople)} person/department records and ${nfmt(r.checkedCells)} schedule cells · <b>${nfmt(r.diffs.length)} difference(s)</b></div><div class="tblwrap" style="overflow:auto;max-height:44vh;border-radius:8px"><table class="small" style="min-width:760px;table-layout:auto"><tr><th>Category</th><th>Department</th><th>Person/date</th><th>This device</th><th>${mode==="file"?"Uploaded backup":"Live copy"}</th></tr>${detail}</table></div>`;
+  }catch(e){box.innerHTML=`<div class="mflag"><b>Comparison could not run.</b> ${esc(e.message||String(e))}</div>`;}
+}
+async function compareWithServer(){return runScopedComparison();}
 function seedRoster(){try{
   {const D=CFG.HSK;D.staff=D.staff||[];const have=new Set(D.staff.map(x=>x.n));
    // O-much Erich and Three-J Kaio (formerly modeled as their own "Laundry chute" crew) are a task assignment
@@ -44166,7 +44155,7 @@ function seedRoster(){try{
   // enforceStaffTombstones()'s own comment for the routes this covers.
   try{const _tsRemoved=enforceStaffTombstones();if(_tsRemoved.length){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}console.info("Re-applied "+_tsRemoved.length+" permanent staff deletion(s) at boot:",_tsRemoved);}}catch(e){console.warn("boot tombstone enforcement skipped (non-fatal):",e);}
   seedPTORequests();
-  try{const _t=new Date();_t.setHours(0,0,0,0);DEPT_KEYS.forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.availDates){Object.keys(st.availDates).forEach(k=>{const a=st.availDates[k];if(a.to&&new Date(a.to)<_t){delete st.availDates[k];}});}});});try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}catch(e){}
+  try{const _t=new Date();_t.setHours(0,0,0,0);DEPT_KEYS.forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.availDates){Object.keys(st.availDates).forEach(k=>{const a=st.availDates[k];if(a.to&&new Date(a.to)<_t&&_isAutoAvail(a)){delete st.availDates[k];}});}});});try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}catch(e){}
   // A v2.3 migration starts before boot fixups so it can block connection immediately. Re-run only the row
   // enumeration here, after every fixup/rename/seed above, so rows created or renamed during boot receive the same
   // protection before any live pull can begin.
