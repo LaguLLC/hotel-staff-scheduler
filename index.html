@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Hotel Staff Scheduler v2.5</title>
+<title>Hotel Staff Scheduler v2.5.1</title>
 <!-- PWA installability, needed for both (1) a genuine "add to Home Screen" install on any platform, and (2) a real,
    disclosed platform REQUIREMENT: iOS Safari only supports Web Push once a page has been installed to the Home
    Screen as a PWA (Safari 16.4+) — a plain browser tab on iOS cannot receive background push at all, regardless of
@@ -2876,7 +2876,15 @@
   .exportDateRow input{width:100%;min-width:0;max-width:100%;box-sizing:border-box}
   .exportStaffPanel{width:100%;box-sizing:border-box;border:1px solid var(--line);border-radius:8px;padding:8px}
   .exportStaffList{max-height:220px;overflow:auto;margin-top:6px;border-top:1px solid var(--line);padding-top:4px}
-  .exportStaffToggle{display:inline-flex;align-items:center;min-height:30px;cursor:pointer}
+  .exportStaffToggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;min-height:30px;cursor:pointer;column-gap:6px;min-width:0}
+  .exportStaffToggleText{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;min-width:0;overflow-wrap:anywhere}
+  .exportStaffList label{min-width:0;flex-wrap:wrap}.exportStaffList label>span{min-width:0;overflow-wrap:anywhere}
+  #grid tbody tr:not(.rolerow) td{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line)}
+  #carryoverBanner{margin:0 2px 8px}
+  .carryoverNotice{text-align:left;font-size:12px;line-height:1.4}
+  .carryoverTitle{display:block}
+  .carryoverRows{display:flex;flex-wrap:wrap;align-items:center;column-gap:14px;row-gap:2px;margin-top:2px;min-width:0}
+  .carryoverPerson{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;min-width:0}
   .syncDiagModal{display:flex;flex-direction:column;overflow:hidden!important}
   .syncDiagModal>h2,.syncDiagModal>.mrow{flex:0 0 auto}
   .syncDiagModal>.genericViewBody{display:flex;flex-direction:column;min-height:0;flex:0 1 auto}
@@ -2888,7 +2896,6 @@
   .syncDiagTable th:nth-child(3){min-width:125px}.syncDiagTable th:nth-child(4){min-width:70px}
   .syncDiagTable th:nth-child(5){min-width:80px}.syncDiagTable th:nth-child(6){min-width:220px}
   .diffReviewList,.diffReviewList summary{font-size:11.5px;line-height:1.45}
-  .carryoverNotice{text-align:left;font-size:12.5px;line-height:1.45}
   .twoCreditScaleRow{display:flex;align-items:center;flex-wrap:wrap;gap:6px;min-height:30px}
   .twoCreditScaleRow input[type=number]{width:54px;text-align:center}
   @media(max-width:620px){
@@ -2896,7 +2903,8 @@
     .exportScopeValue.isStaff{grid-column:1}
     .exportDateRow{grid-template-columns:1fr;gap:8px;padding:0 4px}
     .syncDiagWrap{max-height:58vh}
-    .carryoverNotice{font-size:12px}
+    .carryoverNotice{font-size:11.5px}
+    .exportStaffToggleText{display:block}.exportStaffToggleText>*{display:block;margin-left:0!important}
   }
 </style>
 </head>
@@ -3197,13 +3205,11 @@
        a CSS-only reflow of the existing #grid table) since a wide multi-column table is fundamentally the wrong
        interaction model for a phone — a day-at-a-time card list, with a big tap target per person and a day-tab switcher,
        is what "native app" actually means here, not just a narrower table. -->
+  <!-- One shared renderer/container for Desktop and App/Mobile; view mode changes presentation only. -->
+  <div id="carryoverBanner"></div>
   <div class="card" id="mobileScheduleCard" style="display:none"></div>
   <div class="card" id="desktopGridCard">
     <h2 id="gridTitle">Weekly schedule</h2>
-        <!-- See render()'s own comment on renderCarryoverBanner() for the full "yesterday's overnight shift isn't even part of
-         the currently-displayed week's grid" reasoning this responds to. Empty/hidden (via renderCarryoverBanner() itself,
-         not this markup) whenever there's nothing to show. -->
-    <div id="carryoverBanner"></div>
     <div class="schedule-scroll" style="overflow:auto;max-height:70vh;border:1px solid var(--line);border-radius:8px;position:relative"><table id="grid"></table></div>
     <div class="small" style="margin-top:6px">Cells: type or pick a shift (e.g. <b>14:00-22:30</b>), or a code — <b>OFF</b>, <b>PTO</b>, <b>LWOP</b>, <b>R-OFF</b>, <b>OC</b>. Blank = unassigned.</div>
   </div>
@@ -3328,8 +3334,9 @@
 // COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): JS comments in this block use
 // or a standard block comment -- never HTML's <!-- --> comment syntax. State facts and reasoning only -- no ","
 // "," or quoted-complaint narration.
-const APP_VERSION="2.5";
+const APP_VERSION="2.5.1";
 document.getElementById("ver").textContent="v"+APP_VERSION;
+function _versionIsBefore24(v){const m=String(v||"").match(/^(\d+)(?:\.(\d+))?/);if(!m)return true;const a=+m[1],b=+(m[2]||0);return a<2||(a===2&&b<4);}
 /* IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
 function uiAlert(msg){return uiDialog(msg,["OK"]).then(()=>{});}
 // okLabel and cancelLabel name what each button does ("Leave out" / "Go back"). Keep them to 1-3 words. Enter
@@ -12340,6 +12347,7 @@ let UNDO_STACK=[],REDO_STACK=[],UNDO_LOCATIONS=[],REDO_LOCATIONS=[];const UNDO_M
 let _undoApplying=false,_undoBatchTimer=null,_undoBatchPre=null,_undoBatchLocation=null;
 let _pendingUndoLocation=null;
 function _setPendingUndoLocation(loc){_pendingUndoLocation=loc?JSON.parse(JSON.stringify(loc)):null;}
+function _refreshUndoBaselineAfterRemote(){try{if(!_undoApplying&&_undoBatchPre===null)_lastSettledSnapshot=_undoSnapshot();}catch(e){}}
 let _undoPrePushSnapshot=null; // see _undoRestore()'s own comment
 // save()'s own undo-capture block below checks `!_undoApplying` (prevents an undo/redo RESTORE from re-triggering
 // itself) AND `!_syncApplying` — pullAll() (a reconnect/live-sync pull) calls save() separately for ASSIGN,
@@ -12445,7 +12453,7 @@ function _parseAssignRowKey(key){const p=String(key||"").split("|");return p.len
 function _persistDirtyAssignRows(){try{if(Object.keys(_dirtyAssignRows).length)localStorage.setItem(DIRTY_ASSIGN_ROWS_KEY,JSON.stringify(_dirtyAssignRows));else localStorage.removeItem(DIRTY_ASSIGN_ROWS_KEY);}catch(e){}}
 function _hasProtectedAssignRows(){return Object.keys(_dirtyAssignRows).length>0;}
 function _isAssignRowProtected(dept,wk,name){return !!_dirtyAssignRows[_assignRowKey(dept,wk,name)];}
-function _protectAssignRow(dept,wk,name){if(!dept||!wk||!name)return;_dirtyAssignRows[_assignRowKey(dept,wk,name)]=1;_persistDirtyAssignRows();}
+function _protectAssignRow(dept,wk,name){if(!dept||!wk||!name)return;_dirtyAssignRows[_assignRowKey(dept,wk,name)]=1;_persistDirtyAssignRows();_flagPendingLocalWork();}
 function _clearProtectedAssignKeys(keys){let changed=false;(keys||[]).forEach(k=>{if(_dirtyAssignRows[k]){delete _dirtyAssignRows[k];changed=true;}});if(changed)_persistDirtyAssignRows();}
 function _protectedNamesForWeek(dept,wk){const out=[];Object.keys(_dirtyAssignRows).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&p.dept===dept&&p.wk===wk)out.push(p.name);});return out;}
 function _markAllAssignmentRowsProtected(){let changed=false;Object.keys(ASSIGN||{}).forEach(dept=>{Object.keys(ASSIGN[dept]||{}).forEach(wk=>{Object.keys(ASSIGN[dept][wk]||{}).forEach(name=>{_dirtyAssignRows[_assignRowKey(dept,wk,name)]=1;changed=true;});});});if(changed)_persistDirtyAssignRows();}
@@ -12464,7 +12472,7 @@ function _markChangedAssignmentRows(before,after){
       });
     });
   });
-  if(changed)_persistDirtyAssignRows();
+  if(changed){_persistDirtyAssignRows();_flagPendingLocalWork();}
 }
 // DEMAND had NO staleness guard of any kind — neither pullAll()'s own demand fetch nor the "sched" realtime
 // channel's demand handler ever asked "was this week edited locally more recently than the data I'm about to
@@ -12476,21 +12484,33 @@ let _demandDirtyStamp={};
 const DIRTY_DEMAND_WEEKS_KEY="hotel_dirty_demand_weeks";
 let _dirtyDemandWeeks=load(DIRTY_DEMAND_WEEKS_KEY,{});if(!_dirtyDemandWeeks||typeof _dirtyDemandWeeks!=="object"||Array.isArray(_dirtyDemandWeeks))_dirtyDemandWeeks={};
 function _persistDirtyDemandWeeks(){try{if(Object.keys(_dirtyDemandWeeks).length)localStorage.setItem(DIRTY_DEMAND_WEEKS_KEY,JSON.stringify(_dirtyDemandWeeks));else localStorage.removeItem(DIRTY_DEMAND_WEEKS_KEY);}catch(e){}}
-function _markDemandDirty(wk){try{if(wk){_demandDirtyStamp[wk]=Date.now();_dirtyDemandWeeks[wk]=1;_persistDirtyDemandWeeks();}}catch(e){}}
+function _markDemandDirty(wk){try{if(wk){_demandDirtyStamp[wk]=Date.now();_dirtyDemandWeeks[wk]=1;_persistDirtyDemandWeeks();_flagPendingLocalWork();}}catch(e){}}
 function _clearDirtyDemandWeek(wk){if(_dirtyDemandWeeks[wk]){delete _dirtyDemandWeeks[wk];_persistDirtyDemandWeeks();}}
+function _clearAllDirtyDemandWeeks(){_dirtyDemandWeeks={};_persistDirtyDemandWeeks();}
 const DIRTY_LEAVE_IDS_KEY="hotel_dirty_leave_ids";
 let _dirtyLeaveIds=load(DIRTY_LEAVE_IDS_KEY,{});if(!_dirtyLeaveIds||typeof _dirtyLeaveIds!=="object"||Array.isArray(_dirtyLeaveIds))_dirtyLeaveIds={};
 function _persistDirtyLeaveIds(){try{if(Object.keys(_dirtyLeaveIds).length)localStorage.setItem(DIRTY_LEAVE_IDS_KEY,JSON.stringify(_dirtyLeaveIds));else localStorage.removeItem(DIRTY_LEAVE_IDS_KEY);}catch(e){}}
-function _protectLeaveId(id){if(id){_dirtyLeaveIds[id]=1;_persistDirtyLeaveIds();}}
+function _protectLeaveId(id){if(id){_dirtyLeaveIds[id]=1;_persistDirtyLeaveIds();_flagPendingLocalWork();}}
 function _clearDirtyLeaveId(id){if(_dirtyLeaveIds[id]){delete _dirtyLeaveIds[id];_persistDirtyLeaveIds();}}
+function _clearAllDirtyLeaveIds(){_dirtyLeaveIds={};_persistDirtyLeaveIds();}
 // How long after a local demand write an incoming realtime demand payload for that same week is treated as a
 // possible echo of this device's own earlier state and ignored. Deliberately short: long enough to cover a
 // normal Supabase round-trip, short enough that a genuine edit made by a colleague seconds later still lands.
 const DEMAND_ECHO_GUARD_MS=6000;
 const CHECKIN_ECHO_GUARD_MS=6000;
 let _checkinDirtyStamp={};
+const DIRTY_CHECKIN_ROWS_KEY="hotel_dirty_checkin_rows";
+let _dirtyCheckinRows=load(DIRTY_CHECKIN_ROWS_KEY,{});if(!_dirtyCheckinRows||typeof _dirtyCheckinRows!=="object"||Array.isArray(_dirtyCheckinRows))_dirtyCheckinRows={};
+function _persistDirtyCheckinRows(){try{if(Object.keys(_dirtyCheckinRows).length)localStorage.setItem(DIRTY_CHECKIN_ROWS_KEY,JSON.stringify(_dirtyCheckinRows));else localStorage.removeItem(DIRTY_CHECKIN_ROWS_KEY);}catch(e){}}
 function _checkinRowKey(dept,wk,name){return dept+"|"+wk+"|"+name;}
-function _markCheckinDirty(dept,wk,name){_checkinDirtyStamp[_checkinRowKey(dept,wk,name)]=Date.now();}
+function _markCheckinDirty(dept,wk,name){const k=_checkinRowKey(dept,wk,name);_checkinDirtyStamp[k]=Date.now();_dirtyCheckinRows[k]=1;_persistDirtyCheckinRows();_flagPendingLocalWork();}
+function _clearDirtyCheckinRow(dept,wk,name){const k=_checkinRowKey(dept,wk,name);if(_dirtyCheckinRows[k]){delete _dirtyCheckinRows[k];_persistDirtyCheckinRows();}}
+function _clearAllDirtyCheckinRows(){_dirtyCheckinRows={};_persistDirtyCheckinRows();}
+const DIRTY_CONFIG_KEY="hotel_dirty_config";
+let _dirtyConfig=(load(DIRTY_CONFIG_KEY,false)===true);
+function _markConfigDirty(){_dirtyConfig=true;try{localStorage.setItem(DIRTY_CONFIG_KEY,"true");}catch(e){}_flagPendingLocalWork();}
+function _clearDirtyConfig(){_dirtyConfig=false;try{localStorage.removeItem(DIRTY_CONFIG_KEY);}catch(e){}}
+function _syncableCfgFingerprint(cfg){const x={FO:(cfg||{}).FO,HSK:(cfg||{}).HSK,DB:(cfg||{}).DB,appWide:{}};SHARED_APP_CFG_KEYS.forEach(k=>{x.appWide[k]=(cfg||{})[k];});return _cfgCompareView(x);}
 // Same dirty-stamp principle as _assignDirtyStamp just above — see save()'s own comment (the "badge number
 // filled in on roster silently blank at export time" fix) for the full "CFG.FO/CFG.HSK had the identical,
 // never-covered gap" writeup.
@@ -12665,7 +12685,7 @@ function _undoRestore(snapStr,actionLocation){
         if(_undoCfgHint)_undoCfgHint.label=(actionLocation&&actionLocation.kind==="settings"&&actionLocation.label)||_lastSettingsEditLabel||null;
       }catch(eCfgDiff){_undoCfgHint=null;}
     }
-    if(actionLocation&&actionLocation.kind==="settings")_undoCfgHint={dept:actionLocation.dept||null,key:actionLocation.key||"",label:actionLocation.label||null};
+    if(actionLocation&&actionLocation.kind==="settings")_undoCfgHint={dept:actionLocation.dept||null,key:actionLocation.key||"",label:actionLocation.label||null,path:actionLocation.path||null};
     _undoCfgScrollHint=_undoCfgHint;
     // A real THIRD gap alongside ASSIGN/CFG: DEMAND (the occupancy/ arrivals/departures/credits table) was
     // tracked for the PUSH-scope logic just below (`_sc.demandWeeks`, unchanged), but never diffed for a SCROLL
@@ -12760,10 +12780,7 @@ function _undoRestore(snapStr,actionLocation){
     // visual indicator, if ever wanted again, has one single place to be reintroduced rather than three separate
     // call sites to re-touch.
     const _undoFlash=(elx)=>{
-      try{
-        if(!elx)return;
-        _scrollIntoViewIfNeeded(elx);
-      }catch(e){}
+      try{if(!elx)return;requestAnimationFrame(()=>_scrollIntoViewIfNeeded(elx));}catch(e){}
     };
     // Navigates to the changed (dept,week) FIRST, if the person is currently looking at a different one, so
     // the scroll/flash below has something real on screen to actually target — a cell that isn't rendered at
@@ -12843,8 +12860,8 @@ function _undoRestore(snapStr,actionLocation){
           requestAnimationFrame(()=>{
             try{
               const _body=document.getElementById("settingsBody");
-              let _target=null;
-              if(_body&&_capturedLabel){
+              let _target=(_body&&Array.isArray(_undoCfgScrollHint.path))?_settingsNodeFromPath(_body,_undoCfgScrollHint.path):null;
+              if(!_target&&_body&&_capturedLabel){
                 // Exact match first (the ordinary, expected case — the SAME container, rebuilt with
                 // identical static text); falls back to substring containment purely as a defensive net
                 // against any incidental whitespace-normalization difference between the two renders.
@@ -12865,7 +12882,8 @@ function _undoRestore(snapStr,actionLocation){
                 _target=_leaf?(_leaf.closest("label,.cfgrow,.mrow,tr,fieldset")||_leaf):null;
               }
               if(_target){
-                _undoFlash(_target);
+                for(let d=_target.closest("details");d;d=d.parentElement&&d.parentElement.closest("details"))d.open=true;
+                requestAnimationFrame(()=>_undoFlash(_target));
               }else{
                 const _card=document.getElementById("settingsCard");
                 if(_card)_card.scrollIntoView({block:"start"});
@@ -12979,9 +12997,11 @@ function _blurUndoRedoButtons(){
   if(r&&typeof r.blur==="function")r.blur();
 }
 function save(k,v){
-  let _assignBefore=null,_trackAssign=false;
+  let _assignBefore=null,_trackAssign=false,_cfgBefore=null,_cfgSharedChanged=false;
+  try{if(k==="hotel_cfg"){const raw=localStorage.getItem("hotel_cfg");_cfgBefore=raw?JSON.parse(raw):null;}}catch(e){}
   try{_trackAssign=(k==="hotel_assign"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite());if(_trackAssign){const raw=localStorage.getItem("hotel_assign");_assignBefore=raw?JSON.parse(raw):{};}}catch(e){_trackAssign=false;}
   try{localStorage.setItem(k,JSON.stringify(v));}catch(e){MEM[k]=JSON.stringify(v);}
+  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()){try{_cfgSharedChanged=!_cfgBefore||_syncableCfgFingerprint(_cfgBefore)!==_syncableCfgFingerprint(v);}catch(e){_cfgSharedChanged=true;}}
   if(_trackAssign){try{_markChangedAssignmentRows(_assignBefore,v);}catch(e){console.warn("assignment dirty-row comparison skipped",e);}}
   if(typeof TOUCH==="function"){if(k==="hotel_cfg")TOUCH("SET");else if(k==="hotel_demand"||k==="hotel_assign"||k==="hotel_actual"||k==="hotel_week")TOUCH(DEPT);}
   // Boot-time migrations run before any connection exists, so without this they set PENDING=true and connect()
@@ -13008,14 +13028,14 @@ function save(k,v){
   // self-correcting false-positive (the other department's genuinely newer remote change simply applies on the
   // NEXT pull instead of this one), which is a far smaller cost than the alternative of ever silently destroying a
   // real edit.
-  if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.DB=_now;_cfgDirtyStamp.appWide=_now;}
+  if(k==="hotel_cfg"&&_cfgSharedChanged&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()){const _now=Date.now();_cfgDirtyStamp.FO=_now;_cfgDirtyStamp.HSK=_now;_cfgDirtyStamp.DB=_now;_cfgDirtyStamp.appWide=_now;_markConfigDirty();}
   // See that flag's own declaration comment for the full "test badge number reaches the shared live database
   // immediately, well before the Excel Import wizard's own confirm-before-close review dialog ever gets a chance
   // to ask" explanation this closes. localStorage (just above) and the dirty-stamp/undo-tracking below are
   // completely UNAFFECTED by this flag — only the actual outbound network push is deferred, so nothing about this
   // save is any less real or less recoverable locally in the meantime; it is pushed exactly once, for real, the
   // moment the wizard actually closes (see closeExcelImportModal()'s own flush call).
-  if(k==="hotel_cfg"&&DB&&!_pullingConfigNow&&!_pcvDeferLivePush&&typeof pushConfig==="function"){pushConfig();}
+  if(k==="hotel_cfg"&&_cfgSharedChanged&&DB&&!_pullingConfigNow&&!_pcvDeferLivePush&&typeof pushConfig==="function"){pushConfig();}
   // Every settings and roster edit in this app funnels through this one save() call, so the settings-version
   // stream is driven from here rather than from each of the many individual Settings handlers.
   if(k==="hotel_cfg"&&!_pullingConfigNow&&!_syncApplying&&typeof autoSnapSettings==="function"){autoSnapSettings();}
@@ -13490,11 +13510,11 @@ DEPT_KEYS.forEach(_d=>{const _b=el("btn"+_d);if(_b)_b.classList.toggle("active",
   // Disconnect controls are never hidden based on role either).
   if(el("headerConnect")){
     const hc=el("headerConnect");
-    const _needsReview=!!(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired||Object.keys(_dirtyDemandWeeks||{}).length||Object.keys(_dirtyLeaveIds||{}).length);
-    if(!DB){hc.style.display="inline";hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}
-    else if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress){hc.style.display="inline";hc.textContent="Reviewing…";hc.title="The app is reading or verifying the live copy. No second action is available until this finishes.";hc.onclick=headerConnectOrDisconnect;}
-    else if(_needsReview){hc.style.display="inline";hc.textContent="Review & upload…";hc.title="This device is connected and has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}
-    else if(REALTIME_RECEIVE_ERR||SYNC_ERR||!navigator.onLine||!_realtimeScheduleReceiving){hc.style.display="inline";hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}
+    const _ss=_resolvedSyncState();setStatus(_ss.status,_ss.color);
+    if(_ss.action==="connect"){hc.style.display="inline";hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}
+    else if(_ss.action==="reviewing"){hc.style.display="inline";hc.textContent="Reviewing…";hc.title="The app is reading or verifying the live copy. No second action is available until this finishes.";hc.onclick=headerConnectOrDisconnect;}
+    else if(_ss.action==="review"){hc.style.display="inline";hc.textContent="Review & upload…";hc.title="This device is connected and has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}
+    else if(_ss.action==="retry"){hc.style.display="inline";hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}
     else{hc.style.display="inline";hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}
   }
   // README: genuinely has zero week-scoped content — stays disabled, no further nuance needed. LEAVE REQUESTS:
@@ -14044,10 +14064,10 @@ function roleLabel(role){return ROLE_LABEL_OVERRIDE[role]||role;}
 // "pluralize a role name" need. Fixed with the same parenthetical-aware pattern.
 //
 // Also: "capitalize JJ Global, J4 Janitorial, RA (in turndown RA), am in AM houseman, PM in PM Housemen, A-shift
-// PAs, B-shift PAs, Graveyard PAs" and, separately, "PM housemans" appearing as an awkward plural: 1. This function
+// PAs, B-shift PAs, Graveyard PAs" and, separately, incorrect houseman plurals: 1. This function
 // had no "-man"→"-men" irregular-plural handling at all (unlike pluralRoleLabel()'s own matching fix, a genuinely
 // separate, independently-implemented function with its own copy of the same pluralization logic) — so the
-// coverage-minimum pill for AM Houseman/PM Houseman produced "AM Housemans"/ "PM Housemans" whenever the minimum
+// coverage-minimum pill for AM Houseman/PM Houseman produced an incorrect plural whenever the minimum
 // wasn't exactly 1. Added the identical irregular-plural rule. 2. The final `.toLowerCase()` blindly lowercased the
 // ENTIRE result — correct for an ordinary word inline ("need ≥ 2 greeters per day"), but wrong for a real acronym
 // or vendor/proper name embedded in a role name ("am housemen", "turndown ra", "a-shift pas", "jj global" all read
@@ -14104,7 +14124,7 @@ function roleDisplayName(role,count){
 // pluralizing them is never correct — excluded here for the same reason roleDisplayName() excludes them.
 function pluralRoleLabel(role){
   const raw=String(role||"").trim();
-  if(!raw||raw.length<=1)return "Role not set";
+  if(!raw||raw.length<=1)return "No role set";
   if(raw===GRID_NO_ROLE)return GRID_NO_ROLE;
   const lbl=roleLabel(raw);
   if(lbl.indexOf("Outsourced")===0)return lbl;
@@ -14137,6 +14157,7 @@ function seniorityRanks(dept){
 // harmless (never produces a different result than calling pluralRoleLabel() alone would) and other code may
 // already reference this specific name.
 function dropdownRoleLabel(role){return role.indexOf("Outsourced")===0?role:pluralRoleLabel(role);}
+function staffRoleContextLabel(dept,role){const raw=String(role||"").trim(),roleText=(!raw||raw.length<=1||raw===GRID_NO_ROLE)?"No role set":pluralRoleLabel(raw);return deptLabel(dept)+", "+roleText;}
 // Per-shift colour tint — REPLACED the previous invented pastel palette with the ACTUAL colours extracted directly
 // from the real hotel Excel files (cell fill RGB/theme values read via openpyxl), since the hotel's own coloring is
 // manual/copy-pasted per role (confirmed in the meeting: "they copy and paste the shifts"), not a single global
@@ -15174,12 +15195,12 @@ function render(){
       // case being conflated with 0; checking `!=null` (true for 0) instead of a truthy check (false for 0) shows
       // "0" honestly whenever that's the real, computed answer.
       const _ah=actualHrs(s.n);const _proj=wk2.hrs;const _isAct=_ah!=null;const _shown=_isAct?_ah:_proj;const _tot=_isAct?_ah:_proj;const _ot=_tot>40;
-      h+=`<td class="small" style="${_ot?'background:#fdecec':''}"><input value="${_shown}" ${EDIT?"":"disabled"} onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_proj}" style="width:52px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')};font-weight:${_ot?'700':'400'}">${wk2.unk?` <span class="pill warn" title="Unreadable hours">?</span>`:""}</td><td class="small" title="${wk2.reg}h reg + ${wk2.ot}h OT @ $${rateOf(s)}/h" style="color:#0e7c46">${(+wk2.cost)?"$"+wk2.cost:"—"}${otBadge(wk2,rateOf(s))}</td></tr>`;
+      h+=`<td class="small" style="${_ot?'background:#fdecec':''}"><input value="${_shown}" ${EDIT?"":"disabled"} onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_proj}" style="width:52px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')};font-weight:${_ot?'700':'400'}">${wk2.unk?` <span class="pill warn" title="Unreadable hours">?</span>`:""}</td><td class="small" title="${wk2.reg}h reg + ${wk2.ot}h OT @ $${rateOf(s)}/h" style="color:#0e7c46">${(+wk2.cost)?"$"+fmtNum(+wk2.cost,2):"—"}${otBadge(wk2,rateOf(s))}</td></tr>`;
     });
   });
   // Department weekly totals
   let tH=0,tC=0; dept.staff.forEach(s=>{const w=personWeek(s);tH+=w.hrs;tC+=+w.cost;});
-  h+=`<tr class="wktotal"><td class="name" style="background:#eef2f6">Week total</td><td colspan="7" style="text-align:right;background:#eef2f6">Hours · Cost →</td><td style="background:#eef2f6">${tH.toFixed(1)}h</td><td style="color:#0e7c46;background:#eef2f6">$${tC.toFixed(2)}</td></tr>`;
+  h+=`<tr class="wktotal"><td class="name" style="background:#eef2f6">Week total</td><td colspan="7" style="text-align:right;background:#eef2f6">Hours · Cost →</td><td style="background:#eef2f6">${tH.toFixed(1)}h</td><td style="color:#0e7c46;background:#eef2f6">$${fmtNum(tC,2)}</td></tr>`;
   el("grid").innerHTML=h+"</tbody>"+datalist();
   // See the new #grid.hidetotals CSS rule's own comment for the full mechanism; toggled here, unconditionally
   // on EVERY render, so it can never go stale regardless of which code path last changed EDIT.
@@ -15502,10 +15523,10 @@ function renderCarryoverBanner(dept){
     // what the prior hand-coded fallback literal (#e0a800) already resolved to for every one of these same cases.
     const _dotClass=(_attn==="noshow")?"severe":((_attn==="missing"||_attn==="late")?_attn:"");
     const _dot=_attn?`<span class="clockflag inline${_dotClass?" "+_dotClass:""}" title="${_attn==='noshow'?'No clock-in recorded, shift already ended':(_attn==='notout'?'Clocked in, never clocked out':(_attn==='late'?'Shift ended, no clock-in yet':'Attendance needs attention'))}"></span>`:"";
-    _rows.push(`<span style="display:inline-flex;align-items:center;gap:4px;margin-right:14px;white-space:nowrap">${_dot}<b>${esc(s.n)}</b> <span class="small muted">${esc(v)}</span> ${_statusHtml}</span>`);
+    _rows.push(`<span class="carryoverPerson">${_dot}<b>${esc(s.n)}</b> <span class="small muted">${esc(v)}</span> ${_statusHtml}</span>`);
   });
   if(!_rows.length){_b.innerHTML="";return;}
-  _b.innerHTML=`<div class="carryoverNotice" style="background:#eef6ff;border:1px solid #b7d3f2;border-radius:8px;padding:8px 12px;margin-bottom:8px"><b>\u{1F319} Continuing from yesterday</b> (${fmt(_yd)}) — still-open overnight shift(s) not part of this week's own grid: <span style="margin-left:6px">${_rows.join("")}</span></div>`;
+  _b.innerHTML=`<div class="carryoverNotice" style="background:#eef6ff;border:1px solid #b7d3f2;border-radius:8px;padding:8px 12px"><span class="carryoverTitle"><b>\u{1F319} Continuing from yesterday</b> (${fmt(_yd)}) — still-open overnight shift(s) not part of this week's own grid:</span><span class="carryoverRows">${_rows.join("")}</span></div>`;
 }
 function datalist(){
   const base=(CFG[DEPT].shifts&&CFG[DEPT].shifts.length)?CFG[DEPT].shifts:(DEPT==="FO"?SHIFTS_FO:SHIFTS_HSK);const opts=base.concat(codesFor(DEPT));
@@ -16166,7 +16187,7 @@ function computeLaborCostOverview(){
 // section described in the schedule-grid loop above. Deliberately phrased as the action required rather than as a
 // role name, since it is not one — no coverage minimum, ranking rule or auto-fill rule ever refers to it, because
 // it is never present in dept.roles.
-const GRID_NO_ROLE="Needs a role";
+const GRID_NO_ROLE="No role set";
 function _scheduleRosterRows(deptKey,wk){
   const dept=CFG[deptKey]||{},rows=(dept.staff||[]).slice(),known=new Set(rows.map(s=>s&&s.n).filter(Boolean)),weekRows=(((ASSIGN[deptKey]||{})[wk])||{});
   Object.keys(weekRows).forEach(n=>{if(!known.has(n)&&_normalizedAssignRow(weekRows[n]))rows.push({n,role:GRID_NO_ROLE,type:"",employed:true,_scheduleOnly:true});});
@@ -16389,7 +16410,7 @@ function adjustAccrualBalance(dept,name,hours,note){
 function otBadge(wk2,rate){
   if(!wk2||!wk2.ot)return "";
   const mode=CFG.otDisplayMode||"hours";
-  const otDollars=(wk2.ot*rate*OT_MULT).toFixed(2);
+  const otDollars=fmtNum(wk2.ot*rate*OT_MULT,2);
   const otPct=wk2.hrs?Math.round((wk2.ot/wk2.hrs)*1000)/10:0;
   const parts=[];
   if(mode==="hours"||mode==="all")parts.push(wk2.ot+"h OT");
@@ -21700,8 +21721,11 @@ function renderFlags(){
 // silently never fire, even though real local-only data was sitting there. By persisting this as a durable
 // flag (hotel_pending_dirty) that survives reloads, initialized from storage instead of hardcoded false.
 let PENDING=(load("hotel_pending_dirty",false)===true);
-if(Object.keys(_dirtyAssignRows||{}).length||Object.keys(_dirtyDemandWeeks||{}).length||Object.keys(_dirtyLeaveIds||{}).length)PENDING=true;
-function setPending(v){PENDING=v;try{localStorage.setItem("hotel_pending_dirty",JSON.stringify(v));}catch(e){}}
+if(Object.keys(_dirtyAssignRows||{}).length||Object.keys(_dirtyDemandWeeks||{}).length||Object.keys(_dirtyLeaveIds||{}).length||Object.keys(_dirtyCheckinRows||{}).length||_dirtyConfig)PENDING=true;
+function setPending(v){PENDING=!!v;try{localStorage.setItem("hotel_pending_dirty",JSON.stringify(PENDING));}catch(e){}}
+function _flagPendingLocalWork(){try{setPending(true);}catch(e){try{localStorage.setItem("hotel_pending_dirty","true");}catch(e2){}}}
+function _hasDurablePendingWork(){return !!(_hasProtectedAssignRows()||_v23ReviewRequired||Object.keys(_dirtyDemandWeeks||{}).length||Object.keys(_dirtyLeaveIds||{}).length||Object.keys(_dirtyCheckinRows||{}).length||_dirtyConfig);}
+function _reconcilePendingFlag(){const v=!!(_pushFailureLatched||_hasDurablePendingWork()||_outstandingPushes>0);setPending(v);return v;}
 // A failed write remains latched until a deliberate full review/upload succeeds. A later unrelated successful cell
 // write must not erase evidence that other person-week rows from an earlier bulk operation are still unsynced.
 let _pushFailureLatched=(load("hotel_push_failed",false)===true);
@@ -21791,14 +21815,15 @@ function rosterUploadSafetyMessage(rep){
   return rep.detail.map(d=>CFG[d.dept].label+" lacks "+d.count+" staff member(s) that live holds: "
     +d.names.join(", ")+(d.more?(" and "+d.more+" more"):"")).join("\n\n");
 }
-function _pushStarted(kind){_outstandingPushes++;if(kind==="config")_outstandingConfigPushes++;setPending(true);}
+function _pushStarted(kind){_outstandingPushes++;if(kind==="config")_outstandingConfigPushes++;}
 function _pushSettled(succeeded,kind){
   _outstandingPushes=Math.max(0,_outstandingPushes-1);if(kind==="config")_outstandingConfigPushes=Math.max(0,_outstandingConfigPushes-1);
   if(!succeeded)_setPushFailureLatched(true);
   if(_outstandingPushes===0){
-    if(_reviewUploadInProgress){setPending(true);setStatus(DB?"reviewing":"local",DB?"#c9891b":"#c7d0da");}
-    else if(succeeded&&!SYNC_ERR&&!_pushFailureLatched&&!_hasProtectedAssignRows())setPending(false);
-    else if(_pushFailureLatched||_hasProtectedAssignRows())setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");
+    if(_reviewUploadInProgress)setPending(true);
+    else _reconcilePendingFlag();
+    _applySyncUiState();
+    try{syncNav();}catch(e){}
   }
 }
 // Re-fetches just the roster row when an earlier merge was skipped. Runs a few seconds later, by which time any
@@ -21851,6 +21876,24 @@ let SYNC_ERR=null; // last REST/push/pull error
 let REALTIME_RECEIVE_ERR=null; // schedule-channel receiving error; only SUBSCRIBED clears it
 let _realtimeScheduleReceiving=false;
 let _schedEverSubscribed=false;
+let _pullInFlight=0;
+let _pullQueue=Promise.resolve();
+let _subscriptionGeneration=0;
+let _scheduleReadyWaiters=[];
+function _hasLocalSyncWork(){return !!(PENDING||_pushFailureLatched||_hasDurablePendingWork());}
+function _resolvedSyncState(){
+  if(!DB)return {status:"local",color:"#c7d0da",action:"connect"};
+  if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_pullInFlight>0)return {status:"reviewing",color:"#c9891b",action:"reviewing"};
+  if(_hasLocalSyncWork())return {status:"unsynced",color:"#e0a800",action:"review"};
+  if(SYNC_ERR||REALTIME_RECEIVE_ERR||!navigator.onLine||!_realtimeScheduleReceiving)return {status:"unsynced",color:"#e0a800",action:"retry"};
+  return {status:"live",color:"#2c9e5f",action:"disconnect"};
+}
+function _applySyncUiState(){const s=_resolvedSyncState();setStatus(s.status,s.color);return s;}
+function _waitForScheduleSubscription(gen,timeoutMs){
+  if(_realtimeScheduleReceiving&&gen===_subscriptionGeneration)return Promise.resolve(true);
+  return new Promise(resolve=>{const item={gen,resolve,timer:null};item.timer=setTimeout(()=>{_scheduleReadyWaiters=_scheduleReadyWaiters.filter(x=>x!==item);resolve(false);},timeoutMs||8000);_scheduleReadyWaiters.push(item);});
+}
+function _resolveScheduleWaiters(gen,ok){const keep=[];_scheduleReadyWaiters.forEach(x=>{if(x.gen===gen){clearTimeout(x.timer);x.resolve(!!ok);}else keep.push(x);});_scheduleReadyWaiters=keep;}
 // The status bar previously showed a PERSISTENT "⬆ Upload to live" link any time PENDING was true — an
 // always-on button, not the requested pop-up-only behavior. That link is now removed from the status bar entirely;
 // uploading is instead driven ONLY by pop-up confirmations at the two moments that actually matter — going from
@@ -21953,7 +21996,7 @@ function setStatus(txt,color){
   // is exactly what is still undecided while the dialog is open. Every other status - connecting, local,
   // unsynced, an error - is still allowed through, because those remain true regardless of the answer.
   if((_awaitingSyncChoice||_reviewUploadInProgress)&&txt==="live"){txt="reviewing";color="#c9891b";}
-  else if(txt==="live"&&(_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired||(PENDING&&_outstandingPushes===0))){txt="unsynced";color="#e0a800";}
+  else if(txt==="live"&&(_hasLocalSyncWork()||SYNC_ERR||REALTIME_RECEIVE_ERR||!_realtimeScheduleReceiving)){txt="unsynced";color="#e0a800";}
   const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();showUnsyncedHelp();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
   requestAnimationFrame(_syncTagRowAlign); // the error pill/"Reconnect" link above are optional content that changes .tag's own width -- see .tag.wrappedRow's own comment
   // Mirrors this SAME color onto the compact app-mode-only status dot (see that element's own comment) — this is
@@ -21977,9 +22020,9 @@ function setStatus(txt,color){
 // real, lasting problem — this only smooths the DISPLAY of brief, self-healing drops.
 let _statusFlickerTimer=null;
 function reportSyncError(where,error){
-  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));setPending(true);console.error("[sync failed]",where,error);
+  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("error",where,0,"error",error);
   if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
-  _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;if(SYNC_ERR)setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");},4000);
+  _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;_applySyncUiState();try{syncNav();}catch(e){}},250);
 }
 // "upload changes now button keeps appearing and disappearing by itself" in live mode. Cause: the realtime
 // channel's own subscribe() status handler (below, in _subscribeSchedChannel()) called the SAME shared
@@ -22000,8 +22043,7 @@ function reportSyncError(where,error){
 // anything about local-edit safety — PENDING is left completely untouched, since a channel-only issue never
 // establishes that one.
 function reportRealtimeChannelError(where,error){
-  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);
-  if(DB)setStatus("unsynced","#e0a800");
+  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("realtime",where,0,"error",error);_applySyncUiState();
 }
 // Now also manually clickable (see setStatus above) — lets a user dismiss a persistent error that can't
 // self-resolve (e.g. A genuinely missing Supabase table/schema issue that requires an admin to fix separately)
@@ -22009,17 +22051,17 @@ function reportRealtimeChannelError(where,error){
 function clearSyncError(){
   if(_statusFlickerTimer){clearTimeout(_statusFlickerTimer);_statusFlickerTimer=null;}
   if(SYNC_ERR)SYNC_ERR=null;
-  setStatus(DB?(PENDING||_pushFailureLatched||_hasProtectedAssignRows()?"unsynced":"live"):"local",DB?(PENDING||_pushFailureLatched||_hasProtectedAssignRows()?"#e0a800":"#2c9e5f"):"#c7d0da");
+  _applySyncUiState();
 }
-window.addEventListener("offline",()=>{if(DB)setStatus("unsynced","#e0a800");});
-window.addEventListener("online",async()=>{if(DB){if(PENDING)await maybeUploadOnConnect(true);else await pullAll(false,true);if(DB)clearSyncError();syncNav();}});
+window.addEventListener("offline",()=>{if(DB){_applySyncUiState();try{syncNav();}catch(e){}}});
+window.addEventListener("online",async()=>{if(DB){if(_hasLocalSyncWork())await maybeUploadOnConnect(true);else await pullAll(false,true);if(DB&&!_realtimeScheduleReceiving)await subscribe();if(DB){SYNC_ERR=null;_applySyncUiState();syncNav();}}});
 async function retrySyncNow(){
   if(!DB){await headerConnectPrompt();return;}
   if(_reviewUploadInProgress||_syncReviewPending)return;
-  setStatus("reviewing","#c9891b");syncNav();
-  try{await pullAll(false,true);if(DB)subscribe();if(DB)clearSyncError();}
+  _syncDiag("retry","manual sync",0,"start");
+  try{await pullAll(false,true);const ready=DB?await subscribe():false;if(!ready&&DB)reportRealtimeChannelError("manual retry",{message:"Schedule channel did not confirm SUBSCRIBED within 8 seconds"});else if(DB){SYNC_ERR=null;REALTIME_RECEIVE_ERR=null;_syncDiag("retry","manual sync",0,"ok");}}
   catch(e){reportRealtimeChannelError("manual retry",e);}
-  finally{syncNav();}
+  finally{_applySyncUiState();syncNav();}
 }
 async function _freshLiveAssignmentsForReview(){
   try{const got=await _fetchAllRows("assignments","*");if(!got.ok)return{ok:false,error:got.error,map:{}};const map={};got.data.forEach(r=>{((map[r.dept]=map[r.dept]||{})[r.week]=map[r.dept][r.week]||{})[r.staff]=JSON.parse(JSON.stringify(r.days||{}));});_syncDiag("verify read","assignments",got.data.length,"ok");return{ok:true,error:null,map,count:got.data.length};}
@@ -22081,10 +22123,11 @@ async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supa
     if(_only&&_PR.ok.leave_requests&&_sameValue(LEAVE_REQUESTS[id]||{},_PR.leave[id])){_tally.skipped++;continue;}
     _tally.leave++;const _lr=await pushLeaveRequest(id);if(!_lr||!_lr.ok||_pushFailureLatched)return _fail();_clearDirtyLeaveId(id);
   }
-  if(_want("schedule"))for(const dept of DEPT_KEYS){const wks=CHECKINS[dept]||{};for(const wk of Object.keys(wks)){for(const nm of Object.keys(wks[wk]||{})){
-    if(_only&&_PR.ok.checkins&&_sameValue(_normalizedAssignRow(wks[wk][nm]),_normalizedAssignRow((((_PR.checkin[dept]||{})[wk])||{})[nm]))){_tally.skipped++;continue;}
-    _tally.checkin++;await pushCheckin(dept,wk,nm);if(_pushFailureLatched)return _fail();
-  }}}
+  if(_want("schedule")){const _dirtyChecks=new Set(Object.keys(_dirtyCheckinRows||{}));for(const dept of DEPT_KEYS){const wks=CHECKINS[dept]||{};for(const wk of Object.keys(wks)){for(const nm of Object.keys(wks[wk]||{})){
+    const _ck=_checkinRowKey(dept,wk,nm);if(_only&&_dirtyChecks.size&&!_dirtyChecks.has(_ck))continue;
+    if(_only&&_PR.ok.checkins&&_sameValue(_normalizedAssignRow(wks[wk][nm]),_normalizedAssignRow((((_PR.checkin[dept]||{})[wk])||{})[nm]))){_tally.skipped++;_clearDirtyCheckinRow(dept,wk,nm);continue;}
+    _tally.checkin++;const _cr=await pushCheckin(dept,wk,nm);if(!_cr||!_cr.ok||_pushFailureLatched)return _fail();
+  }}}}
   const _wantRoster=_want("people")||_want("details")||_want("roster");
   if(_wantRoster||_want("settings")){
     const _prevDel=_deliberateRosterChange;if(opts.deliberate&&_wantRoster)_deliberateRosterChange=true;
@@ -22220,10 +22263,9 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
     const localLR=localSnapshot.leaveRequests||{};const liveLR=liveSnapshot.leaveRequests||{};
     new Set([...Object.keys(localLR),...Object.keys(liveLR)]).forEach(id=>{
       if(_leaveIds&&!_leaveIds.has(id))return;
-      const lv=localLR[id],rv=liveLR[id];
+      const lv0=localLR[id],rv0=liveLR[id],lv=_emptyLeaveRequestRecord(lv0)?undefined:lv0,rv=_emptyLeaveRequestRecord(rv0)?undefined:rv0;
       if(lv&&rv&&_sameValue(rv,lv))return;
       if(!lv&&!rv)return;
-      if(_emptyLeaveRequestRecord(lv)||_emptyLeaveRequestRecord(rv)){if(_emptyLeaveRequestRecord(lv)&&_emptyLeaveRequestRecord(rv))return;}
       const nameForLine=(lv&&lv.name)||(rv&&rv.name)||"Unknown person";
       const codeForLine=(lv&&lv.code)||(rv&&rv.code)||"Unspecified type";
       const fromForLine=(lv&&lv.from)||(rv&&rv.from)||"date not recorded";
@@ -22233,6 +22275,7 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
       if(_localDelete||(lv&&rv))conflicts.push(line);
     });
   }
+  _backupCheckinDiff((localSnapshot||{}).checkins,(liveSnapshot||{}).checkins).forEach(line=>{changes.push(line);conflicts.push(line);});
   return {changes,conflicts};
 }
 // pushConfig()/pullAll() sync CFG.FO/CFG.HSK/CFG.DB (every real department in DEPT_KEYS — both functions
@@ -23067,7 +23110,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       {k:"people",t:"Roster people",tip:"Who is on each roster: people added here, people deleted here, and who is active or inactive. People who exist only on live are kept unless deleted here.",cats:["Staff added locally, not on live","Staff on live, not local","Staff status"]},
       {k:"details",t:"Roster details",tip:"What is recorded about people who are on both rosters: role, rate, hire date, notes, and dates off you entered. Active or inactive is under Roster people.",cats:["Staff roster","Staff availability"]},
       {k:"settings",t:"Settings",cats:["Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings"]},
-      {k:"schedule",t:"Schedule",cats:["Schedule"]},
+      {k:"schedule",t:"Schedule",cats:["Schedule","Check-ins"]},
       {k:"demand",t:"Demand",cats:["Demand"]},
       {k:"leave",t:"Leave requests",cats:["Leave requests"]}
     ];
@@ -23259,6 +23302,7 @@ function _releaseLocalDeletions(){
 }
 async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _stay=!!(opt&&opt.stayConnected);
+  const _pendingAtReviewStart=!!(PENDING||_hasDurablePendingWork()||_pushFailureLatched),_blockedWritesAtStart=_blockedDbWrites;
   if(!PENDING&&!review)return;
   // True when this device holds no unsynced edits, so any difference is more likely newer live data than a local edit.
   // An explicit request to upload (reviewAndUpload) always gets the full upload dialog, even when no pending flag is set.
@@ -23406,11 +23450,12 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     const _prevSync=_syncApplying;_syncApplying=true;
     try{await pullAll(false,false);}catch(e){reportSyncError("post-upload pull",e);}
     finally{_syncApplying=_prevSync;}
-    if(!_pushFailureLatched&&!SYNC_ERR)setPending(false);
-    _reviewUploadInProgress=false;setStatus((SYNC_ERR||_pushFailureLatched||PENDING)?"unsynced":"live",(SYNC_ERR||_pushFailureLatched||PENDING)?"#e0a800":"#2c9e5f");render();
+    {const _handled=[...(choice.sections||[]),...(choice.dropped||[])];if(_handled.some(k=>k==="people"||k==="details"||k==="settings"||k==="roster"))_clearDirtyConfig();}
+    if((choice.dropped||[]).indexOf("demand")>=0)_clearAllDirtyDemandWeeks();if((choice.dropped||[]).indexOf("leave")>=0)_clearAllDirtyLeaveIds();if((choice.dropped||[]).indexOf("schedule")>=0)_clearAllDirtyCheckinRows();
+    _reviewUploadInProgress=false;_reconcilePendingFlag();_applySyncUiState();render();
     {const _nm={people:"Roster people",details:"Roster details",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
   }
-  else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));if(_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
+  else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));if(_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
     // See the realtime "sched" channel's own new comment (a few hundred lines up) for the full "undo/redo
     // buttons still flickering" cause this closes. These 4 save() calls represent the SYNC RECONCILIATION's own
     // choice to discard local edits and adopt the live copy — not a real user edit — so, exactly like pullAll()'s
@@ -23440,7 +23485,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     // the sync reconciliation's own action, not a trackable undo step.
     const _prevSyncApplying2=_syncApplying;_syncApplying=true;
     try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying2;}
-    if(_stay){_syncReviewPending=false;if(DB)setStatus("live","#2c9e5f");}
+    if(_stay){_syncReviewPending=false;setPending(_pendingAtReviewStart||_blockedDbWrites>_blockedWritesAtStart||_hasDurablePendingWork());_applySyncUiState();try{syncNav();}catch(e){}}
   }
 }
 // The function behind the always-visible header "Connect…" link (see that element's own comment for the full
@@ -23567,7 +23612,7 @@ async function connect(){
     // The tab is authorized and the realtime channels are opened only after the review has been answered. Opening them
     // earlier left a live connection running behind the dialog, so Cancel had to tear down something already
     // receiving live changes into the local copy.
-    if(DB){ _tabConnectAuthorize(true);_markEverPulled();subscribe();setStatus("live","#2c9e5f"); await maybeSyncExistingPushSubscription(); }
+    if(DB){ _tabConnectAuthorize(true);_markEverPulled();const _ready=await subscribe();if(!_ready&&DB)reportRealtimeChannelError("connect",{message:"Schedule channel did not confirm SUBSCRIBED within 8 seconds"});await maybeSyncExistingPushSubscription();_applySyncUiState(); }
     try{syncNav();}catch(e){}
     render();
   }catch(e){_syncReviewPending=false;uiAlert("Connect failed: "+e.message);DB=null;SYNC_ERR=null;resetRosterMergeGate();setStatus("local","#c7d0da");try{syncNav();}catch(e2){}}
@@ -23624,10 +23669,12 @@ function _bootConnectPrompt(){return uiDialog("Connect to the hotel's shared liv
 function _tabConnectAuthorized(){try{return sessionStorage.getItem("hotel_connect_ok")==="1";}catch(e){return false;}}
 function _tabConnectAuthorize(on){try{if(on)sessionStorage.setItem("hotel_connect_ok","1");else sessionStorage.removeItem("hotel_connect_ok");}catch(e){}}
 function disconnect(){
-  // The "changes since you were away" list describes the live copy, so it goes when the connection does.
   try{_awayChanges=[];_awayChangesDismissed=false;const _ap=document.getElementById("awayChangesPanel");if(_ap)_ap.remove();renderAwayChangesBadge();}catch(e){}
-  _tabConnectAuthorize(false);try{save("hotel_supa_optout",true);}catch(e){} // a deliberate choice to work locally, which boot()'s first-run auto-connect must not override
-  if(CHAN)DB.removeChannel(CHAN);if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_onChannelDropped("sched");_onChannelDropped("checkins");DB=null;CHAN=null;CHECKIN_CHAN=null;SYNC_ERR=null;REALTIME_RECEIVE_ERR=null;_realtimeScheduleReceiving=false;_schedEverSubscribed=false;localStorage.removeItem("hotel_supa");resetRosterMergeGate();setStatus("local","#c7d0da");render();}
+  _tabConnectAuthorize(false);try{save("hotel_supa_optout",true);}catch(e){}
+  const client=DB,oldChan=CHAN,oldCheck=CHECKIN_CHAN;DB=null;CHAN=null;CHECKIN_CHAN=null;_subscriptionGeneration++;_resolveScheduleWaiters(_subscriptionGeneration-1,false);
+  try{if(client&&oldChan)client.removeChannel(oldChan);if(client&&oldCheck)client.removeChannel(oldCheck);}catch(e){}
+  SYNC_ERR=null;REALTIME_RECEIVE_ERR=null;_realtimeScheduleReceiving=false;_schedEverSubscribed=false;localStorage.removeItem("hotel_supa");resetRosterMergeGate();_applySyncUiState();try{syncNav();}catch(e){}render();
+}
 // Console errors and Settings-tab lag are two separate symptoms with no code path connecting them:
 // manifest.json/sw.js 404s are non-fatal (a failed, one-time fetch at page load, never retried); CHANNEL_ERROR/
 // "socket closed" on the realtime channels is reported via reportSyncError()/console.warn(), also a one-time log
@@ -23649,8 +23696,7 @@ function _scheduleRealtimeReconnect(channelKey){
   _realtimeReconnectAttempts[channelKey]=n+1;
   setTimeout(()=>{
     if(!DB)return; // re-check — the user may have disconnected during the delay
-    if(channelKey==="sched"){if(CHAN)DB.removeChannel(CHAN);_subscribeSchedChannel();}
-    else{if(CHECKIN_CHAN)DB.removeChannel(CHECKIN_CHAN);_subscribeCheckinsChannel();}
+    subscribe(true);
     // (surfaced while directly answering "what happens if the app is closed/backgrounded and reopened into live
     // mode" — this exact reconnect path is the ONE place a real, already-connected device could silently miss
     // another device's changes even WITHOUT ever closing the tab at all: a realtime channel can drop (laptop sleep,
@@ -23664,13 +23710,12 @@ function _scheduleRealtimeReconnect(channelKey){
     // to drop and reconnect around the same time — pullAll() itself is a plain, idempotent full refresh either way.
   },delayMs);
 }
-function subscribe(){
-  if(!DB)return;
-  _realtimeReconnectAttempts={sched:0,checkins:0};
-  _realtimeScheduleReceiving=false;
-  setStatus("reviewing","#c9891b");
-  _subscribeSchedChannel();
-  _subscribeCheckinsChannel();
+function subscribe(preserveAttempts){
+  if(!DB)return Promise.resolve(false);
+  const gen=++_subscriptionGeneration;const client=DB;
+  try{if(CHAN)client.removeChannel(CHAN);if(CHECKIN_CHAN)client.removeChannel(CHECKIN_CHAN);}catch(e){}
+  CHAN=null;CHECKIN_CHAN=null;if(!preserveAttempts)_realtimeReconnectAttempts={sched:0,checkins:0};_realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=null;
+  _applySyncUiState();_subscribeSchedChannel(gen);_subscribeCheckinsChannel(gen);return _waitForScheduleSubscription(gen,8000);
 }
 // Traced this to a real bug in the reconnect-attempt cap itself: both channels' own SUBSCRIBED handlers
 // previously reset `_realtimeReconnectAttempts[...]` back to 0 the INSTANT a subscribe attempt merely reached
@@ -23691,22 +23736,21 @@ let _channelStableTimer={sched:null,checkins:null};
 function _onChannelSubscribed(channelKey){
   if(channelKey==="sched"){
     const wasReconnect=_schedEverSubscribed&&!_realtimeScheduleReceiving;
-    _realtimeScheduleReceiving=true;REALTIME_RECEIVE_ERR=null;_schedEverSubscribed=true;
-    setStatus("live","#2c9e5f");
+    _realtimeScheduleReceiving=true;REALTIME_RECEIVE_ERR=null;_schedEverSubscribed=true;_resolveScheduleWaiters(_subscriptionGeneration,true);_syncDiag("realtime","schedule channel",0,"subscribed");
+    _applySyncUiState();try{syncNav();}catch(e){}
     if(wasReconnect&&DB)setTimeout(()=>{if(DB&&_realtimeScheduleReceiving)pullAll(false,true);},0);
   }
   clearTimeout(_channelStableTimer[channelKey]);
   _channelStableTimer[channelKey]=setTimeout(()=>{_realtimeReconnectAttempts[channelKey]=0;},5000);
 }
 function _onChannelDropped(channelKey){
-  clearTimeout(_channelStableTimer[channelKey]);
-  _channelStableTimer[channelKey]=null;
+  clearTimeout(_channelStableTimer[channelKey]);_channelStableTimer[channelKey]=null;
   if(channelKey==="sched"){
-    _realtimeScheduleReceiving=false;
-    if(DB)setStatus("unsynced","#e0a800");
+    _realtimeScheduleReceiving=false;_resolveScheduleWaiters(_subscriptionGeneration,false);_syncDiag("realtime","schedule channel",0,"dropped");
+    if(DB){_applySyncUiState();try{syncNav();}catch(e){}}
   }
 }
-function _subscribeSchedChannel(){
+function _subscribeSchedChannel(gen){
   CHAN=DB.channel("sched")
     // Typing a value and pressing Tab/Enter in the demand table calls _dfn(), which saves locally, pushes to
     // Supabase (pushDemand()), and calls render() ONCE — using the PENDING_DFOCUS mechanism to correctly refocus
@@ -23745,21 +23789,22 @@ function _subscribeSchedChannel(){
     // PRIOR value — not blindly false — immediately after, in a try/finally) so a realtime message that happens to
     // arrive WHILE a genuine local batch is still being tracked can never accidentally clear that in-progress local
     // tracking early.
-    .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{
-      const r=payload.new||payload.old;if(!r)return;
-      _notePulled("assign",r);
+    .on("postgres_changes",{event:"*",schema:"public",table:"assignments"},payload=>{if(gen!==_subscriptionGeneration)return;
+      const r=payload.new||payload.old;if(!r)return;const _deleted=payload.eventType==="DELETE"||!payload.new;
+      if(!_deleted)_notePulled("assign",r);
       ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};
       const _staff=_canonicalStaffName(r.dept,r.staff,CFG);
       if(_isAssignRowProtected(r.dept,r.week,_staff))return;
       // Unprotected rows can adopt the committed event immediately; protected rows stay local until review.
       const _before=JSON.stringify(ASSIGN[r.dept][r.week][_staff]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
-      try{ASSIGN[r.dept][r.week][_staff]=Object.assign({},ASSIGN[r.dept][r.week][_staff]||{},r.days||{});save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
+      try{if(_deleted)delete ASSIGN[r.dept][r.week][_staff];else ASSIGN[r.dept][r.week][_staff]=Object.assign({},ASSIGN[r.dept][r.week][_staff]||{},r.days||{});save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
+      _refreshUndoBaselineAfterRemote();
       const _after=JSON.stringify(ASSIGN[r.dept][r.week][_staff]||{});
       if(r.dept===DEPT&&r.week===weekKey(WEEK_START)&&_before!==_after)render();
     })
-    .on("postgres_changes",{event:"*",schema:"public",table:"demand"},payload=>{
-      const r=payload.new||payload.old;if(!r)return;
+    .on("postgres_changes",{event:"*",schema:"public",table:"demand"},payload=>{if(gen!==_subscriptionGeneration)return;
+      const r=payload.new||payload.old;if(!r)return;const _deleted=payload.eventType==="DELETE"||!payload.new;
       // Unlike the assignments handler above (whose own comment explains why it deliberately does NOT need a
       // stamp check), this one does: a demand row is pushed as ONE blob per WEEK, so this device's own echo of
       // its own earlier push carries the whole pre-undo week, not just the one field that changed - which is
@@ -23768,19 +23813,21 @@ function _subscribeSchedChannel(){
       if(_dirtyDemandWeeks[r.week]||(_demandDirtyStamp[r.week]&&(Date.now()-_demandDirtyStamp[r.week])<DEMAND_ECHO_GUARD_MS))return;
       const _before=JSON.stringify(DEMAND[r.week]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
-      try{DEMAND[r.week]=r.days||{};save("hotel_demand",DEMAND);}finally{_syncApplying=_prevSyncApplying;}
+      try{if(_deleted)delete DEMAND[r.week];else DEMAND[r.week]=r.days||{};save("hotel_demand",DEMAND);}finally{_syncApplying=_prevSyncApplying;}
+      _refreshUndoBaselineAfterRemote();
       const _after=JSON.stringify(DEMAND[r.week]||{});
       if(r.week===weekKey(WEEK_START)&&_before!==_after)render();
     })
-    .on("postgres_changes",{event:"*",schema:"public",table:"leave_requests"},payload=>{
-      const r=payload.new||payload.old;if(!r||!r.id)return;
+    .on("postgres_changes",{event:"*",schema:"public",table:"leave_requests"},payload=>{if(gen!==_subscriptionGeneration)return;
+      const r=payload.new||payload.old;if(!r||!r.id)return;const _deleted=payload.eventType==="DELETE"||!payload.new;
       const _before=JSON.stringify(LEAVE_REQUESTS[r.id]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
-      try{LEAVE_REQUESTS[r.id]=r.data||{};save("hotel_leaverequests",LEAVE_REQUESTS);}finally{_syncApplying=_prevSyncApplying;}
+      try{if(_deleted||_emptyLeaveRequestRecord(r.data))delete LEAVE_REQUESTS[r.id];else LEAVE_REQUESTS[r.id]=r.data||{};save("hotel_leaverequests",LEAVE_REQUESTS);}finally{_syncApplying=_prevSyncApplying;}
+      _refreshUndoBaselineAfterRemote();
       const _after=JSON.stringify(LEAVE_REQUESTS[r.id]||{});
       if(VIEW==="leave"&&_before!==_after)render();
     })
-    .subscribe((status,err)=>{
+    .subscribe((status,err)=>{if(gen!==_subscriptionGeneration)return;
       // Surfaces realtime subscription failures (e.g. "demand"/"assignments" table not added to the Supabase
       // realtime publication, or an RLS policy blocking it) instead of silently never receiving live updates
       if(status==="CHANNEL_ERROR"||status==="TIMED_OUT"||status==="CLOSED"){reportRealtimeChannelError("realtime subscription ("+status+")",err||{message:"channel closed/errored — other screens will not receive live updates until this reconnects"});_onChannelDropped("sched");_scheduleRealtimeReconnect("sched");}
@@ -23798,10 +23845,10 @@ function _subscribeSchedChannel(){
 // status (Clock in/out still works perfectly well locally either way), and can never take down
 // assignments/demand/leave_requests' own realtime channel, which subscribes independently above and is now fully
 // isolated from this one.
-function _subscribeCheckinsChannel(){
+function _subscribeCheckinsChannel(gen){
   CHECKIN_CHAN=DB.channel("sched_checkins")
-    .on("postgres_changes",{event:"*",schema:"public",table:"checkins"},payload=>{
-      const r=payload.new||payload.old;if(!r)return;
+    .on("postgres_changes",{event:"*",schema:"public",table:"checkins"},payload=>{if(gen!==_subscriptionGeneration)return;
+      const r=payload.new||payload.old;if(!r)return;const _deleted=payload.eventType==="DELETE"||!payload.new;
       CHECKINS[r.dept]=CHECKINS[r.dept]||{};CHECKINS[r.dept][r.week]=CHECKINS[r.dept][r.week]||{};
       // Wraps this save() in _syncApplying, matching the SAME fix already applied to this channel's own sibling
       // handlers (assignments/demand/leave_requests, above) for the identical reason — a defensive consistency
@@ -23809,10 +23856,10 @@ function _subscribeCheckinsChannel(){
       // visible effect on Undo/Redo), but leaving this one handler as the sole unguarded exception is a real,
       // latent gap the moment checkins data ever becomes undo-tracked in the future.
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
-      try{CHECKINS[r.dept][r.week][r.staff]=r.days||{};save("hotel_checkins",CHECKINS);}finally{_syncApplying=_prevSyncApplying;}
+      try{if(_deleted)delete CHECKINS[r.dept][r.week][r.staff];else CHECKINS[r.dept][r.week][r.staff]=r.days||{};save("hotel_checkins",CHECKINS);}finally{_syncApplying=_prevSyncApplying;}
       if(r.dept===DEPT&&r.week===weekKey(WEEK_START))render();
     })
-    .subscribe((status,err)=>{
+    .subscribe((status,err)=>{if(gen!==_subscriptionGeneration)return;
       // Deliberately does NOT call the shared reportSyncError()/clearSyncError() pair the main channel above uses —
       // those drive the single, shared sync-status pill, and a checkins-only realtime hiccup (e.g. The table simply
       // not existing yet) should not repeatedly overwrite/contend with whatever the main channel's own, more
@@ -23864,11 +23911,25 @@ let _lastPulledAppConfig=null;
 // ok[table] is true only when that table was fetched, so a failed fetch falls back to the merged state instead of
 // reading as an empty shared copy.
 let _lastPulledRows={assign:{},demand:{},leave:{},checkin:{},ok:{}};
+let _emptyLiveLeaveIdsPending=new Set();
+function _retireLegacyReviewIfMatched(){
+  if(!_v23ReviewRequired||!_lastPulledRows.ok.assignments)return false;
+  const keys=Object.keys(_dirtyAssignRows||{});if(!keys.length){_setV23ReviewRequired(false);return true;}
+  const allMatch=keys.every(key=>{const p=_parseAssignRowKey(key);if(!p)return false;const local=((((ASSIGN[p.dept]||{})[p.wk]||{})[p.name])||{}),live=((((_lastPulledRows.assign[p.dept]||{})[p.wk]||{})[p.name])||{});return _sameValue(_normalizedAssignRow(local),_normalizedAssignRow(live));});
+  if(!allMatch)return false;
+  _clearProtectedAssignKeys(keys);_setV23ReviewRequired(false);if(!_hasDurablePendingWork()){_setPushFailureLatched(false);_reconcilePendingFlag();}try{localStorage.setItem("hotel_pre_v24_review_verified","1");}catch(e){}return true;
+}
+async function _flushEmptyLiveLeaveCleanup(){
+  if(!DB||_syncReviewPending||_awaitingSyncChoice||!_emptyLiveLeaveIdsPending.size)return;
+  const ids=[..._emptyLiveLeaveIdsPending];let removed=0;
+  for(const id of ids){try{const {error}=await DB.from("leave_requests").delete().eq("id",id);if(!error){_emptyLiveLeaveIdsPending.delete(id);removed++;}}catch(e){}}
+  if(removed)_syncDiag("cleanup","empty leave tombstones",removed,"ok");
+}
 function _notePulled(kind,r){
   const c=x=>JSON.parse(JSON.stringify(x||{}));
   if(kind==="assign"){((_lastPulledRows.assign[r.dept]=_lastPulledRows.assign[r.dept]||{})[r.week]=_lastPulledRows.assign[r.dept][r.week]||{})[r.staff]=c(r.days);}
   else if(kind==="demand"){_lastPulledRows.demand[r.week]=c(r.days);}
-  else if(kind==="leave"&&r.id){_lastPulledRows.leave[r.id]=c(r.data);}
+  else if(kind==="leave"&&r.id){if(_emptyLeaveRequestRecord(r.data))_emptyLiveLeaveIdsPending.add(r.id);else _lastPulledRows.leave[r.id]=c(r.data);}
   else if(kind==="checkin"){((_lastPulledRows.checkin[r.dept]=_lastPulledRows.checkin[r.dept]||{})[r.week]=_lastPulledRows.checkin[r.dept][r.week]||{})[r.staff]=c(r.days);}
 }
 // Confirmed by tracing the real boot/reconnect flow: with no local edits pending, reopening silently pulls and
@@ -23886,44 +23947,18 @@ function _markEverPulled(){try{localStorage.setItem("hotel_everPulled","1");}cat
 async function pullAll(isRetry,computeAwayBadge){
   if(!DB)return;
   if(computeAwayBadge===undefined)computeAwayBadge=true;
-  // See _syncApplying's own comment (near _undoApplying) for the full "Undo/Redo buttons flicker on reconnect"
-  // cause this closes. Set for this entire pull (every save() call below, through the final render()) so none of
-  // it is ever mistaken for a trackable local edit.
-  //
-  // A direct re-report after the earlier per-realtime-handler fix. Traced a SECOND, separate concurrency gap in
-  // this exact mechanism: this function has THREE genuinely independent trigger points that are all
-  // fire-and-forget (never awaited by their own caller) — the "sched" channel's own reconnect, the "checkins"
-  // channel's own SEPARATE, independently-scheduled reconnect (both via _scheduleRealtimeReconnect(), which its
-  // own comment already acknowledges can fire "around the same time" if both channels happen to drop together — a
-  // real, common scenario, e.g. A brief whole-connection drop affects BOTH channels at once, not just one), and
-  // this function's own schema-cache retry timer a few lines below. Any two of these firing close enough together
-  // means two overlapping, concurrent invocations of this same function are genuinely possible. The PREVIOUS
-  // version of this exact line unconditionally set `_syncApplying=false` in its own finally block — correct for a
-  // SINGLE, isolated call, but wrong the instant two overlap: whichever invocation finishes FIRST clears the flag
-  // back to false while the OTHER is still mid-flight (still awaiting its own network calls) — reopening the exact
-  // undo-tracking window this flag exists to close, for however long the slower call takes to finish. A real,
-  // unrelated realtime message arriving during that reopened window would then be incorrectly captured as a
-  // trackable local edit, clearing REDO_STACK the next time that batch commits — this class of intermittent,
-  // connection-instability-dependent timing is exactly why the symptom kept recurring specifically "in live mode,"
-  // rather than happening reliably or predictably. Fixed the same way every OTHER nested user of this flag in this
-  // file already correctly handles re-entrancy: capture the PRIOR value before setting true, restore that CAPTURED
-  // value (not a bare `false`) in finally — so an overlapping outer call's own `true` is never prematurely
-  // clobbered by an inner call finishing first; only the outermost, LAST-to-finish call can ever actually restore
-  // the flag to its true baseline of `false`.
-  // Network waits are not "applying" data. Incoming saves are guarded only at the exact persistence points,
-  // so a genuine user edit made while a slow pull is in flight still receives undo/dirty tracking.
-  // See _pullGeneration's own comment (near _assignDirtyStamp) for the full "overlapping pulls can finish out
-  // of order" cause this closes — captured and incremented HERE, at the true single entry point every trigger
-  // (both channels' reconnects, the schema-cache retry) already funnels through, so every genuinely distinct
-  // pullAll() call gets its own unambiguous, correctly-ordered generation number.
-  const _myPullGen=++_pullGeneration;
-  try{
-    return await _pullAllInner(isRetry,computeAwayBadge,_myPullGen);
-  }finally{
-    // Scheduled after the pull rather than inside it: the whole point is to run once any write that was in
-    // flight during the pull has settled. No-op unless a merge was actually skipped.
-    if(_cfgMergeDeferred)setTimeout(retryDeferredConfigMerge,4000);
-  }
+  const requestedDb=DB;
+  const job=async()=>{
+    if(!DB||DB!==requestedDb)return;
+    const _myPullGen=++_pullGeneration;_pullInFlight++;_applySyncUiState();try{syncNav();}catch(e){}
+    try{return await _pullAllInner(isRetry,computeAwayBadge,_myPullGen);}
+    finally{
+      if(_cfgMergeDeferred)setTimeout(retryDeferredConfigMerge,4000);
+      _pullInFlight=Math.max(0,_pullInFlight-1);_applySyncUiState();try{syncNav();}catch(e){}
+      if(!_syncReviewPending)setTimeout(_flushEmptyLiveLeaveCleanup,0);
+    }
+  };
+  const run=_pullQueue.then(job,job);_pullQueue=run.catch(()=>{});return run;
 }
 async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   _lastPulledRows={assign:{},demand:{},leave:{},checkin:{},ok:{}};
@@ -23954,6 +23989,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       ASSIGN=fresh;
     }else rows.forEach(r=>{_notePulled("assign",r);ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _staff=_canonicalStaffName(r.dept,r.staff,CFG),_dkey=_assignRowKey(r.dept,r.week,_staff);if(_isAssignRowProtected(r.dept,r.week,_staff))return;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][_staff]=Object.assign({},ASSIGN[r.dept][r.week][_staff]||{},r.days||{});});
   });
+  _retireLegacyReviewIfMatched();
   // See _pullGeneration's own comment for the full "overlapping pulls finishing out of order" fix this is part
   // of — checked after EVERY remaining table fetch below; a newer pullAll() having started in the meantime means
   // this call's own remaining results are now provably stale, so it stops here rather than risk applying them.
@@ -23962,9 +23998,9 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // confirmed "undo an OOO/House-use figure and it comes back" bug this closes. Captured immediately before the
   // fetch begins, matching that fix's own timing principle exactly.
   const _demandFetchStartedAt=Date.now();
-  await pullTable("demand","demand",rows=>{rows.forEach(r=>{_notePulled("demand",r);if(_dirtyDemandWeeks[r.week]||(_demandDirtyStamp[r.week]&&_demandDirtyStamp[r.week]>=_demandFetchStartedAt))return;DEMAND[r.week]=r.days||{};});});
+  await pullTable("demand","demand",rows=>{const _replace=!PENDING&&!Object.keys(_dirtyDemandWeeks||{}).length,_fresh={};rows.forEach(r=>{_notePulled("demand",r);if(_dirtyDemandWeeks[r.week]||(_demandDirtyStamp[r.week]&&_demandDirtyStamp[r.week]>=_demandFetchStartedAt))return;_fresh[r.week]=r.days||{};if(!_replace)DEMAND[r.week]=r.days||{};});if(_replace)DEMAND=_fresh;});
   if(_myPullGen!==_pullGeneration)return;
-  await pullTable("leave_requests","leave requests",rows=>{rows.forEach(r=>{if(!r||!r.id)return;_notePulled("leave",r);if(_dirtyLeaveIds[r.id])return;if(_emptyLeaveRequestRecord(r.data)){delete LEAVE_REQUESTS[r.id];return;}LEAVE_REQUESTS[r.id]=r.data||{};});_pruneEmptyLeaveRequestRecords();});
+  await pullTable("leave_requests","leave requests",rows=>{const _replace=!PENDING&&!Object.keys(_dirtyLeaveIds||{}).length,_fresh={};rows.forEach(r=>{if(!r||!r.id)return;_notePulled("leave",r);if(_dirtyLeaveIds[r.id])return;if(_emptyLeaveRequestRecord(r.data)){delete LEAVE_REQUESTS[r.id];return;}_fresh[r.id]=r.data||{};if(!_replace)LEAVE_REQUESTS[r.id]=r.data||{};});if(_replace)LEAVE_REQUESTS=_fresh;_pruneEmptyLeaveRequestRecords();});
   if(_myPullGen!==_pullGeneration)return;
   // Saved versions have been PUSHED to Supabase since that feature was built (see pushSnap()), but never pulled
   // back - so every version saved on another device has been sitting there unread. That is both a plain bug and,
@@ -24008,7 +24044,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // the table 'public.checkins'" error here is the expected result until that one-time migration is run — isolated
   // here using the exact same never-abort pattern as every other table above.
   const _checkinsFetchStartedAt=Date.now();
-  await pullTable("checkins","check-ins",rows=>{rows.forEach(r=>{_notePulled("checkin",r);const k=_checkinRowKey(r.dept,r.week,r.staff);if(_checkinDirtyStamp[k]&&_checkinDirtyStamp[k]>=_checkinsFetchStartedAt)return;CHECKINS[r.dept]=CHECKINS[r.dept]||{};CHECKINS[r.dept][r.week]=CHECKINS[r.dept][r.week]||{};CHECKINS[r.dept][r.week][r.staff]=r.days||{};});});
+  await pullTable("checkins","check-ins",rows=>{const _replace=!PENDING&&!Object.keys(_dirtyCheckinRows||{}).length,_fresh={};DEPT_KEYS.forEach(d=>_fresh[d]={});rows.forEach(r=>{_notePulled("checkin",r);const k=_checkinRowKey(r.dept,r.week,r.staff);if(_dirtyCheckinRows[k]||(_checkinDirtyStamp[k]&&_checkinDirtyStamp[k]>=_checkinsFetchStartedAt))return;const target=_replace?_fresh:CHECKINS;target[r.dept]=target[r.dept]||{};target[r.dept][r.week]=target[r.dept][r.week]||{};target[r.dept][r.week][r.staff]=r.days||{};});if(_replace)CHECKINS=_fresh;});
   if(_myPullGen!==_pullGeneration)return;
   // Pulls the shared roster/settings table (see pushConfig()'s own comment for the full "roster never actually
   // synced" gap this closes, and exactly which CFG fields are/aren't included). A row here may genuinely not exist
@@ -24216,7 +24252,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // conflict dialog that hadn't even been shown yet. Guarding this call the same way the app_config pull already
   // guards its own CFG assignment closes this off at the root — pullAll() itself should only ever PULL and persist
   // locally, never silently push back out on its own.
-  _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;
+  _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;_refreshUndoBaselineAfterRemote();
   // See _awayChanges' own comment above for the full "what changed while away" feature this computes. Skipped
   // entirely on this device's very first-ever successful pull (no genuine "before" state to meaningfully compare
   // against — everything would show as "new," which is noise, not a real finding).
@@ -24645,7 +24681,7 @@ async function pushConfig(opts){
     DEPT_KEYS.forEach(d=>{if(payload[d]&&!_sameValue(payload[d],written[d]))mismatch.push(deptLabel(d));});
     if(_want("settings")&&!_sameValue(payload.appWide||{},written.appWide||{}))mismatch.push("App-wide settings");
     if(mismatch.length){const error={message:"Live verification did not match: "+mismatch.join(", ")};reportSyncError("verify settings & roster upload",error);_setPushFailureLatched(true);_pushSettled(false,"config");return {ok:false,error};}
-    _syncDiag("verify","app_config",1,"ok");clearSyncError();_pushSettled(true,"config");
+    _syncDiag("verify","app_config",1,"ok");if(!_secs||(["people","details","settings"].every(k=>_secs.has(k))||(_secs.has("roster")&&_secs.has("settings"))))_clearDirtyConfig();clearSyncError();_pushSettled(true,"config");
 
     // Adopt what was just written, so this device shows the merged result immediately rather than waiting for
     // a later pull. Marked as a sync write so it does not register as a local edit.
@@ -24683,14 +24719,13 @@ async function pushConfig(opts){
 // clocked in without this data actually reaching Supabase, which it never did before this table existed.
 async function pushCheckin(dept,wk,name){
   _markCheckinDirty(dept,wk,name);
-  if(!DB)return;
-  _pushStarted();
-  const days=((CHECKINS[dept]||{})[wk]||{})[name]||{};
+  if(!DB)return {ok:false,reason:"not connected"};
+  _pushStarted();const days=((CHECKINS[dept]||{})[wk]||{})[name]||{};
   try{
     const {error}=await DB.from("checkins").upsert({dept,week:wk,staff:name,days},{onConflict:"dept,week,staff"});
-    if(error){reportSyncError("push check-in ("+dept+" "+name+")",error);_pushSettled(false);return;}
-    clearSyncError();_pushSettled(true);
-  }catch(e){reportSyncError("push check-in ("+dept+" "+name+")",e);_pushSettled(false);}
+    if(error){reportSyncError("push check-in ("+dept+" "+name+")",error);_pushSettled(false);return {ok:false,error};}
+    _clearDirtyCheckinRow(dept,wk,name);clearSyncError();_pushSettled(true);return {ok:true};
+  }catch(e){reportSyncError("push check-in ("+dept+" "+name+")",e);_pushSettled(false);return {ok:false,error:e};}
 }
 /* DATA UTILS ---------- */
 function exportDownloadStamp(d){d=d||new Date();return "DL_"+String(d.getFullYear()).slice(2)+String(d.getMonth()+1).padStart(2,"0")+String(d.getDate()).padStart(2,"0")+"-"+String(d.getHours()).padStart(2,"0")+String(d.getMinutes()).padStart(2,"0");}
@@ -24703,12 +24738,13 @@ function _syncDiag(op,table,count,status,error){
   SYNC_DIAG_LOG.unshift(row);SYNC_DIAG_LOG=SYNC_DIAG_LOG.slice(0,SYNC_DIAG_MAX);
   try{localStorage.setItem(SYNC_DIAG_KEY,JSON.stringify(SYNC_DIAG_LOG));}catch(e){}
 }
+function _syncDiagnosticEnvelope(){return {generatedAt:new Date().toISOString(),appVersion:APP_VERSION,origin:(location.origin||"file://")+(location.pathname||""),state:_resolvedSyncState(),pending:{flag:PENDING,assignRows:Object.keys(_dirtyAssignRows||{}).length,demandWeeks:Object.keys(_dirtyDemandWeeks||{}).length,leaveIds:Object.keys(_dirtyLeaveIds||{}).length,checkinRows:Object.keys(_dirtyCheckinRows||{}).length,config:_dirtyConfig,pushFailure:_pushFailureLatched,outstanding:_outstandingPushes},entries:SYNC_DIAG_LOG};}
 function viewSyncDiagnostics(){
   const ordered=SYNC_DIAG_LOG.slice().reverse();
-  const rows=ordered.length?ordered.map(x=>`<tr><td class="small nowrap">${esc(formatSubmittedAt(x.ts))}</td><td class="nowrap">${esc(x.op)}</td><td class="nowrap">${esc(x.table)}</td><td class="nowrap">${nfmt(x.rows)}</td><td class="nowrap">${esc(x.status)}</td><td class="small" style="text-align:left;min-width:180px">${esc(x.error||"—")}</td></tr>`).join(""):`<tr><td colspan="6" class="muted">No sync activity has been logged on this device yet.</td></tr>`;
-  openGenericViewModal("Sync diagnostics",`<p class="small muted">Oldest to newest. “Pull” means a read from live; its row total is the table inventory, not the number of differences. Cancelling a review applies none of those read values locally and writes nothing to live. This bounded device-only log keeps the last ${SYNC_DIAG_MAX} read, push, and verification results and never records schedule values, staff names, credentials, or file contents.</p><div class="tblwrap syncDiagWrap"><table class="autoTable syncDiagTable"><thead><tr><th>When</th><th>Operation</th><th>Table</th><th>Rows</th><th>Status</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></div>`,"syncDiagModal");
+  const rows=ordered.length?ordered.map(x=>`<tr><td class="small nowrap">${esc(formatSubmittedAt(x.ts))}</td><td class="nowrap">${esc(x.op)}</td><td class="nowrap">${esc(x.table)}</td><td class="nowrap">${nfmt(x.rows)}</td><td class="nowrap">${esc(x.status)}</td><td class="small" style="text-align:left;min-width:180px">${esc(x.error||"—")}</td></tr>`).join(""):`<tr><td colspan="6" class="muted" style="white-space:normal;text-align:left">No sync activity is stored for this browser origin yet. Logs are device- and origin-specific; a downloaded file, deployed site, normal window and private window do not share one log.</td></tr>`;
+  openGenericViewModal("Sync diagnostics",`<p class="small muted">Oldest to newest. “Pull” means a read from live; its row total is the table inventory, not the number of differences. Cancelling a review applies none of those read values locally and writes nothing to live. This bounded device-only log keeps the last ${SYNC_DIAG_MAX} read, push, verification and channel results and never records schedule values, staff names, credentials, or file contents.</p><div class="tblwrap syncDiagWrap"><table class="autoTable syncDiagTable"><thead><tr><th>When</th><th>Operation</th><th>Table</th><th>Rows</th><th>Status</th><th>Error</th></tr></thead><tbody>${rows}</tbody></table></div>`,"syncDiagModal");
 }
-function downloadSyncDiagnostics(){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify({generatedAt:new Date().toISOString(),entries:SYNC_DIAG_LOG},null,2)],{type:"application/json"}));a.download=_appendDownloadStamp("hotel_sync_diagnostics.json");a.click();}
+function downloadSyncDiagnostics(){const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([JSON.stringify(_syncDiagnosticEnvelope(),null,2)],{type:"application/json"}));a.download=_appendDownloadStamp("hotel_sync_diagnostics.json");a.click();}
 const SYNC_PULL_PAGE_SIZE=1000,SYNC_PULL_MAX_PAGES=1000;
 async function _fetchAllRows(tableName,selectExpr){
   const pageSize=SYNC_PULL_PAGE_SIZE,out=[],pageRows=[];let from=0,page=0;
@@ -24797,7 +24833,7 @@ function _cloneBackupValue(v){return JSON.parse(JSON.stringify(v==null?{}:v));}
 function _fullBackupExtrasSnapshot(){const out={};_FULL_BACKUP_EXTRA_SPECS.forEach(([prop,label,getter])=>{try{out[prop]=_cloneBackupValue(getter());}catch(e){out[prop]={};}});return out;}
 function _fullBackupObject(){
   const blob={backupFormat:"Hotel Staff Scheduler full backup",schemaVersion:FULL_BACKUP_SCHEMA_VERSION,exportedAt:new Date().toISOString(),cfg:CFG,assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS,extras:_fullBackupExtrasSnapshot()};
-  if(CFG._includeDiagnosticsInBackup)blob.syncDiagnostics=SYNC_DIAG_LOG;
+  if(CFG._includeDiagnosticsInBackup)blob.syncDiagnostics=_syncDiagnosticEnvelope();
   return blob;
 }
 function _applyFullBackupExtras(extras){
@@ -24831,7 +24867,52 @@ function _normaliseImportedBackup(b){
   const leaveRequests=clone((b&&b.leaveRequests)||LEAVE_REQUESTS),extras=Object.assign(_fullBackupExtrasSnapshot(),clone((b&&b.extras)||{})),target={cfg,assign,demand:clone((b&&b.demand)||DEMAND),leaveRequests,checkins:clone((b&&b.checkins)||CHECKINS),extras};
   _normaliseStaffNamesInState(cfg,assign,leaveRequests);return target;
 }
-function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const b=JSON.parse(r.result),target=_normaliseImportedBackup(b);const diff=_backupImportDiff(target);if(!diff.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}if(!(await _showOverwriteReview("Import full backup?",diff,"Import backup")))return;try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify(Object.assign(_fullBackupObject(),{savedAt:new Date().toISOString()})));}catch(e2){}const beforeAssign=ASSIGN,beforeDemand=DEMAND,beforeLeave=LEAVE_REQUESTS;CFG=target.cfg;ASSIGN=target.assign;DEMAND=target.demand;LEAVE_REQUESTS=target.leaveRequests;CHECKINS=target.checkins;_applyFullBackupExtras(target.extras);_dedupeRosterRecords();_normaliseLeaveDeptKeys();_pruneEmptyLeaveRequestRecords();_markChangedAssignmentRows(beforeAssign,ASSIGN);new Set([...Object.keys(beforeDemand||{}),...Object.keys(DEMAND||{})]).forEach(wk=>{if(!_sameValue((beforeDemand||{})[wk],(DEMAND||{})[wk]))_markDemandDirty(wk);});new Set([...Object.keys(beforeLeave||{}),...Object.keys(LEAVE_REQUESTS||{})]).forEach(id=>{if(!_sameValue((beforeLeave||{})[id],(LEAVE_REQUESTS||{})[id]))_protectLeaveId(id);});const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);setPending(true);_setPushFailureLatched(true);setStatus(DB?"unsynced":"local",DB?"#e0a800":"#c7d0da");render();flashNote("Backup imported locally — Review & upload is required before it can replace live data.");}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
+
+function _backupImportSectionForLine(line){
+  const c=_categorizeConflictLine(String(line).replace(/\bcurrent\b/g,"local").replace(/\bbackup\b/g,"live"));
+  if(c==="Staff availability")return "availability";
+  if(["Staff added locally, not on live","Staff on live, not local","Staff status","Staff roster"].includes(c))return "roster";
+  if(["Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings"].includes(c))return "settings";
+  if(c==="Schedule")return "schedule";if(c==="Demand")return "demand";if(c==="Leave requests")return "leave";if(c==="Check-ins")return "checkins";return "extras";
+}
+function _showBackupSectionReview(items){
+  return new Promise(res=>{
+    const labels={roster:"Staff roster & details",availability:"Availability",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests",checkins:"Check-ins",extras:"Additional app data"},order=["roster","availability","settings","schedule","demand","leave","checkins","extras"],by={};
+    (items||[]).forEach(x=>{const k=_backupImportSectionForLine(x);(by[k]=by[k]||[]).push(x);});const present=order.filter(k=>by[k]&&by[k].length);
+    const bg=document.createElement("div");bg.className="modalbg";bg.id="backupSectionReviewModal";bg.style.display="flex";
+    const blocks=present.map(k=>`<details style="margin-top:6px"><summary style="cursor:pointer"><label onclick="event.stopPropagation()"><input type="checkbox" class="cbx backupSectionPick" data-k="${k}" checked> <b>${esc(labels[k])}</b> (${nfmt(by[k].length)})</label></summary>${_renderCategoryItemsList(by[k])}</details>`).join("");
+    bg.innerHTML=`<div class="modal" style="max-width:680px;width:96%"><h2>Import selected backup sections?</h2><div class="small muted" style="margin-bottom:8px">Only checked sections will replace data on this device. Unchecked sections stay exactly as they are. Nothing has been changed yet.</div><div class="diffReviewList" style="max-height:54vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px">${blocks}</div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Import checked sections</button></div></div>`;
+    document.body.appendChild(bg);const done=v=>{bg.remove();res(v);};bg.querySelector('[data-c="cancel"]').onclick=()=>done(null);bg.querySelector('[data-c="ok"]').onclick=()=>{const picked=new Set([...bg.querySelectorAll('.backupSectionPick:checked')].map(x=>x.dataset.k));if(!picked.size){uiAlert("Select at least one section to import.");return;}done(picked);};bg.addEventListener("mousedown",e=>{if(e.target===bg)done(null);});
+  });
+}
+function _applyBackupCfgSections(targetCfg,sections){
+  const next=JSON.parse(JSON.stringify(CFG)),availFields=["avail","availDates","off"];
+  if(sections.has("roster"))DEPT_KEYS.forEach(dp=>{next[dp]=next[dp]||{};const curBy=new Map(((CFG[dp]||{}).staff||[]).map(st=>[st.n,st]));next[dp].staff=JSON.parse(JSON.stringify((targetCfg[dp]||{}).staff||[]));if(!sections.has("availability"))next[dp].staff.forEach(st=>{const cur=curBy.get(st.n);availFields.forEach(k=>{if(cur&&Object.prototype.hasOwnProperty.call(cur,k))st[k]=JSON.parse(JSON.stringify(cur[k]));else delete st[k];});});});
+  if(sections.has("availability")&&!sections.has("roster"))DEPT_KEYS.forEach(dp=>{const targetBy=new Map((((targetCfg[dp]||{}).staff)||[]).map(st=>[st.n,st]));((next[dp]||{}).staff||[]).forEach(st=>{const from=targetBy.get(st.n);if(!from)return;availFields.forEach(k=>{if(Object.prototype.hasOwnProperty.call(from,k))st[k]=JSON.parse(JSON.stringify(from[k]));else delete st[k];});});});
+  if(sections.has("settings")){
+    DEPT_KEYS.forEach(dp=>{const staff=(next[dp]||{}).staff||[];next[dp]=JSON.parse(JSON.stringify(targetCfg[dp]||next[dp]||{}));if(!sections.has("roster"))next[dp].staff=staff;});
+    Object.keys(targetCfg||{}).forEach(k=>{if(!DEPT_KEYS.includes(k)&&k!=="_deletedStaff")next[k]=JSON.parse(JSON.stringify(targetCfg[k]));});
+  }
+  if(sections.has("roster")&&targetCfg._deletedStaff!==undefined)next._deletedStaff=JSON.parse(JSON.stringify(targetCfg._deletedStaff));
+  return next;
+}
+
+function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{
+  const b=JSON.parse(r.result),target=_normaliseImportedBackup(b),diff=_backupImportDiff(target);if(!diff.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}
+  const sections=await _showBackupSectionReview(diff);if(!sections)return;
+  try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify(Object.assign(_fullBackupObject(),{savedAt:new Date().toISOString()})));}catch(e2){}
+  const beforeAssign=ASSIGN,beforeDemand=DEMAND,beforeLeave=LEAVE_REQUESTS,beforeCheckins=CHECKINS;
+  if(sections.has("roster")||sections.has("availability")||sections.has("settings")){CFG=_applyBackupCfgSections(target.cfg,sections);_markConfigDirty();}
+  if(sections.has("schedule"))ASSIGN=target.assign;if(sections.has("demand"))DEMAND=target.demand;if(sections.has("leave"))LEAVE_REQUESTS=target.leaveRequests;if(sections.has("checkins"))CHECKINS=target.checkins;if(sections.has("extras"))_applyFullBackupExtras(target.extras);
+  if(sections.has("roster"))_dedupeRosterRecords();if(sections.has("leave")){_normaliseLeaveDeptKeys();_pruneEmptyLeaveRequestRecords();}
+  if(sections.has("schedule"))_markChangedAssignmentRows(beforeAssign,ASSIGN);
+  if(sections.has("demand"))new Set([...Object.keys(beforeDemand||{}),...Object.keys(DEMAND||{})]).forEach(wk=>{if(!_sameValue((beforeDemand||{})[wk],(DEMAND||{})[wk]))_markDemandDirty(wk);});
+  if(sections.has("leave"))new Set([...Object.keys(beforeLeave||{}),...Object.keys(LEAVE_REQUESTS||{})]).forEach(id=>{if(!_sameValue((beforeLeave||{})[id],(LEAVE_REQUESTS||{})[id]))_protectLeaveId(id);});
+  if(sections.has("checkins"))DEPT_KEYS.forEach(dp=>{const a=(beforeCheckins||{})[dp]||{},z=(CHECKINS||{})[dp]||{};new Set([...Object.keys(a),...Object.keys(z)]).forEach(wk=>{const aw=a[wk]||{},zw=z[wk]||{};new Set([...Object.keys(aw),...Object.keys(zw)]).forEach(n=>{if(!_sameValue(aw[n],zw[n]))_markCheckinDirty(dp,wk,n);});});});
+  const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{if(sections.has("roster")||sections.has("availability")||sections.has("settings"))save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}
+  if(sections.has("schedule"))save("hotel_assign",ASSIGN);if(sections.has("demand"))save("hotel_demand",DEMAND);if(sections.has("leave"))save("hotel_leaverequests",LEAVE_REQUESTS);if(sections.has("checkins"))save("hotel_checkins",CHECKINS);
+  const _syncable=["roster","availability","settings","schedule","demand","leave","checkins"].some(k=>sections.has(k));if(_syncable)_flagPendingLocalWork();_reconcilePendingFlag();_applySyncUiState();render();flashNote(_syncable?"Selected backup sections imported locally — Review & upload is required before synced sections can replace live data.":"Selected local-only backup data imported.");
+}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
 /* XLSX EXPORT (approximate the hotel's sheet layout) ---------- */
 let _scheduleExcelExportOpen=false;
 function _scheduleExcelDateGroups(fromIso,toIso){
@@ -24851,7 +24932,7 @@ function _exportRosterRows(deptKeys){const order=new Map((deptKeys||[]).map((d,i
 function _scopeStaffRows(opts){let rows=_exportRosterRows(opts.depts||_exportDeptKeys(opts.dept));if(opts.scope==="role")rows=rows.filter(x=>x.staff.role===opts.role);if(opts.scope==="staff")rows=rows.filter(x=>(opts.staffKeys||[]).includes(x.dept+"|"+x.staff.n));return rows;}
 function _updateExportStaffCount(id){const box=document.getElementById(id),label=document.getElementById(id+"Count"),all=document.getElementById(id+"All");if(!box||!label)return;const n=box.querySelectorAll('input[type=checkbox]:checked').length,total=box.querySelectorAll('input[type=checkbox]').length;label.textContent=n+" of "+total+" selected";if(all){all.checked=total>0&&n===total;all.indeterminate=n>0&&n<total;}}
 function _setExportStaffChecks(id,checked){const box=document.getElementById(id);if(!box)return;box.querySelectorAll('input[type=checkbox]').forEach(x=>x.checked=checked);_updateExportStaffCount(id);}
-function _exportCheckPanelHtml(rows,id){return `<div class="exportStaffPanel"><label class="exportStaffToggle"><input type="checkbox" class="cbx" id="${id}All" onchange="_setExportStaffChecks('${id}',this.checked)"><b class="small" style="margin-left:6px">Staff members</b><span class="small muted" id="${id}Count" style="margin-left:6px">0 of ${rows.length} selected</span></label><div id="${id}" class="exportStaffList">${rows.map(x=>`<label class="small" style="display:flex;align-items:center;gap:6px;padding:3px 2px"><input type="checkbox" class="cbx" value="${esc(x.dept+"|"+x.staff.n)}" onchange="_updateExportStaffCount('${id}')"> <span>${esc(x.staff.n)}</span> <span class="muted">— ${esc(deptLabel(x.dept))}, ${esc(x.staff.role&&String(x.staff.role).trim().length>1?pluralRoleLabel(x.staff.role):"Role not set")}</span></label>`).join("")}</div></div>`;}
+function _exportCheckPanelHtml(rows,id){return `<div class="exportStaffPanel"><label class="exportStaffToggle"><input type="checkbox" class="cbx" id="${id}All" onchange="_setExportStaffChecks('${id}',this.checked)"><span class="exportStaffToggleText"><b class="small">Staff members</b><span class="small muted" id="${id}Count">0 of ${rows.length} selected</span></span></label><div id="${id}" class="exportStaffList">${rows.map(x=>`<label class="small" style="display:flex;align-items:center;gap:6px;padding:3px 2px"><input type="checkbox" class="cbx" value="${esc(x.dept+"|"+x.staff.n)}" onchange="_updateExportStaffCount('${id}')"> <span>${esc(x.staff.n)}</span> <span class="muted">— ${esc(staffRoleContextLabel(x.dept,x.staff.role))}</span></label>`).join("")}</div></div>`;}
 function _exportRoles(rows){return [...new Set((rows||[]).map(x=>String((x.staff||{}).role||"").trim()).filter(r=>r&&r.length>1))].sort((a,b)=>pluralRoleLabel(a).localeCompare(pluralRoleLabel(b)));}
 function _exportScopeControlsHtml(prefix,roomsOnly,from,to){
   const keys=DEPT_KEYS.filter(d=>!roomsOnly||isRoomsDept(d)),deptPrompt=roomsOnly?"Select…":"All departments";
@@ -29429,6 +29510,8 @@ document.addEventListener("keydown",function(e){
 // rather than working backward from the raw, often-generic CFG key name alone (e.g. "rules"/ "coverage" — both
 // name a whole nested object, never one specific field, and neither string reliably appears anywhere near the
 // actual control on screen).
+function _settingsNodePath(root,node){const path=[];for(let n=node;n&&n!==root;n=n.parentElement){const p=n.parentElement;if(!p)return null;path.unshift([...p.children].indexOf(n));}return node&&root.contains(node)?path:null;}
+function _settingsNodeFromPath(root,path){let n=root;for(const i of (path||[])){if(!n||!n.children||!n.children[i])return null;n=n.children[i];}return n;}
 let _lastSettingsEditLabel=null;
 document.addEventListener("change",function(ev){
   try{
@@ -29440,7 +29523,7 @@ document.addEventListener("change",function(ev){
     const _container=ev.target.closest("label,.cfgrow,.mrow,tr,fieldset");
     if(!_container)return;
     _lastSettingsEditLabel=String(_container.textContent||"").trim().slice(0,120);
-    _setPendingUndoLocation({kind:"settings",dept:SETDEPT||null,key:(ev.target&&ev.target.dataset&&ev.target.dataset.settingKey)||"",label:_lastSettingsEditLabel||null});
+    _setPendingUndoLocation({kind:"settings",dept:SETDEPT||null,key:(ev.target&&ev.target.dataset&&ev.target.dataset.settingKey)||"",label:_lastSettingsEditLabel||null,path:_settingsNodePath(body,_container)});
   }catch(e){}
 },true);
 // Copies ONE staff member's ENTIRE week of assignments onto an ADJACENT staff member's row (the person
@@ -32630,7 +32713,7 @@ function _renderSettingsInner(){
     <!-- Same defensive inline-color fix as the header Connect modal's own equivalent fields (see that modal's own comment
        for the full reasoning: an explicit inline style is guaranteed to win over any class-selector-based rule,
        sidestepping whatever the underlying cause of the class-only approach not visibly working turns out to be). -->
-  <div class="cfgrow"><input class="sfield small" style="min-width:260px;color:#6b7a8d" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield small" style="min-width:220px;color:#6b7a8d" id="supaKey2" placeholder="Anon public key" value="${key}">${DB?'<button class="btn30" onclick="disconnect()">Disconnect</button>':'<button class="brand btn30" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button class="btn30" onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button class="btn30" onclick="supaLogin()">🔑 Sign in</button>'} ${_v23ReviewRequired?'<span class="pill" style="background:#fde9c8;color:#7a4b00">Pre-v2.4 schedule review required</span>':''} ${(DB&&!_syncReviewPending&&!_awaitingSyncChoice&&(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired))?'<button class="brand btn30" onclick="reviewAndUpload()" title="Compares this device with the live copy and shows the same review as connecting. Nothing is sent until you choose.">⬆ Review &amp; upload…</button>':''}</div>
+  <div class="cfgrow"><input class="sfield small" style="min-width:260px;color:#6b7a8d" id="supaUrl2" placeholder="https://xxxx.supabase.co" value="${url}"><input class="sfield small" style="min-width:220px;color:#6b7a8d" id="supaKey2" placeholder="Anon public key" value="${key}">${DB?'<button class="btn30" onclick="disconnect()">Disconnect</button>':'<button class="brand btn30" onclick="connectFromSettings()">Connect</button>'} ${SUPA_USER?('<button class="btn30" onclick="supaLogout()">Sign out ('+esc(SUPA_USER.email)+')</button>'):'<button class="btn30" onclick="supaLogin()">🔑 Sign in</button>'} ${(_v23ReviewRequired&&location.protocol!=="file:")?'<span class="pill" style="background:#fde9c8;color:#7a4b00" title="Clears automatically after a complete live read confirms every protected row">Pre-v2.4 schedule review required</span>':''} ${(DB&&!_syncReviewPending&&!_awaitingSyncChoice&&(PENDING||_pushFailureLatched||_hasProtectedAssignRows()||_v23ReviewRequired))?'<button class="brand btn30" onclick="reviewAndUpload()" title="Compares this device with the live copy and shows the same review as connecting. Nothing is sent until you choose.">⬆ Review &amp; upload…</button>':''}</div>
   <details style="margin:4px 0 6px"><summary class="small" style="cursor:pointer"><b>Sync diagnostics &amp; log</b></summary><div class="cfgrow" style="margin-top:6px"><button class="btn30" onclick="viewSyncDiagnostics()">View sync diagnostics…</button><label class="small" style="display:flex;align-items:center;gap:6px"><input type="checkbox" class="cbx" ${CFG._includeDiagnosticsInBackup?"checked":""} onchange="CFG._includeDiagnosticsInBackup=this.checked;save('hotel_cfg',CFG)"> Include the bounded diagnostic log in JSON backups</label><span class="small muted">If Unsynced, keep this tab open and use Review &amp; upload; do not disconnect first.</span></div></details>
   <!-- Compare moved into Backup & versions, with the other read-only "what does the other copy hold" tools. -->
     <!-- The previous markup here had a genuinely UNCLOSED <div class="cfgrow"> around the old standalone "Schedule
@@ -36775,8 +36858,8 @@ async function backupMenu(){
   // rare, one-off maintenance actions that made this list feel dense — their underlying functions
   // (cleanupFormerStaffSchedules(), resortRosterByRoleWithConfirm(), both further below) are deliberately LEFT IN
   // PLACE, just no longer reachable from this specific menu.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Import full backup (JSON)","Save version now","View version history","View change log","Compare against the shared copy"]);
-  if(pick==="Import full backup (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare against the shared copy")showCompareModal();
+  const pick=await uiDialog("Backup & versions:",["Cancel","Import backup sections (JSON)","Save version now","View version history","View change log","Compare against the shared copy"]);
+  if(pick==="Import backup sections (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare against the shared copy")showCompareModal();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -43183,9 +43266,9 @@ async function recoverStaffFromHistory(dept,name,silent){
   save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);
   if(DB)pushed.forEach(wk=>pushWeekAll(dept,wk));
   // The role cannot be recovered — a deletion destroys the roster record and the surviving schedule data carries
-  // no role — so the restored person lands in the grid's "Needs a role" section until one is chosen. Said here
+  // no role — so the restored person lands in the grid's "No role set" section until one is chosen. Said here
   // explicitly rather than leaving it to be discovered.
-  if(!silent){renderSettings();render();flashNote("Restored "+name+" with "+(wkKeys.length+_fromArchive.length)+" schedule week(s). Set their role in Settings — until then they appear under \u201cNeeds a role\u201d on the schedule.");}
+  if(!silent){renderSettings();render();flashNote("Restored "+name+" with "+(wkKeys.length+_fromArchive.length)+" schedule week(s). Set their role in Settings — until then they appear under \u201cNo role set\u201d on the schedule.");}
   return true;
 }
 // Restores everyone at once, which is what is actually wanted after a roster overwrite — going one at a time
@@ -43653,7 +43736,7 @@ function seedRoster(){try{
     const _migDone=localStorage.getItem("hotel_pre_v24_integrity_migrated")==="1";
     const _storedVersion=CFG&&CFG.meta&&CFG.meta.version!=null?String(CFG.meta.version):"";
     const _hasStoredAssignments=Object.keys(ASSIGN||{}).some(d=>Object.keys(ASSIGN[d]||{}).some(w=>Object.keys(ASSIGN[d][w]||{}).length));
-    if(!_migDone&&_hasStoredAssignments&&_storedVersion!==APP_VERSION){
+    if(!_migDone&&_hasStoredAssignments&&_versionIsBefore24(_storedVersion)){
       _markAllAssignmentRowsProtected();
       CFG.meta.version=APP_VERSION;
       localStorage.setItem("hotel_cfg",JSON.stringify(CFG));
@@ -44155,7 +44238,7 @@ function seedRoster(){try{
   try{_loadViewModeOnBoot();applyViewMode();}catch(e){console.warn("view-mode restore skipped (non-fatal):",e);}
   // Edit access was restored at boot entry, before updateAuth() could persist the default locked state over it.
   syncNav();render();fitHeader();
-  if(_v23ReviewRequired)setTimeout(()=>flashNote("Existing pre-v2.4 schedule is protected. Connect, then complete Review & upload with Schedule selected."),700);
+  if(_v23ReviewRequired&&location.protocol!=="file:"&&localStorage.getItem("hotel_pre_v24_notice_shown")!=="1")setTimeout(()=>{flashNote("Existing pre-v2.4 schedule is protected. It clears automatically after a complete live read confirms the protected rows, or after a reviewed Schedule decision.");try{localStorage.setItem("hotel_pre_v24_notice_shown","1");}catch(e){}},700);
   // Starts the local reminder engine (see its own extensive comment) if this device previously enabled
   // notifications; also re-registers the service worker unconditionally (idempotent, cheap, and needed so a
   // returning PWA install keeps its offline/installability behavior even before notifications are enabled).
