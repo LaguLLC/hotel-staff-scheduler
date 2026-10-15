@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Hotel Staff Scheduler v2.5</title>
+<title>Hotel Staff Scheduler v2.6</title>
 <!-- PWA installability, needed for both (1) a genuine "add to Home Screen" install on any platform, and (2) a real,
    disclosed platform REQUIREMENT: iOS Safari only supports Web Push once a page has been installed to the Home
    Screen as a PWA (Safari 16.4+) — a plain browser tab on iOS cannot receive background push at all, regardless of
@@ -1149,11 +1149,11 @@
        or not — since box-shadow paints through the same compositing path regardless of position:sticky, there is
        no longer a mixed border/box-shadow rendering path for the browser to mis-synchronize between adjacent cells
        in the same row. */  #demandBody table td,#demandBody table th{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line);}
-  #demandBody table tr:last-child td{box-shadow:none;} /* matches the existing "no border under the last row" convention used by every other table (.tblwrap>table tr:last-child td{border-bottom:none}) — replicated here via box-shadow since this table no longer uses a real border-bottom to suppress */
-  #demandBody table td:first-child,#demandBody table th:first-child{position:sticky;left:0;z-index:5;border-right:none;box-shadow:inset 0 -1px 0 var(--line),1px 0 0 var(--line);} /* combines the same row-separator fix above with the pre-existing sticky-column vertical-edge line, in ONE box-shadow declaration (a second, separate box-shadow rule can't merge with this one — only the last-declared box-shadow value ever applies) */
-  /* The frozen label/name cells paint their horizontal separator as part of their own background and as an overlaid line, avoiding dependence on a neighboring non-sticky cell's paint cycle. */
-  #demandBody table td:first-child,#grid tbody tr:not(.rolerow) td:first-child{background-image:linear-gradient(to bottom,transparent calc(100% - 1px),var(--line) 0);background-repeat:no-repeat;}
-  #demandBody table td:first-child::after,#grid tbody tr:not(.rolerow) td:first-child::after{content:"";position:absolute;left:0;right:0;bottom:0;height:1px;background:var(--line);pointer-events:none;z-index:3;}
+  #demandBody table tr:last-child td{box-shadow:none;}
+  /* One inset horizontal line is used in every cell. The frozen cell adds one inset vertical edge; no gradient or pseudo-element is stacked on top of the same separator. */
+  #demandBody table td:first-child,#demandBody table th:first-child{position:sticky;left:0;z-index:5;border-right:none;box-shadow:inset -1px 0 0 var(--line),inset 0 -1px 0 var(--line);isolation:isolate}
+  #demandBody table th:first-child{z-index:25}
+  #grid tbody tr:not(.rolerow) td:first-child{border-right:none;box-shadow:inset -1px 0 0 var(--line),inset 0 -1px 0 var(--line);isolation:isolate}
     /* Verified this is genuinely the LAST row in the FO demand table, since Valet is the final neededRow() call
        for FO: the previous rule zeroed out BOTH the bottom border-suppression AND the sticky column's own vertical
        divider line on the last row — dismissed at the time as "a trivial cosmetic trade-off with no functional
@@ -1164,7 +1164,7 @@
        matching every other table's own last-row convention) stays exactly as it was; the vertical divider (1px 0 0
        var(--line), the same value already used on every non-last row via the combined box-shadow rule above) is
        now explicitly kept on the last row too, instead of being zeroed out alongside the bottom border by
-       coincidence of sharing one rule. */  #demandBody table tr:last-child td:first-child{box-shadow:1px 0 0 var(--line);}
+       coincidence of sharing one rule. */  #demandBody table tr:last-child td:first-child{box-shadow:inset -1px 0 0 var(--line);}
   #demandBody table td.demand:first-child{background:#fafbfc;}
     /* Only ONE box-shadow value can ever apply to a given element (the single winning declaration, by
      specificity, replaces all others — computed box-shadow is not a merge of every matching rule). The 4 rules
@@ -1174,9 +1174,9 @@
      box-shadow values into one, so the row/column focus tint and this table's own border lines render together
      instead of one replacing the other. */
   #demandBody table td.focusRowCol{box-shadow:inset 0 -1px 0 var(--line),inset 0 0 0 999px var(--focusrowcol);}
-  #demandBody table td.focusRowCol:first-child{box-shadow:inset 0 -1px 0 var(--line),1px 0 0 var(--line),inset 0 0 0 999px var(--focusrowcol);}
+  #demandBody table td.focusRowCol:first-child{box-shadow:inset -1px 0 0 var(--line),inset 0 -1px 0 var(--line),inset 0 0 0 999px var(--focusrowcol);}
   #demandBody table tr:last-child td.focusRowCol{box-shadow:inset 0 0 0 999px var(--focusrowcol);}
-  #demandBody table tr:last-child td.focusRowCol:first-child{box-shadow:1px 0 0 var(--line),inset 0 0 0 999px var(--focusrowcol);}
+  #demandBody table tr:last-child td.focusRowCol:first-child{box-shadow:inset -1px 0 0 var(--line),inset 0 0 0 999px var(--focusrowcol);}
   #demandBody table th:first-child{background:#eef2f6;}
   #demandBody table{table-layout:fixed;width:100%;min-width:720px;}
   #demandBody .tblwrap{overflow:auto;max-height:none;position:relative;}
@@ -2883,8 +2883,12 @@
   .exportStaffToggleText{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;min-width:0;overflow-wrap:anywhere}
   .exportStaffList label{display:grid!important;grid-template-columns:auto minmax(0,1fr);align-items:start!important;gap:6px!important;min-width:0}
   .exportStaffLine{min-width:0;line-height:1.35;overflow-wrap:anywhere}
-  .weekHoursInput{width:54px;text-align:center;font:inherit;font-size:11.5px;line-height:1.2;height:24px;box-sizing:border-box}
+  .weekHoursInput{width:54px;text-align:center;font:inherit;font-size:11.5px;line-height:1.2;height:24px;box-sizing:border-box;-moz-appearance:textfield;appearance:textfield}
+  .weekHoursInput::-webkit-inner-spin-button,.weekHoursInput::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+  .weekHoursInput::placeholder{color:#9aa5b1;opacity:1}
   #coverageMinTable select{width:100%;min-width:0}
+  /* The first Coverage column must scroll with the table. A frozen 60% Role column can cover Min and Per on a phone even at maximum horizontal scroll. */
+  #settingsBody #coverageMinTable th:first-child,#settingsBody #coverageMinTable td:first-child{position:static;left:auto;z-index:auto}
   .compareDropZone{border:1px dashed #9eabb9;border-radius:8px;padding:12px;text-align:center;background:#fafbfc;cursor:pointer}
   .compareDropZone.dragover{border-color:#1b6fc9;background:#eef3fb}
   #grid tbody tr:not(.rolerow) td{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line)}
@@ -3343,7 +3347,7 @@
 <script>
 // COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): JS comments in this block use
 // or a standard block comment -- never HTML's <!-- --> comment syntax. State facts and reasoning only; do not narrate session history or quote complaints.
-const APP_VERSION="2.5";
+const APP_VERSION="2.6";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 function _versionIsBefore24(v){const m=String(v||"").match(/^(\d+)(?:\.(\d+))?/);if(!m)return true;const a=+m[1],b=+(m[2]||0);return a<2||(a===2&&b<4);}
 /* IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
@@ -4328,7 +4332,8 @@ function seed(){
 /* STATE ---------- */
 let DB=null, CHAN=null, CHECKIN_CHAN=null; // Supabase client + realtime channel(s) — checkins gets its own, separate channel (see subscribe()'s own comment for why)
 let CFG=load("hotel_cfg",seed());
-if(CFG.weekStartDow==null)CFG.weekStartDow=4; // 0=Sun..6=Sat; DEFAULT 4=Thursday (workweek Thu->Wed). Configurable in Settings, but default stays Thu-Wed.
+const _legacyWeekStartDow=(CFG.weekStartDow==null?4:Number(CFG.weekStartDow));
+["FO","HSK","DB"].forEach(function(dp){if(CFG[dp]&&CFG[dp].weekStartDow==null)CFG[dp].weekStartDow=_legacyWeekStartDow;}); // department-specific; legacy app-wide value is only the upgrade fallback
 // This toggle already existed (Settings → Visibility & access → "Hide Settings & Readme from view-only users")
 // but had NO default value set anywhere — CFG.hideForViewers was simply undefined (falsy) until a scheduler
 // explicitly turned it on, meaning every fresh/existing install silently defaulted to SHOWING Settings/Readme to a
@@ -12591,7 +12596,7 @@ let _lastSettledSnapshot=null;
 // real data persistence must never depend on it working perfectly.
 function _undoSnapshot(){
   try{
-    return JSON.stringify({CFG,ASSIGN,DEMAND,ACTUAL,ACTUALD,ACTUALD_AUTOSRC,ACTUALD_IMPORTDATE,ACTUALD_TIMES,LEAVES,LEAVE_REQUESTS});
+    return JSON.stringify({CFG,ASSIGN,DEMAND,ACTUAL,ACTUALD,ACTUALD_AUTOSRC,ACTUALD_IMPORTDATE,ACTUALD_TIMES,ACTUALD_REVIEWED,CHECKINS,ROOM_ASSIGN,FLOORS,LOCKS,LEAVES,LEAVE_REQUESTS});
   }catch(e){
     // One or more tracked globals hasn't reached its own `let` declaration line yet (still in the temporal dead
     // zone during an early, one-time boot-time migration) — there is nothing meaningful to capture an undo step
@@ -12740,9 +12745,9 @@ function _undoRestore(snapStr,actionLocation){
   _undoApplying=true;
   // The on-screen state as it is RIGHT NOW, captured before anything is overwritten - used at the end of this
   // function to work out which weeks genuinely changed and therefore need pushing to the shared copy.
-  try{_undoPrePushSnapshot={DEMAND:JSON.parse(JSON.stringify(DEMAND||{})),ASSIGN:JSON.parse(JSON.stringify(ASSIGN||{}))};}catch(e){_undoPrePushSnapshot=null;}
+  try{_undoPrePushSnapshot={DEMAND:JSON.parse(JSON.stringify(DEMAND||{})),ASSIGN:JSON.parse(JSON.stringify(ASSIGN||{})),CHECKINS:JSON.parse(JSON.stringify(CHECKINS||{}))};}catch(e){_undoPrePushSnapshot=null;}
   try{
-    CFG=s.CFG;ASSIGN=s.ASSIGN;DEMAND=s.DEMAND;ACTUAL=s.ACTUAL;ACTUALD=s.ACTUALD;ACTUALD_AUTOSRC=s.ACTUALD_AUTOSRC||{};ACTUALD_IMPORTDATE=s.ACTUALD_IMPORTDATE||{};ACTUALD_TIMES=s.ACTUALD_TIMES||{};LEAVES=s.LEAVES;LEAVE_REQUESTS=s.LEAVE_REQUESTS;
+    CFG=s.CFG;ASSIGN=s.ASSIGN;DEMAND=s.DEMAND;ACTUAL=s.ACTUAL;ACTUALD=s.ACTUALD;ACTUALD_AUTOSRC=s.ACTUALD_AUTOSRC||{};ACTUALD_IMPORTDATE=s.ACTUALD_IMPORTDATE||{};ACTUALD_TIMES=s.ACTUALD_TIMES||{};ACTUALD_REVIEWED=s.ACTUALD_REVIEWED||{};CHECKINS=s.CHECKINS||{};ROOM_ASSIGN=s.ROOM_ASSIGN||{};FLOORS=s.FLOORS||{};LOCKS=s.LOCKS||{};LEAVES=s.LEAVES;LEAVE_REQUESTS=s.LEAVE_REQUESTS;
     // Every ORDINARY schedule edit (setCell(), auto-fill, bid claims, etc.) calls _markAssignDirty() for the exact
     // (dept,week,staff) key it touched, which is what protects that edit from being silently overwritten by a
     // stale, already-in-flight pullAll() (see _assignDirtyStamp's own comment near its declaration). An undo/redo
@@ -12768,7 +12773,7 @@ function _undoRestore(snapStr,actionLocation){
     // could flip to a past-week state for a week that is not actually past. Re-deriving both here costs nothing
     // when weekStartDow has not changed (rebuildWeekStart() is idempotent in that case).
     try{if(typeof rebuildWeekStart==="function")rebuildWeekStart();}catch(eDow){console.warn("undo/redo week-start rebuild skipped (non-fatal):",eDow);}
-    save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);save("hotel_actuald_autosrc",ACTUALD_AUTOSRC);save("hotel_actuald_importdate",ACTUALD_IMPORTDATE);save("hotel_actuald_times",ACTUALD_TIMES);save("hotel_leaves",LEAVES);save("hotel_leaverequests",LEAVE_REQUESTS);
+    save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);save("hotel_actuald_autosrc",ACTUALD_AUTOSRC);save("hotel_actuald_importdate",ACTUALD_IMPORTDATE);save("hotel_actuald_times",ACTUALD_TIMES);save("hotel_actuald_reviewed",ACTUALD_REVIEWED);save("hotel_checkins",CHECKINS);save("hotel_roomassign",ROOM_ASSIGN);save("hotel_floors",FLOORS);save("hotel_locks",LOCKS);save("hotel_leaves",LEAVES);save("hotel_leaverequests",LEAVE_REQUESTS);
     if(typeof MULTISEL!=="undefined"){MULTISEL.cells.clear();MULTISEL.active=false;MULTISEL.lastCell=null;}
     // An undo/redo used to be LOCAL ONLY for everything except CFG (save("hotel_cfg") has its own pushConfig()
     // hook; no other tracked key has one). So the shared copy still held the pre-undo values, and this device's
@@ -12907,7 +12912,7 @@ function _undoRestore(snapStr,actionLocation){
     }catch(eCfgScroll){console.warn("undo/redo settings-scroll skipped (non-fatal):",eCfgScroll);}
     _lastSettingsEditLabel=null;
     _undoScrollHint=null;_undoCfgScrollHint=null;_undoDemandScrollHint=null;
-  }finally{_undoApplying=false;_undoPrePushSnapshot=null;}
+  }finally{_undoApplying=false;}
   // Re-captures the JUST-RESTORED state as the new settled baseline (see _lastSettledSnapshot's own comment) —
   // critical so that a FRESH edit made right after this undo/redo correctly treats the just-restored state as its
   // own "before," rather than some stale earlier snapshot from before the undo/redo happened.
@@ -12920,9 +12925,14 @@ function _undoRestore(snapStr,actionLocation){
       const byWeek=new Map();(_undoPushScope.rows||[]).forEach(([dp,wk,nm])=>{const k=dp+"|"+wk;if(!byWeek.has(k))byWeek.set(k,{dp,wk,names:new Set()});byWeek.get(k).names.add(nm);});byWeek.forEach(x=>{try{pushWeekAll(x.dp,x.wk,x.names);}catch(e){}});
       (_undoPushScope.demandWeeks||[]).forEach(wk=>{try{pushDemand(wk);}catch(e){}});
       (_undoPushScope.leaveIds||[]).forEach(id=>{try{pushLeaveRequest(id);}catch(e){}});
+      if(actionLocation&&actionLocation.kind==="settings"&&actionLocation.key==="weekStartDow"&&_undoPrePushSnapshot){
+        const dp=actionLocation.dept||DEPT,bA=((_undoPrePushSnapshot.ASSIGN||{})[dp]||{}),aA=((ASSIGN||{})[dp]||{}),bC=((_undoPrePushSnapshot.CHECKINS||{})[dp]||{}),aC=((CHECKINS||{})[dp]||{});
+        new Set([...Object.keys(bA),...Object.keys(aA)]).forEach(wk=>new Set([...Object.keys(bA[wk]||{}),...Object.keys(aA[wk]||{})]).forEach(nm=>{if((bA[wk]||{})[nm]&&!(aA[wk]||{})[nm])DB.from("assignments").delete().eq("dept",dp).eq("week",wk).eq("staff",nm).then(r=>{if(r.error)reportSyncError("Remove obsolete schedule row after undo",r.error);});}));
+        new Set([...Object.keys(bC),...Object.keys(aC)]).forEach(wk=>new Set([...Object.keys(bC[wk]||{}),...Object.keys(aC[wk]||{})]).forEach(nm=>{if((aC[wk]||{})[nm]){_markCheckinDirty(dp,wk,nm);pushCheckin(dp,wk,nm);}else if((bC[wk]||{})[nm])DB.from("checkins").delete().eq("dept",dp).eq("week",wk).eq("staff",nm).then(r=>{if(r.error)reportSyncError("Remove obsolete check-in row after undo",r.error);});}));
+      }
     }catch(ePush){console.warn("undo/redo live push skipped (non-fatal):",ePush);}
   }
-  _undoPushScope=null;
+  _undoPushScope=null;_undoPrePushSnapshot=null;
   _refreshUndoRedoButtons();
 }
 // Save()'s own undo-capture block (see that function's own comment for the full "coalesce a burst of save()
@@ -12945,7 +12955,7 @@ function flushPendingUndoBatch(){
     // Same RULE 2 drop as the deferred path — both routes must apply it or a flush admits a step the timer
     // would have rejected.
     const _afterFlush=_undoSnapshot();
-    if(_undoStepIsNoOp(_undoBatchPre,_afterFlush)){_undoBatchPre=null;_lastSettledSnapshot=_afterFlush;return;}
+    if(_undoStepIsNoOp(_undoBatchPre,_afterFlush)){_undoBatchPre=null;_undoBatchLocation=null;_lastSettledSnapshot=_afterFlush;_refreshUndoRedoButtons();return;}
     UNDO_STACK.push(_undoBatchPre);UNDO_LOCATIONS.push(_undoBatchLocation);if(UNDO_STACK.length>UNDO_MAX){UNDO_STACK.shift();UNDO_LOCATIONS.shift();}REDO_STACK=[];REDO_LOCATIONS=[];_undoBatchPre=null;_undoBatchLocation=null;
     // Same re-capture as the deferred-timer path in save() itself — see _lastSettledSnapshot's own comment for why
     // this must happen at the true end of every batch, including one flushed early/manually here.
@@ -13299,8 +13309,8 @@ function _wireModalKeys(bg,onClose,onDefault){
 function fitHeader(){/* header is position:sticky; no manual offset needed */}
 /* Weeks run Thursday -> Wednesday by DEFAULT (matches the hotel sheets); start day is configurable via
    CFG.weekStartDow (Settings) but defaults to & should stay Thu(4) */
-function dowOffset(){return (CFG.weekStartDow!=null)?CFG.weekStartDow:4;}
-function mondayOfWeekStartThu(d){const x=new Date(d);const dow=x.getDay();/*0 Sun..6 Sat*/const diff=(dow-dowOffset()+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
+function dowOffset(dept){const dp=dept||DEPT||"FO",D=CFG[dp]||{};return (D.weekStartDow!=null)?Number(D.weekStartDow):((CFG.weekStartDow!=null)?Number(CFG.weekStartDow):4);}
+function mondayOfWeekStartThu(d,dept){const x=new Date(d);const dow=x.getDay();/*0 Sun..6 Sat*/const diff=(dow-dowOffset(dept)+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
 function weekKey(d){return d.getFullYear()+"-"+String(d.getMonth()+1).padStart(2,"0")+"-"+String(d.getDate()).padStart(2,"0");}
 function fmt(d){return d.toLocaleDateString(undefined,{month:'short',day:'numeric'});}
 // Measured directly (performance.now(), not guesswork): switching departments genuinely takes 100-160ms of
@@ -13326,9 +13336,9 @@ function dayDate(i){
   return _dayDateCache[i];
 }
 const DOW_NAMES=["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
-function buildDOW(){const o=dowOffset();const arr=[];for(let i=0;i<7;i++)arr.push(DOW_NAMES[(o+i)%7]);return arr;}
-let DOW=buildDOW(); // rebuilt via rebuildWeekStart() whenever CFG.weekStartDow changes in Settings
-function rebuildWeekStart(){DOW=buildDOW();WEEK_START=mondayOfWeekStartThu(WEEK_START||new Date());}
+function buildDOW(dept){const o=dowOffset(dept);const arr=[];for(let i=0;i<7;i++)arr.push(DOW_NAMES[(o+i)%7]);return arr;}
+let DOW=buildDOW(DEPT);
+function rebuildWeekStart(anchorDate){const anchor=anchorDate?new Date(anchorDate):new Date(WEEK_START||new Date());if(!anchorDate&&WEEK_START)anchor.setDate(anchor.getDate()+3);DOW=buildDOW(DEPT);WEEK_START=mondayOfWeekStartThu(anchor,DEPT);_dayDateCache=null;_dayDateCacheKey=null;}
 /* RENDER ---------- */
 let SCROLLMEM={};function curViewKey(){return VIEW==="schedule"?("s_"+DEPT):VIEW;}
 // NEW — see renderSettings()'s own comment (right where this flag is checked) for the full "opening settings for
@@ -13398,7 +13408,7 @@ function clearMultiSelectOnNav(){if(MULTISEL.active||MULTISEL.cells.size){MULTIS
 // The active Supabase session is now consulted here too, which is the same authority the ambient unlock path
 // already uses. Per the Readme's own build convention, any function granting edit access for a department must
 // call updateAuth() afterward — this one already does, on the line below.
-function setDept(d){SCROLLMEM[curViewKey()]=window.scrollY;if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;clearMultiSelectOnNav();DEPT=d;VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;
+function setDept(d){SCROLLMEM[curViewKey()]=window.scrollY;if(EDIT&&EDIT_DEPT)EDITMEM[EDIT_DEPT]=CURRENT_USER||true;clearMultiSelectOnNav();const _weekAnchor=new Date(WEEK_START);_weekAnchor.setDate(_weekAnchor.getDate()+3);DEPT=d;rebuildWeekStart(_weekAnchor);VIEW="schedule";const m=EDITMEM[d];EDIT=!!m;EDIT_DEPT=EDIT?d:null;CURRENT_USER=(m&&m!==true)?m:CURRENT_USER;
   if(!EDIT&&typeof SUPA_USER!=="undefined"&&SUPA_USER&&typeof supaCanEdit==="function"&&supaCanEdit(d)){
     CURRENT_USER={name:SUPA_USER.email,role:SUPA_USER.role};EDIT=true;EDIT_DEPT=d;EDITMEM[d]=CURRENT_USER;
   }
@@ -15850,8 +15860,8 @@ function renderDemand(){
       else{DEMAND[_dk][i][k]=Math.max(0,Math.round(num));}
     }
     _setPendingUndoLocation({kind:"demand",dept:DEPT,week:wk,day:i,field:k});
-    _markDemandDirty(_dk);
-    save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(_dk);
+    const _demandKeys=_mirrorDemandCalendarValue(DEPT,wk,i,k);_demandKeys.forEach(_markDemandDirty);
+    save("hotel_demand",DEMAND);TOUCH&&TOUCH();_demandKeys.forEach(pushDemand);
     render(); // simplest correct refresh: recomputes every derived row (RA/Sup/FDA/Bell/Valet needed, credits, checkouts ratio) consistently, and re-mirrors Occupancy FO→HSK
     // Reset deferred to the next tick (not immediately) — this guard must stay TRUE for the ENTIRE synchronous
     // duration of the render() call just above (that's precisely when a spurious re-entrant native "change" event,
@@ -22024,8 +22034,10 @@ function setStatus(txt,color){
 // sustained outage (still down after 4s) still surfaces "unsynced" exactly as before, with no delay hidden from a
 // real, lasting problem — this only smooths the DISPLAY of brief, self-healing drops.
 let _statusFlickerTimer=null,_realtimeErrorUiTimer=null,_realtimeGraceUntil=0;
+function _syncOperationLabel(where){return String(where||"Sync operation").replace(/&/g,"and").replace(/^./,c=>c.toUpperCase());}
 function reportSyncError(where,error){
-  SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("error",where,0,"error",error);
+  const _where=_syncOperationLabel(where),_detail=(error&&error.message?error.message:String(error));
+  SYNC_ERR=_where+": "+_detail+" Keep this tab open and use Retry sync. If the error repeats, export a JSON backup before reconnecting or discarding anything.";console.error("[sync failed]",where,error);_syncDiag("error",_where,0,"error",error);
   if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
   _statusFlickerTimer=setTimeout(()=>{_statusFlickerTimer=null;_applySyncUiState();try{syncNav();}catch(e){}},250);
 }
@@ -22048,7 +22060,7 @@ function reportSyncError(where,error){
 // anything about local-edit safety — PENDING is left completely untouched, since a channel-only issue never
 // establishes that one.
 function reportRealtimeChannelError(where,error){
-  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("realtime",where,0,"error",error);
+  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=_syncOperationLabel(where)+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("realtime",where,0,"error",error);
   if(_realtimeErrorUiTimer)clearTimeout(_realtimeErrorUiTimer);const _grace=_schedEverSubscribed?4000:0;_realtimeGraceUntil=Date.now()+_grace;
   _realtimeErrorUiTimer=setTimeout(()=>{_realtimeErrorUiTimer=null;_realtimeGraceUntil=0;if(DB&&REALTIME_RECEIVE_ERR&&!_realtimeScheduleReceiving){_applySyncUiState();try{syncNav();}catch(e){}}},_grace);
 }
@@ -22319,7 +22331,7 @@ const SHARED_APP_CFG_KEYS=[
   // Hiding a still-being-drafted week from view-only users is a app-wide decision, not a per-device one -
   // see DRAFTWEEKS' own comment for the "schedules visible in view only" report this closes.
   "draftWeeks","draftRanges","publishRanges","unpaidBreakMinShiftHours",
-  "unpaidBreakMinutes","unpaidBreakPer","weekStartDow","accrual","autoComputeActualFromClock",
+  "unpaidBreakMinutes","unpaidBreakPer","accrual","autoComputeActualFromClock",
   // "whether to require geofencing/attestation questions should be per dept setting not app wide." A hotel's Front
   // Office desk and Housekeeping's own work areas can genuinely sit in different physical locations. These 7 keys
   // MOVED off this app-wide list — they now live on CFG[dept] itself (see renderSettings()'s Clock in/out section
@@ -22837,6 +22849,10 @@ function analyzeCfgChanges(localDepts,liveDepts){
       const line=`${deptLabel} roles: ${_bits.join(" · ")}`;
       changes.push(line);conflicts.push(line);
     }
+    if(Number(loc.weekStartDow??4)!==Number(live.weekStartDow??4)){
+      const line=`${deptLabel} setting — Workweek starts on: local ${_LONG_DAYS[Number(loc.weekStartDow??4)]} · live ${_LONG_DAYS[Number(live.weekStartDow??4)]}`;
+      changes.push(line);conflicts.push(line);
+    }
   });
   // Shared, app-wide settings (see SHARED_APP_CFG_KEYS' own comment for exactly what is/isn't included) ---
   const locAppWide=(localDepts.appWide)||{};const liveAppWide=(liveDepts.appWide)||{};
@@ -22928,6 +22944,7 @@ function _categorizeConflictLine(line){
   if(line.indexOf(" rule — ")!==-1)return "Rules & thresholds";
   if(line.indexOf(" default shifts: ")!==-1)return "Default shifts";
   if(line.indexOf(" roles: ")!==-1)return "Role list";
+  if(line.indexOf(" setting — ")!==-1)return "Per-department settings";
   return "Schedule"; // the remaining shape is the per-cell schedule diff: "NAME — DEPT DAY (WK): ..."
 }
 // Roster sections lead, because after a roster loss they are what somebody is actually here to look at, and the
@@ -22996,7 +23013,7 @@ function _renderPlainItemsList(items){
     const t=String(x);let head=null,body=null;
     const m=t.indexOf("\u0001");
     if(m>=0){head=t.slice(0,m);body=t.slice(m+1);}
-    else if(t.length>150||t.split("\n").length>4){head=t.split("\n")[0].slice(0,120)+"\u2026";body=t;}
+    else if(t.split("\n").length>4){head=t.split("\n")[0];body=t;}
     if(head===null)return `<li style="margin-bottom:4px;line-height:1.5;white-space:pre-line;padding-left:14px;text-indent:-14px">${esc(strip(t))}</li>`;
     return `<li style="list-style:none;margin:0 0 4px -14px;line-height:1.5"><details><summary style="cursor:pointer" title="Click to expand">${esc(strip(head))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(body))}</div></details></li>`;
   };
@@ -23429,7 +23446,8 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _cfgChanged=(_cfgCompareView(_cfgDeptsLocal)!==_cfgCompareView(_cfgDeptsLive));
   if(!changes.length&&!_cfgChanged){
     if(PENDING||_stay){const result=await pushPending({onlyChanged:true,fromReview:true});if(!result||result.failed){setPending(true);setStatus("unsynced","#e0a800");return;}}
-    if(DB)setStatus("live","#2c9e5f");if(_stay)flashNote("This device matches the live copy. Nothing to upload.");return;
+    _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setPushFailureLatched(false);setPending(false);_applySyncUiState();try{syncNav();}catch(e){}render();
+    if(_stay)flashNote("This device matches the live copy. Nothing to upload.");return;
   } // nothing itemized, but protected rows are still freshly verified before their registry entries are cleared
     const _isFirstAppWideSync=!(_lastPulledAppConfig&&_lastPulledAppConfig.appWide&&Object.keys(_lastPulledAppConfig.appWide).length);
     _awaitingSyncChoice=true;
@@ -23477,7 +23495,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     _reviewUploadInProgress=false;_reconcilePendingFlag();_applySyncUiState();render();
     {const _nm={people:"Roster people",details:"Roster details",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
   }
-  else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;CFG.FO=JSON.parse(JSON.stringify(_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_cfgDeptsLive.HSK));if(_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{CFG[k]=JSON.parse(JSON.stringify(_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
+  else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;const _rawLiveCfg=_lastPulledAppConfig||{};CFG.FO=JSON.parse(JSON.stringify(_rawLiveCfg.FO||_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_rawLiveCfg.HSK||_cfgDeptsLive.HSK));if(_rawLiveCfg.DB||_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_rawLiveCfg.DB||_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{const _rawAW=_rawLiveCfg.appWide||{};CFG[k]=JSON.parse(JSON.stringify(Object.prototype.hasOwnProperty.call(_rawAW,k)?_rawAW[k]:_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
     // See the realtime "sched" channel's own new comment (a few hundred lines up) for the full "undo/redo
     // buttons still flickering" cause this closes. These 4 save() calls represent the SYNC RECONCILIATION's own
     // choice to discard local edits and adopt the live copy — not a real user edit — so, exactly like pullAll()'s
@@ -23486,7 +23504,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     // being tracked.
     const _prevSyncApplying1=_syncApplying;_syncApplying=true;
     try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying1;}
-    _pullingConfigNow=false;setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
+    _pullingConfigNow=false;rebuildWeekStart();setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
   else { // Cancel / dismissed — do NOT go live; keep local data and tear the connection back down
     // Bug: disconnect() must run FIRST, before the save() calls below, not after. Save("hotel_cfg",CFG)
     // triggers pushConfig() (a fire-and-forget async push) whenever DB is still non-null at the moment it's called
@@ -23506,7 +23524,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     // Same "not a real user edit" fix as the "live" branch just above — restoring the local snapshot on Cancel is
     // the sync reconciliation's own action, not a trackable undo step.
     const _prevSyncApplying2=_syncApplying;_syncApplying=true;
-    try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying2;}
+    try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying2;}rebuildWeekStart();
     if(_stay){_syncReviewPending=false;setPending(_pendingAtReviewStart||_blockedDbWrites>_blockedWritesAtStart||_hasDurablePendingWork());_applySyncUiState();try{syncNav();}catch(e){}}
   }
 }
@@ -24275,7 +24293,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // conflict dialog that hadn't even been shown yet. Guarding this call the same way the app_config pull already
   // guards its own CFG assignment closes this off at the root — pullAll() itself should only ever PULL and persist
   // locally, never silently push back out on its own.
-  _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;_refreshUndoBaselineAfterRemote();
+  _pullingConfigNow=true;save("hotel_cfg",CFG);_pullingConfigNow=false;rebuildWeekStart();_refreshUndoBaselineAfterRemote();
   // See _awayChanges' own comment above for the full "what changed while away" feature this computes. Skipped
   // entirely on this device's very first-ever successful pull (no genuine "before" state to meaningfully compare
   // against — everything would show as "new," which is noise, not a real finding).
@@ -24699,11 +24717,11 @@ async function pushConfig(opts){
     const {error}=await DB.from("app_config").upsert({id:"depts",data:payload},{onConflict:"id"});
     if(error){reportSyncError("push settings & roster",error);_pushSettled(false,"config");return {ok:false,error};}
     const verify=await DB.from("app_config").select("data").eq("id","depts");
-    if(verify.error){reportSyncError("verify settings & roster upload",verify.error);_pushSettled(false,"config");return {ok:false,error:verify.error};}
+    if(verify.error){reportSyncError("Settings and roster upload verification",verify.error);_pushSettled(false,"config");return {ok:false,error:verify.error};}
     const written=((verify.data&&verify.data[0])||{}).data||{},mismatch=[];
     DEPT_KEYS.forEach(d=>{if(payload[d]&&!_sameValue(payload[d],written[d]))mismatch.push(deptLabel(d));});
     if(_want("settings")&&!_sameValue(payload.appWide||{},written.appWide||{}))mismatch.push("App-wide settings");
-    if(mismatch.length){const error={message:"Live verification did not match: "+mismatch.join(", ")};reportSyncError("verify settings & roster upload",error);_setPushFailureLatched(true);_pushSettled(false,"config");return {ok:false,error};}
+    if(mismatch.length){const error={message:"The server returned different data immediately after the write for: "+mismatch.join(", ")+". The upload is not confirmed."};reportSyncError("Settings and roster upload verification",error);_setPushFailureLatched(true);_pushSettled(false,"config");return {ok:false,error};}
     _syncDiag("verify","app_config",1,"ok");if(!_secs||(["people","details","settings"].every(k=>_secs.has(k))||(_secs.has("roster")&&_secs.has("settings"))))_clearDirtyConfig();clearSyncError();_pushSettled(true,"config");
 
     // Adopt what was just written, so this device shows the merged result immediately rather than waiting for
@@ -24726,7 +24744,7 @@ async function pushConfig(opts){
           _keep[d]=Object.assign({},(CFG._deletedStaff||{})[d]||{},mergedTomb[d]||{});
         });
         CFG._deletedStaff=_keep;
-        try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+        try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}rebuildWeekStart();
       }finally{_pullingConfigNow=prev;}
     }catch(e){}
     return {ok:true,payload};
@@ -30316,7 +30334,7 @@ function renderMobileScheduleView(){
       // device) even once the cell's own CSS truncates the visible text with an ellipsis.
       const _fullNameLabel=s.n+(s.type?" ("+(TYPE_LABEL[s.type]||s.type)+")":"");
       const _wk2=personWeek(s),_ah=actualHrs(s.n),_isAct=_ah!=null,_shown=_isAct?_ah:_wk2.hrs,_ot=_shown>40;
-      const _hours=EDIT?`<input class="weekHoursInput" type="number" min="0" max="168" step="0.5" value="${_shown}" onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_wk2.hrs}" style="border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#596575')}">`:`${_shown}h`;
+      const _hours=EDIT?`<input class="weekHoursInput" type="number" min="0" max="168" step="0.5" value="${_shown}" onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_wk2.hrs}" style="border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#9aa5b1')}">`:`${_shown}h`;
       bodyRows.push(`<tr><td title="${esc(_fullNameLabel)}">${esc(s.n)}${s.type?` <span class="small muted typebadge">(${esc(TYPE_LABEL[s.type]||s.type)})</span>`:""}</td>${cells.join("")}<td class="mobWeekHours" style="${_ot?'background:#fdecec;color:#b30000;font-weight:700':''}">${_hours}${_wk2.unk?' <span class="pill warn">?</span>':''}</td><td class="mobWeekCost" title="${_wk2.reg}h regular + ${_wk2.ot}h overtime" style="color:#0e7c46">${(+_wk2.cost)?'$'+fmtNum(+_wk2.cost,2):'—'}${otBadge(_wk2,rateOf(s))}</td></tr>`);
     });
   });
@@ -32608,7 +32626,7 @@ function setCoveragePer(role,v){if(!_requireDeptSettingsAccess(SETDEPT))return;c
 // remembered per-section going forward, exactly the same persistence as before, just with the opposite starting
 // default.
 function settingsSectionOpen(key){return !!(CFG._settingsCatOpen&&CFG._settingsCatOpen[key]===true);}
-function toggleSettingsSection(key,isOpen){CFG._settingsCatOpen=CFG._settingsCatOpen||{};CFG._settingsCatOpen[key]=isOpen;save("hotel_cfg",CFG);}
+function toggleSettingsSection(key,isOpen){CFG._settingsCatOpen=CFG._settingsCatOpen||{};CFG._settingsCatOpen[key]=isOpen;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){MEM.hotel_cfg=JSON.stringify(CFG);}}
 // Settings is genuinely fragile in one specific way worth documenting: _renderSettingsInner() below builds one
 // large HTML string and replaces #settingsBody's entire
 // innerHTML on every single call, which is why this file's own Build Conventions section already documents several
@@ -33091,18 +33109,12 @@ function _renderSettingsInner(){
        choose to see by simply expanding it themselves. -->
   <details style="margin:6px 0" id="rulesDetails" ${settingsSectionOpen('rules')?"open":""} ontoggle="toggleSettingsSection('rules',this.open)"><summary style="cursor:pointer"><b>Rules &amp; thresholds</b> ${(_histWk||!_canEditDeptNow)?'<span class="pill err">read-only'+(_histWk?" — historical":" — locked")+'</span>':""}</summary>
   <div style="margin-top:8px">
-  <!-- Workweek start day (CFG.weekStartDow) is genuinely global — it applies to both departments (see this
-       Readme's own "Weeks & schedule structure" section) — so it's gated by _canEditGlobal (any department's
-       edit access) here, in its own small fieldset OUTSIDE the per-department one just below. A nested fieldset
-       can only ever narrow access further, never loosen it (a disabled ancestor fieldset disables every
-       descendant regardless of a nested fieldset's own state), so this control genuinely needs to sit outside
-       the per-department fieldset to avoid needlessly requiring THIS specific department's own PIN to change a
-       setting that isn't actually department-specific. -->
-  <div class="lockOverlayWrap">${_canEditGlobal?"":'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked — click to enter your PIN"></div>'}
-  <fieldset ${_canEditGlobal?"":"disabled"} style="border:none;margin:0;padding:0">
+  <!-- Workweek boundaries are department-specific. Changing one department rekeys its dated schedule values and leaves the other departments unchanged. -->
+  <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked — click to enter your PIN"></div>':''}
+  <fieldset ${(_histWk||!_canEditDeptNow)?"disabled":""} style="border:none;margin:0;padding:0">
   <div class="mrow" style="align-items:center">
     <label class="small">Overtime after 40 hrs</label>
-    <label class="small" style="display:flex;align-items:center;gap:6px"><span style="white-space:nowrap">Workweek starts on </span><select class="sfield" id="wkStartSel" onchange="setWeekStart(this.value)">${DOW_NAMES.map((nm,idx)=>`<option value="${idx}" ${CFG.weekStartDow===idx?"selected":""}>${nm}</option>`).join("")}</select></label>
+    <label class="small" style="display:flex;align-items:center;gap:6px"><span style="white-space:nowrap">Workweek starts on </span><select class="sfield" id="wkStartSel" data-setting-key="weekStartDow" onchange="setWeekStart(this.value)">${DOW_NAMES.map((nm,idx)=>`<option value="${idx}" ${dowOffset(SETDEPT)===idx?"selected":""}>${nm}</option>`).join("")}</select></label>
   </div>
   </fieldset></div>
   <div class="lockOverlayWrap">${(!_histWk&&!_canEditDeptNow)?'<div class="lockOverlay" onclick="unlockCurrentSettingsDept(event)" title="Locked — click to enter your PIN"></div>':''}
@@ -34942,7 +34954,43 @@ function supaCanEdit(dept){if(!SUPA_USER)return null;if(SUPA_USER.manager)return
 function supaCanEditSettings(dept){if(!SUPA_USER)return null;if(SUPA_USER.manager)return true;if(dept==="DB")return (SUPA_USER.dbs!=null)?!!SUPA_USER.dbs:false;return isRoomsDept(dept)?!!SUPA_USER.hsks:!!SUPA_USER.fos;}
 // SetPin()/CFG.editPin was a non-functional leftover — see the removed "PIN to edit" row's comment in
 // renderSettings() for the full explanation of why it was deleted rather than kept as redundant UI.
-function setWeekStart(v){if(!_requireGlobalSettingsAccess())return;const idx=parseInt(v,10);if(isNaN(idx)||idx<0||idx>6)return;CFG.weekStartDow=idx;save("hotel_cfg",CFG);rebuildWeekStart();uiAlert("Workweek now runs "+DOW[0]+"→"+DOW[6]+". This also shifts the overtime week boundary.");render();}
+function _weekStartForDow(d,dow){const x=new Date(d);const diff=(x.getDay()-dow+7)%7;x.setDate(x.getDate()-diff);x.setHours(0,0,0,0);return x;}
+function _migrateRowDayWeeks(store,dept,oldDow,newDow){
+  const src=(store&&store[dept])||{},out={},oldWeeks=new Set(),newWeeks=new Set();
+  const weeks=Object.keys(src).sort((a,b)=>{const am=new Date(a+"T00:00:00").getDay()===oldDow?1:0,bm=new Date(b+"T00:00:00").getDay()===oldDow?1:0;return am-bm;});
+  weeks.forEach(wk=>{const start=new Date(wk+"T00:00:00"),auth=start.getDay()===oldDow;if(auth)oldWeeks.add(wk);Object.keys(src[wk]||{}).forEach(name=>{Object.keys(src[wk][name]||{}).forEach(ds=>{const day=Number(ds);if(!Number.isInteger(day)||day<0||day>6)return;const dt=new Date(start);dt.setDate(dt.getDate()+day);const nws=_weekStartForDow(dt,newDow),nw=weekKey(nws),nd=Math.round((dt-nws)/86400000);out[nw]=out[nw]||{};out[nw][name]=out[nw][name]||{};if(auth||out[nw][name][nd]===undefined)out[nw][name][nd]=src[wk][name][ds];newWeeks.add(nw);});});});
+  store[dept]=out;return{oldWeeks:[...oldWeeks],newWeeks:[...newWeeks]};
+}
+function _migrateDayRowWeeks(store,dept,oldDow,newDow){
+  const src=(store&&store[dept])||{},out={},oldWeeks=new Set(),newWeeks=new Set();
+  const weeks=Object.keys(src).sort((a,b)=>{const am=new Date(a+"T00:00:00").getDay()===oldDow?1:0,bm=new Date(b+"T00:00:00").getDay()===oldDow?1:0;return am-bm;});
+  weeks.forEach(wk=>{const start=new Date(wk+"T00:00:00"),auth=start.getDay()===oldDow;if(auth)oldWeeks.add(wk);Object.keys(src[wk]||{}).forEach(ds=>{const day=Number(ds);if(!Number.isInteger(day)||day<0||day>6)return;const dt=new Date(start);dt.setDate(dt.getDate()+day);const nws=_weekStartForDow(dt,newDow),nw=weekKey(nws),nd=Math.round((dt-nws)/86400000);out[nw]=out[nw]||{};out[nw][nd]=out[nw][nd]||{};Object.keys(src[wk][ds]||{}).forEach(name=>{if(auth||out[nw][nd][name]===undefined)out[nw][nd][name]=src[wk][ds][name];});newWeeks.add(nw);});});
+  store[dept]=out;return{oldWeeks:[...oldWeeks],newWeeks:[...newWeeks]};
+}
+function _migrateWholeWeekMap(store,dept,newDow){const src=(store&&store[dept])||{},out={};Object.keys(src).forEach(w=>{const mid=new Date(w+"T00:00:00");mid.setDate(mid.getDate()+3);out[weekKey(_weekStartForDow(mid,newDow))]=src[w];});store[dept]=out;}
+function _migrateDemandBoundary(dept,oldDow,newDow){
+  const touched=new Set();if(dept==="DB")return touched;
+  Object.keys(DEMAND||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)&&new Date(k+"T00:00:00").getDay()===oldDow).forEach(wk=>{const start=new Date(wk+"T00:00:00");Object.keys(DEMAND[wk]||{}).forEach(ds=>{const day=Number(ds),dt=new Date(start);dt.setDate(dt.getDate()+day);const nws=_weekStartForDow(dt,newDow),nw=weekKey(nws),nd=Math.round((dt-nws)/86400000);DEMAND[nw]=DEMAND[nw]||{};DEMAND[nw][nd]=JSON.parse(JSON.stringify(DEMAND[wk][ds]||{}));touched.add(nw);});});return touched;
+}
+function _mirrorDemandCalendarValue(sourceDept,sourceWeek,sourceDay,field){
+  const keys=new Set([demandKeyFor(sourceDept,sourceWeek)]),srcKey=demandKeyFor(sourceDept,sourceWeek),src=((DEMAND[srcKey]||{})[sourceDay]||{}),dt=new Date(sourceWeek+"T00:00:00");dt.setDate(dt.getDate()+Number(sourceDay));
+  const peers=sourceDept==="DB"?["DB"]:["FO","HSK"];
+  peers.forEach(dp=>{const ws=mondayOfWeekStartThu(dt,dp),wk=weekKey(ws),day=Math.round((dt-ws)/86400000),dk=demandKeyFor(dp,wk);DEMAND[dk]=DEMAND[dk]||{};DEMAND[dk][day]=DEMAND[dk][day]||{};if(src[field]===undefined)delete DEMAND[dk][day][field];else DEMAND[dk][day][field]=src[field];keys.add(dk);});return keys;
+}
+async function _pushWeekStartMigration(dept,moved,demandKeys,checkMoved){
+  if(!DB)return;for(const wk of moved.newWeeks)await pushWeekAll(dept,wk);for(const dk of demandKeys)await pushDemand(dk);
+  for(const wk of (checkMoved.newWeeks||[]))for(const name of Object.keys((CHECKINS[dept]||{})[wk]||{}))await pushCheckin(dept,wk,name);
+  const stale=moved.oldWeeks.filter(w=>moved.newWeeks.indexOf(w)<0);if(stale.length){try{const {error}=await DB.from("assignments").delete().eq("dept",dept).in("week",stale);if(error)throw error;}catch(e){reportSyncError("Remove obsolete schedule workweek rows",e);}}
+  const staleCheck=(checkMoved.oldWeeks||[]).filter(w=>(checkMoved.newWeeks||[]).indexOf(w)<0);if(staleCheck.length){try{const {error}=await DB.from("checkins").delete().eq("dept",dept).in("week",staleCheck);if(error)throw error;}catch(e){reportSyncError("Remove obsolete check-in workweek rows",e);}}
+}
+function setWeekStart(v){
+  if(!_requireDeptSettingsAccess(SETDEPT))return;const idx=parseInt(v,10);if(isNaN(idx)||idx<0||idx>6)return;const dept=SETDEPT||DEPT,old=dowOffset(dept);if(old===idx)return;
+  const anchor=new Date(WEEK_START);anchor.setDate(anchor.getDate()+3);const moved=_migrateRowDayWeeks(ASSIGN,dept,old,idx),checkMoved=_migrateRowDayWeeks(CHECKINS,dept,old,idx),demandKeys=_migrateDemandBoundary(dept,old,idx);CFG[dept].weekStartDow=idx;
+  _migrateRowDayWeeks(ACTUALD,dept,old,idx);_migrateRowDayWeeks(ACTUALD_AUTOSRC,dept,old,idx);_migrateRowDayWeeks(ACTUALD_IMPORTDATE,dept,old,idx);_migrateRowDayWeeks(ACTUALD_TIMES,dept,old,idx);_migrateRowDayWeeks(ACTUALD_REVIEWED,dept,old,idx);_migrateDayRowWeeks(ROOM_ASSIGN,dept,old,idx);_migrateWholeWeekMap(FLOORS,dept,idx);_migrateWholeWeekMap(LOCKS,dept,idx);
+  if(ACTUAL[dept]){const n={};Object.keys(ACTUAL[dept]).forEach(w=>{const mid=new Date(w+"T00:00:00");mid.setDate(mid.getDate()+3);n[weekKey(_weekStartForDow(mid,idx))]=ACTUAL[dept][w];});ACTUAL[dept]=n;}
+  save("hotel_cfg",CFG);save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_checkins",CHECKINS);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);save("hotel_actuald_autosrc",ACTUALD_AUTOSRC);save("hotel_actuald_importdate",ACTUALD_IMPORTDATE);save("hotel_actuald_times",ACTUALD_TIMES);save("hotel_actuald_reviewed",ACTUALD_REVIEWED);save("hotel_roomassign",ROOM_ASSIGN);save("hotel_floors",FLOORS);save("hotel_locks",LOCKS);demandKeys.forEach(_markDemandDirty);Object.keys(CHECKINS[dept]||{}).forEach(w=>Object.keys(CHECKINS[dept][w]||{}).forEach(n=>_markCheckinDirty(dept,w,n)));if(dept===DEPT)rebuildWeekStart(anchor);_pushWeekStartMigration(dept,moved,demandKeys,checkMoved);
+  uiAlert((CFG[dept].label||dept)+" workweek now runs "+buildDOW(dept)[0]+"→"+buildDOW(dept)[6]+". Existing schedule, demand, check-in, hours, room-assignment, floor, and lock values stayed on the same calendar dates.");render();
+}
 /* OVERRIDES + PER-DAY AVAILABILITY ---------- */
 let OVERRIDES=load("hotel_overrides",[]);
 // The per-department PIN INFRASTRUCTURE (userByPin(pin,dept) checking u.dept, the "Add user" department-scope
@@ -36135,7 +36183,7 @@ function avSummary(st){const order=["Mon","Tue","Wed","Thu","Fri","Sat","Sun"],w
   // with hotel these never block scheduling.
   const prefs=[];order.forEach(d=>{const p=(st.prefer||{})[d];if(p)prefs.push(d+" "+p+" (pref)");});
   const dated=[];
-  // A dated entry is listed until its last day has passed (the same rule that removes it on the next load).
+  // A dated entry is shown only until its last day passes. The record remains stored for attendance/history reports.
   const _today=todayISO(),_live=(to,from)=>((to||from||"9999-12-31")>=_today);
   const sd=st.availDates||{};Object.keys(sd).forEach(k=>{const a=sd[k];if(_isAutoAvail(a)||!_live(a.to,a.from))return;const range=a.part?(a.from+" "+(a.startTime||"00:00")+"→"+a.to+" "+(a.endTime||"00:00")):(a.from+(a.to&&a.to!==a.from?"→"+a.to:""));dated.push({from:a.from||k,txt:(a.code||"OFF")+" "+range+(a.reason&&a.reason!==(a.code||"off")?" ("+a.reason+")":"")});});
   const lv=(typeof LEAVES!=="undefined"&&LEAVES[SETDEPT]||[]).filter(r=>r.name===st.n);lv.filter(r=>_live(r.to,r.from)).forEach(r=>dated.push({from:r.from,txt:r.code+" "+r.from+"→"+r.to}));
@@ -43131,6 +43179,16 @@ function ensureCoverageForAllRoles(){try{
 // next one, and a reconnect re-runs the same pull that opens the gate legitimately.
 function resetRosterMergeGate(){_rosterMergedFromLive=false;}
 function _tombstones(dept){CFG._deletedStaff=CFG._deletedStaff||{};CFG._deletedStaff[dept]=CFG._deletedStaff[dept]||{};return CFG._deletedStaff[dept];}
+function _restoreV26ApprovedInactiveOnce(){
+  if(CFG._v26ApprovedInactiveRestored)return;const approved=[
+    {n:"Irish Gonzales",role:"Front Desk Agents",type:"FT"},
+    {n:"Eunju Sin (Sarah)",role:"Interns",type:"INT"},
+    {n:"Haeun Song (Emily)",role:"Interns",type:"INT"},
+    {n:"Han",role:"Front Desk Agents",type:"FT"}
+  ],staff=CFG.FO.staff=CFG.FO.staff||[],by=new Map(staff.map(x=>[String(x.n||"").toLowerCase(),x]));
+  approved.forEach(t=>{let st=by.get(t.n.toLowerCase());if(!st){st=Object.assign({},t);staff.push(st);}st.employed=false;st.inactiveSince=st.inactiveSince||"2026-10-14";try{delete _tombstones("FO")[t.n];}catch(e){}});
+  CFG._v26ApprovedInactiveRestored=true;try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){MEM.hotel_cfg=JSON.stringify(CFG);}
+}
 function isStaffTombstoned(dept,name){try{return !!_tombstones(dept)[name];}catch(e){return false;}}
 function addStaffTombstone(dept,name){try{_tombstones(dept)[name]=todayISO();}catch(e){}}
 function clearStaffTombstone(dept,name){try{delete _tombstones(dept)[name];}catch(e){}}
@@ -44153,7 +44211,7 @@ function seedRoster(){try{
   // LAST in the fixup chain, deliberately: every seed/fixup above has finished adding, so anything still
   // carrying a tombstone at this point got there by a route that did not honour one. See
   // enforceStaffTombstones()'s own comment for the routes this covers.
-  try{const _tsRemoved=enforceStaffTombstones();if(_tsRemoved.length){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}console.info("Re-applied "+_tsRemoved.length+" permanent staff deletion(s) at boot:",_tsRemoved);}}catch(e){console.warn("boot tombstone enforcement skipped (non-fatal):",e);}
+  try{_restoreV26ApprovedInactiveOnce();const _tsRemoved=enforceStaffTombstones();if(_tsRemoved.length){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}console.info("Re-applied "+_tsRemoved.length+" permanent staff deletion(s) at boot:",_tsRemoved);}}catch(e){console.warn("boot tombstone enforcement skipped (non-fatal):",e);}
   seedPTORequests();
   try{const _t=new Date();_t.setHours(0,0,0,0);DEPT_KEYS.forEach(dp=>{(CFG[dp].staff||[]).forEach(st=>{if(st.availDates){Object.keys(st.availDates).forEach(k=>{const a=st.availDates[k];if(a.to&&new Date(a.to)<_t&&_isAutoAvail(a)){delete st.availDates[k];}});}});});try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}catch(e){}
   // A v2.3 migration starts before boot fixups so it can block connection immediately. Re-run only the row
