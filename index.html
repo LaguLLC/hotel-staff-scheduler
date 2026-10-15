@@ -4,7 +4,7 @@
 <head>
 <meta charset="utf-8"/>
 <meta name="viewport" content="width=device-width, initial-scale=1"/>
-<title>Hotel Staff Scheduler v2.5.1</title>
+<title>Hotel Staff Scheduler v2.5</title>
 <!-- PWA installability, needed for both (1) a genuine "add to Home Screen" install on any platform, and (2) a real,
    disclosed platform REQUIREMENT: iOS Safari only supports Web Push once a page has been installed to the Home
    Screen as a PWA (Safari 16.4+) — a plain browser tab on iOS cannot receive background push at all, regardless of
@@ -2878,13 +2878,15 @@
   .exportStaffList{max-height:220px;overflow:auto;margin-top:6px;border-top:1px solid var(--line);padding-top:4px}
   .exportStaffToggle{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;min-height:30px;cursor:pointer;column-gap:6px;min-width:0}
   .exportStaffToggleText{display:flex;flex-wrap:wrap;align-items:baseline;gap:2px 6px;min-width:0;overflow-wrap:anywhere}
-  .exportStaffList label{min-width:0;flex-wrap:wrap}.exportStaffList label>span{min-width:0;overflow-wrap:anywhere}
+  .exportStaffList label{display:grid!important;grid-template-columns:auto minmax(0,1fr);align-items:start!important;gap:6px!important;min-width:0}
+  .exportStaffLine{min-width:0;line-height:1.35;overflow-wrap:anywhere}
   #grid tbody tr:not(.rolerow) td{border-bottom:none;box-shadow:inset 0 -1px 0 var(--line)}
   #carryoverBanner{margin:0 2px 8px}
   .carryoverNotice{text-align:left;font-size:12px;line-height:1.4}
   .carryoverTitle{display:block}
-  .carryoverRows{display:flex;flex-wrap:wrap;align-items:center;column-gap:14px;row-gap:2px;margin-top:2px;min-width:0}
+  .carryoverRows{display:flex;flex-wrap:wrap;align-items:center;column-gap:14px;row-gap:2px;margin-top:2px;padding-left:22px;min-width:0}
   .carryoverPerson{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;min-width:0}
+  .mobWeekHours,.mobWeekCost{white-space:nowrap;font-size:11px}
   .syncDiagModal{display:flex;flex-direction:column;overflow:hidden!important}
   .syncDiagModal>h2,.syncDiagModal>.mrow{flex:0 0 auto}
   .syncDiagModal>.genericViewBody{display:flex;flex-direction:column;min-height:0;flex:0 1 auto}
@@ -2901,9 +2903,9 @@
   @media(max-width:620px){
     .exportScopeGrid{grid-template-columns:1fr;gap:8px}
     .exportScopeValue.isStaff{grid-column:1}
-    .exportDateRow{grid-template-columns:1fr;gap:8px;padding:0 4px}
+    .exportDateRow{grid-template-columns:1fr;gap:8px;padding:0}
     .syncDiagWrap{max-height:58vh}
-    .carryoverNotice{font-size:11.5px}
+    .carryoverNotice{font-size:12px}
     .exportStaffToggleText{display:block}.exportStaffToggleText>*{display:block;margin-left:0!important}
   }
 </style>
@@ -3334,7 +3336,7 @@
 // COMMENT CONVENTION (see Readme -> Build conventions for the full rule and why): JS comments in this block use
 // or a standard block comment -- never HTML's <!-- --> comment syntax. State facts and reasoning only -- no ","
 // "," or quoted-complaint narration.
-const APP_VERSION="2.5.1";
+const APP_VERSION="2.5";
 document.getElementById("ver").textContent="v"+APP_VERSION;
 function _versionIsBefore24(v){const m=String(v||"").match(/^(\d+)(?:\.(\d+))?/);if(!m)return true;const a=+m[1],b=+(m[2]||0);return a<2||(a===2&&b<4);}
 /* IN-PAGE DIALOGS (native prompt/confirm/alert are blocked in sandboxed iframes) ---------- */
@@ -12860,7 +12862,8 @@ function _undoRestore(snapStr,actionLocation){
           requestAnimationFrame(()=>{
             try{
               const _body=document.getElementById("settingsBody");
-              let _target=(_body&&Array.isArray(_undoCfgScrollHint.path))?_settingsNodeFromPath(_body,_undoCfgScrollHint.path):null;
+              const _control=_settingsControlFromAnchor(_body,_undoCfgScrollHint.control);let _target=_control?(_control.closest("label,.cfgrow,.mrow,tr,fieldset,.twoCreditScaleRow")||_control):null;
+              if(!_target&&_body&&Array.isArray(_undoCfgScrollHint.path))_target=_settingsNodeFromPath(_body,_undoCfgScrollHint.path);
               if(!_target&&_body&&_capturedLabel){
                 // Exact match first (the ordinary, expected case — the SAME container, rebuilt with
                 // identical static text); falls back to substring containment purely as a defensive net
@@ -13508,15 +13511,7 @@ DEPT_KEYS.forEach(_d=>{const _b=el("btn"+_d);if(_b)_b.classList.toggle("active",
   // two-state toggle — "Connect…" whenever not connected, "Disconnect" whenever connected — for every viewer,
   // matching how every other piece of connection state in this app already behaves (e.g. Settings' own Connect/
   // Disconnect controls are never hidden based on role either).
-  if(el("headerConnect")){
-    const hc=el("headerConnect");
-    const _ss=_resolvedSyncState();setStatus(_ss.status,_ss.color);
-    if(_ss.action==="connect"){hc.style.display="inline";hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}
-    else if(_ss.action==="reviewing"){hc.style.display="inline";hc.textContent="Reviewing…";hc.title="The app is reading or verifying the live copy. No second action is available until this finishes.";hc.onclick=headerConnectOrDisconnect;}
-    else if(_ss.action==="review"){hc.style.display="inline";hc.textContent="Review & upload…";hc.title="This device is connected and has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}
-    else if(_ss.action==="retry"){hc.style.display="inline";hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}
-    else{hc.style.display="inline";hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}
-  }
+  if(el("headerConnect")){const _ss=_resolvedSyncState();setStatus(_ss.status,_ss.color);_applyHeaderSyncAction(_ss);}
   // README: genuinely has zero week-scoped content — stays disabled, no further nuance needed. LEAVE REQUESTS:
   // confirmed correct to keep disabled — "All requests" is a single flat list spanning every date ever submitted,
   // not organized by week at all; there's no "this week's leave requests" view for Prev/Next to usefully scroll
@@ -21831,7 +21826,7 @@ function _pushSettled(succeeded,kind){
 // a momentary race into a permanent stale roster.
 async function retryDeferredConfigMerge(){
   if(!DB||!_cfgMergeDeferred)return;
-  if(_outstandingConfigPushes>0)return;                 // a real local roster change is still being sent; let it land first
+  if(_outstandingConfigPushes>0||_dirtyConfig)return;       // a local roster/settings change is unconfirmed; do not replace it
   try{
     const _startedAt=Date.now();
     const{data,error}=await DB.from("app_config").select("data").eq("id","depts");
@@ -21885,10 +21880,11 @@ function _resolvedSyncState(){
   if(!DB)return {status:"local",color:"#c7d0da",action:"connect"};
   if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_pullInFlight>0)return {status:"reviewing",color:"#c9891b",action:"reviewing"};
   if(_hasLocalSyncWork())return {status:"unsynced",color:"#e0a800",action:"review"};
-  if(SYNC_ERR||REALTIME_RECEIVE_ERR||!navigator.onLine||!_realtimeScheduleReceiving)return {status:"unsynced",color:"#e0a800",action:"retry"};
+  if(SYNC_ERR||!navigator.onLine||(!_realtimeScheduleReceiving&&Date.now()>=_realtimeGraceUntil))return {status:"unsynced",color:"#e0a800",action:"retry"};
   return {status:"live",color:"#2c9e5f",action:"disconnect"};
 }
-function _applySyncUiState(){const s=_resolvedSyncState();setStatus(s.status,s.color);return s;}
+function _applyHeaderSyncAction(s){const hc=el("headerConnect");if(!hc)return;if(s.action==="connect"){hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="reviewing"){hc.textContent="Reviewing…";hc.title="The app is reading or verifying the live copy. No second action is available until this finishes.";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="review"){hc.textContent="Review & upload…";hc.title="This device has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}else if(s.action==="retry"){hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}else{hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}hc.style.display="inline";}
+function _applySyncUiState(){const s=_resolvedSyncState();setStatus(s.status,s.color);_applyHeaderSyncAction(s);return s;}
 function _waitForScheduleSubscription(gen,timeoutMs){
   if(_realtimeScheduleReceiving&&gen===_subscriptionGeneration)return Promise.resolve(true);
   return new Promise(resolve=>{const item={gen,resolve,timer:null};item.timer=setTimeout(()=>{_scheduleReadyWaiters=_scheduleReadyWaiters.filter(x=>x!==item);resolve(false);},timeoutMs||8000);_scheduleReadyWaiters.push(item);});
@@ -21996,7 +21992,7 @@ function setStatus(txt,color){
   // is exactly what is still undecided while the dialog is open. Every other status - connecting, local,
   // unsynced, an error - is still allowed through, because those remain true regardless of the answer.
   if((_awaitingSyncChoice||_reviewUploadInProgress)&&txt==="live"){txt="reviewing";color="#c9891b";}
-  else if(txt==="live"&&(_hasLocalSyncWork()||SYNC_ERR||REALTIME_RECEIVE_ERR||!_realtimeScheduleReceiving)){txt="unsynced";color="#e0a800";}
+  else if(txt==="live"&&(_hasLocalSyncWork()||SYNC_ERR||(!_realtimeScheduleReceiving&&Date.now()>=_realtimeGraceUntil))){txt="unsynced";color="#e0a800";}
   const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();showUnsyncedHelp();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
   requestAnimationFrame(_syncTagRowAlign); // the error pill/"Reconnect" link above are optional content that changes .tag's own width -- see .tag.wrappedRow's own comment
   // Mirrors this SAME color onto the compact app-mode-only status dot (see that element's own comment) — this is
@@ -22018,7 +22014,7 @@ function setStatus(txt,color){
 // at 2s) — an ordinary quick blip that heals within that window never visibly flickers the pill at all. A genuinely
 // sustained outage (still down after 4s) still surfaces "unsynced" exactly as before, with no delay hidden from a
 // real, lasting problem — this only smooths the DISPLAY of brief, self-healing drops.
-let _statusFlickerTimer=null;
+let _statusFlickerTimer=null,_realtimeErrorUiTimer=null,_realtimeGraceUntil=0;
 function reportSyncError(where,error){
   SYNC_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("error",where,0,"error",error);
   if(_statusFlickerTimer)clearTimeout(_statusFlickerTimer);
@@ -22043,7 +22039,9 @@ function reportSyncError(where,error){
 // anything about local-edit safety — PENDING is left completely untouched, since a channel-only issue never
 // establishes that one.
 function reportRealtimeChannelError(where,error){
-  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("realtime",where,0,"error",error);_applySyncUiState();
+  _realtimeScheduleReceiving=false;REALTIME_RECEIVE_ERR=where+": "+(error&&error.message?error.message:String(error));console.error("[sync failed]",where,error);_syncDiag("realtime",where,0,"error",error);
+  if(_realtimeErrorUiTimer)clearTimeout(_realtimeErrorUiTimer);const _grace=_schedEverSubscribed?4000:0;_realtimeGraceUntil=Date.now()+_grace;
+  _realtimeErrorUiTimer=setTimeout(()=>{_realtimeErrorUiTimer=null;_realtimeGraceUntil=0;if(DB&&REALTIME_RECEIVE_ERR&&!_realtimeScheduleReceiving){_applySyncUiState();try{syncNav();}catch(e){}}},_grace);
 }
 // Now also manually clickable (see setStatus above) — lets a user dismiss a persistent error that can't
 // self-resolve (e.g. A genuinely missing Supabase table/schema issue that requires an admin to fix separately)
@@ -22138,8 +22136,9 @@ async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supa
   if(opts.discardScheduleAfterSuccess){_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_setV23ReviewRequired(false);}
   else if(_want("schedule")&&!_hasProtectedAssignRows())_setV23ReviewRequired(false);
   _reviewUploadInProgress=false;
-  if(_hasProtectedAssignRows()||_v23ReviewRequired){_setPushFailureLatched(true);setPending(true);setStatus("unsynced","#e0a800");_tally.reviewRemaining=true;}
-  else{_setPushFailureLatched(false);setPending(false);setStatus("live","#2c9e5f");}
+  if(_hasProtectedAssignRows()||_v23ReviewRequired){_setPushFailureLatched(true);_tally.reviewRemaining=true;}
+  else _setPushFailureLatched(false);
+  _reconcilePendingFlag();_applySyncUiState();
   if(!opts.suppressSuccessNote)flashNote(_only?("Uploaded "+nfmt(_tally.schedule)+" schedule row"+(_tally.schedule===1?"":"s")+", "+nfmt(_tally.demand)+" demand week"+(_tally.demand===1?"":"s")+", "+nfmt(_tally.leave)+" leave request"+(_tally.leave===1?"":"s")+". "+nfmt(_tally.skipped)+" unchanged row"+(_tally.skipped===1?"":"s")+" not re-sent."):"Local changes uploaded to live.");
   return _tally;
 }
@@ -22275,7 +22274,8 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
       if(_localDelete||(lv&&rv))conflicts.push(line);
     });
   }
-  _backupCheckinDiff((localSnapshot||{}).checkins,(liveSnapshot||{}).checkins).forEach(line=>{changes.push(line);conflicts.push(line);});
+  const _checkinKeys=(opts&&opts.checkinKeys instanceof Set)?opts.checkinKeys:null;
+  _backupCheckinDiff((localSnapshot||{}).checkins,(liveSnapshot||{}).checkins,_checkinKeys).forEach(line=>{changes.push(line);conflicts.push(line);});
   return {changes,conflicts};
 }
 // pushConfig()/pullAll() sync CFG.FO/CFG.HSK/CFG.DB (every real department in DEPT_KEYS — both functions
@@ -22434,6 +22434,7 @@ function _diffOnlyValue(mine,other){
   if(!isObj(mine)||!isObj(other))return humanizeDiffValue(mine??null);
   const out={};
   new Set([...Object.keys(mine),...Object.keys(other)]).forEach(k=>{
+    if(_isInternalDiffKey(k))return;
     if(!_sameValue(mine[k],other[k]))out[k]=mine[k];
   });
   if(!Object.keys(out).length)return "(no change)";
@@ -22441,10 +22442,22 @@ function _diffOnlyValue(mine,other){
 }
 // Plain words for a stored field name: a known label, a department key shown as the department's name, otherwise the
 // camelCase name split into lower-case words. Nothing a person sees in a difference line is a raw code name.
-const _KEY_WORDS={pubAreaSupOnly:"public-area supervisors only",amNoteOnly:"AM-noted staff only",dept:"department",max:"maximum",hoursPerPtoDay:"hours per PTO day",carryoverMaxHours:"carryover maximum (hours)"};
+const _KEY_WORDS={
+  pubAreaSupOnly:"public-area supervisors only",amNoteOnly:"AM-noted staff only",dept:"department",max:"maximum",
+  hoursPerPtoDay:"hours per PTO day",carryoverMaxHours:"carryover maximum (hours)",
+  ptMax:"part-time maximum hours",ptMin:"part-time minimum hours",breakHrs:"break hours",
+  fdaModel:"front desk agent staffing model",fdaArrRatio:"arrivals per front desk agent",fdaDepRatio:"departures per front desk agent",
+  fdaArrAgents:"front desk agents for high arrivals",fdaDepAgents:"front desk agents for high departures",
+  fdaArrThreshold:"high-arrivals threshold",fdaDepThreshold:"high-departures threshold",
+  busyArrThreshold:"busy-arrivals threshold",busyDepThreshold:"busy-departures threshold",
+  transportPerBellAttendant:"transportation per bell attendant",eventsPerValet:"events per valet",
+  creditsPerRA:"credits per room attendant",roomsTotal:"total rooms",twoCreditExtra:"two-credit room extra",
+  creditsProportionalScaling:"scale two-credit rooms",creditMult:"credit multiplier",arrivalsPerSup:"arrivals per supervisor"
+};
+function _isInternalDiffKey(k){return /^_/.test(String(k||""))||k==="userSetFlags";}
 function _humanKey(k){
   if(DEPT_KEYS.indexOf(k)>=0)return (CFG[k]&&CFG[k].label)||k;
-  return _KEY_WORDS[k]||String(k).replace(/([a-z0-9])([A-Z])/g,"$1 $2").replace(/_+/g," ").toLowerCase();
+  return _KEY_WORDS[k]||String(k).replace(/([a-z0-9])([A-Z])/g,"$1 $2").replace(/_+/g," ").trim().toLowerCase();
 }
 // Stored choices shown as the words on the setting's own dropdown.
 const _SETTING_ENUMS={
@@ -22532,7 +22545,7 @@ function _diffOnlySubset(mine,other){
   const isObj=x=>x&&typeof x==="object"&&!Array.isArray(x);
   if(!isObj(mine)||!isObj(other))return mine;
   const out={};
-  new Set([...Object.keys(mine),...Object.keys(other)]).forEach(k=>{if(!_sameValue(mine[k],other[k])&&mine[k]!==undefined)out[k]=mine[k];});
+  new Set([...Object.keys(mine),...Object.keys(other)]).forEach(k=>{if(!_isInternalDiffKey(k)&&!_sameValue(mine[k],other[k])&&mine[k]!==undefined)out[k]=mine[k];});
   return out;
 }
 function humanizeDiffValue(v){
@@ -22546,7 +22559,7 @@ function humanizeDiffValue(v){
   }
   if(typeof v==="boolean")return v?"Yes":"No";
   if(typeof v==="object"){
-    const keys=Object.keys(v).filter(k=>k!=="id");
+    const keys=Object.keys(v).filter(k=>k!=="id"&&!_isInternalDiffKey(k));
     if(!keys.length)return "none";
     const labelKey=keys.includes("label")?"label":null;
     const restKeys=labelKey?keys.filter(k=>k!==labelKey):keys;
@@ -23271,7 +23284,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
 }
 let _syncReviewFlowPromise=null;
 async function maybeUploadOnConnect(fromOnlineEvent,review,opt){
-  if(!PENDING&&!review)return;
+  if(!_hasLocalSyncWork()&&!review)return;
   if(_syncReviewFlowPromise)return _syncReviewFlowPromise;
   const run=(async()=>{_syncReviewPending=true;try{return await _maybeUploadOnConnect(fromOnlineEvent,review,opt);}finally{_syncReviewPending=false;try{syncNav();}catch(e){}}})();
   _syncReviewFlowPromise=run;
@@ -23303,10 +23316,10 @@ function _releaseLocalDeletions(){
 async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _stay=!!(opt&&opt.stayConnected);
   const _pendingAtReviewStart=!!(PENDING||_hasDurablePendingWork()||_pushFailureLatched),_blockedWritesAtStart=_blockedDbWrites;
-  if(!PENDING&&!review)return;
+  if(!_pendingAtReviewStart&&!review)return;
   // True when this device holds no unsynced edits, so any difference is more likely newer live data than a local edit.
   // An explicit request to upload (reviewAndUpload) always gets the full upload dialog, even when no pending flag is set.
-  const _noPending=!PENDING&&!_stay;
+  const _noPending=!_pendingAtReviewStart&&!_stay;
   // (see analyzeUploadChanges()'s own comment for the full bug this fixes): snapshot ALL THREE data types
   // pushPending() actually pushes — ASSIGN, DEMAND, and LEAVE_REQUESTS — not just ASSIGN, so the
   // diff/dialog and the "discard local changes" restore path are all consistent with what a real Upload sends.
@@ -23383,7 +23396,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     DB:_liveDeptForDiff("DB"),
     appWide:(_lastPulledAppConfig&&_lastPulledAppConfig.appWide)||{}
   };
-  const _diffScope=PENDING?{scheduleKeys:new Set(Object.keys(_dirtyAssignRows)),demandKeys:new Set(Object.keys(_dirtyDemandWeeks)),leaveIds:new Set(Object.keys(_dirtyLeaveIds))}:undefined;
+  const _diffScope=_pendingAtReviewStart?{scheduleKeys:new Set(Object.keys(_dirtyAssignRows)),demandKeys:new Set(Object.keys(_dirtyDemandWeeks)),leaveIds:new Set(Object.keys(_dirtyLeaveIds)),checkinKeys:new Set(Object.keys(_dirtyCheckinRows))}:undefined;
   const {changes,conflicts}=analyzeUploadChanges(localSnapshot,liveSnapshot,_diffScope);
   // Merges the roster/settings diff (see analyzeCfgChanges()'s own comment for the full "generic banner instead of
   // an itemized list" gap this closes) into the SAME changes/conflicts arrays the schedule diff already populates —
@@ -23606,7 +23619,7 @@ async function connect(){
     // local data is the app's built-in seed, so there is nothing of its own to protect and it simply takes live.
     // Taking live silently when nothing is pending, and reporting the differences afterwards through the "changes
     // since you were away" badge, would be a second route to the same decision.
-    if(PENDING){ await maybeUploadOnConnect(false,true); }
+    if(_hasLocalSyncWork()){ await maybeUploadOnConnect(false,true); }
     else { await pullAll(false,true); }
     _syncReviewPending=false;
     // The tab is authorized and the realtime channels are opened only after the review has been answered. Opening them
@@ -23671,7 +23684,7 @@ function _tabConnectAuthorize(on){try{if(on)sessionStorage.setItem("hotel_connec
 function disconnect(){
   try{_awayChanges=[];_awayChangesDismissed=false;const _ap=document.getElementById("awayChangesPanel");if(_ap)_ap.remove();renderAwayChangesBadge();}catch(e){}
   _tabConnectAuthorize(false);try{save("hotel_supa_optout",true);}catch(e){}
-  const client=DB,oldChan=CHAN,oldCheck=CHECKIN_CHAN;DB=null;CHAN=null;CHECKIN_CHAN=null;_subscriptionGeneration++;_resolveScheduleWaiters(_subscriptionGeneration-1,false);
+  const client=DB,oldChan=CHAN,oldCheck=CHECKIN_CHAN;DB=null;CHAN=null;CHECKIN_CHAN=null;_subscriptionGeneration++;_resolveScheduleWaiters(_subscriptionGeneration-1,false);if(_coordinatedReconnectTimer){clearTimeout(_coordinatedReconnectTimer);_coordinatedReconnectTimer=null;}if(_realtimeErrorUiTimer){clearTimeout(_realtimeErrorUiTimer);_realtimeErrorUiTimer=null;}_realtimeGraceUntil=0;
   try{if(client&&oldChan)client.removeChannel(oldChan);if(client&&oldCheck)client.removeChannel(oldCheck);}catch(e){}
   SYNC_ERR=null;REALTIME_RECEIVE_ERR=null;_realtimeScheduleReceiving=false;_schedEverSubscribed=false;localStorage.removeItem("hotel_supa");resetRosterMergeGate();_applySyncUiState();try{syncNav();}catch(e){}render();
 }
@@ -23688,14 +23701,16 @@ function disconnect(){
 // BOTH channels — a successful SUBSCRIBED resets the attempt counter, so a later, unrelated future drop gets its
 // own fresh set of retries rather than being capped by an old, unrelated failure from earlier in the session.
 let _realtimeReconnectAttempts={sched:0,checkins:0};
+let _coordinatedReconnectTimer=null,_coordinatedReconnectAttempts=0;
 function _scheduleRealtimeReconnect(channelKey){
-  if(!DB)return; // don't reconnect a channel for a connection the user has since deliberately disconnected
-  const n=_realtimeReconnectAttempts[channelKey];
-  if(n>=5)return; // give up after 5 attempts — a persistently down server/network shouldn't be hammered forever; the existing sync-error pill/console warning remains visible so this isn't silent
-  const delayMs=Math.min(30000,2000*Math.pow(2,n));
-  _realtimeReconnectAttempts[channelKey]=n+1;
-  setTimeout(()=>{
-    if(!DB)return; // re-check — the user may have disconnected during the delay
+  if(!DB||_coordinatedReconnectTimer)return;
+  if(_coordinatedReconnectAttempts>=5)return;
+  const delayMs=Math.min(30000,2000*Math.pow(2,_coordinatedReconnectAttempts));
+  _coordinatedReconnectAttempts++;
+  _realtimeReconnectAttempts[channelKey]=(_realtimeReconnectAttempts[channelKey]||0)+1;
+  _coordinatedReconnectTimer=setTimeout(()=>{
+    _coordinatedReconnectTimer=null;
+    if(!DB)return;
     subscribe(true);
     // (surfaced while directly answering "what happens if the app is closed/backgrounded and reopened into live
     // mode" — this exact reconnect path is the ONE place a real, already-connected device could silently miss
@@ -23736,18 +23751,17 @@ let _channelStableTimer={sched:null,checkins:null};
 function _onChannelSubscribed(channelKey){
   if(channelKey==="sched"){
     const wasReconnect=_schedEverSubscribed&&!_realtimeScheduleReceiving;
-    _realtimeScheduleReceiving=true;REALTIME_RECEIVE_ERR=null;_schedEverSubscribed=true;_resolveScheduleWaiters(_subscriptionGeneration,true);_syncDiag("realtime","schedule channel",0,"subscribed");
+    if(_realtimeErrorUiTimer){clearTimeout(_realtimeErrorUiTimer);_realtimeErrorUiTimer=null;}_realtimeGraceUntil=0;_realtimeScheduleReceiving=true;REALTIME_RECEIVE_ERR=null;_schedEverSubscribed=true;_resolveScheduleWaiters(_subscriptionGeneration,true);_syncDiag("realtime","schedule channel",0,"subscribed");
     _applySyncUiState();try{syncNav();}catch(e){}
     if(wasReconnect&&DB)setTimeout(()=>{if(DB&&_realtimeScheduleReceiving)pullAll(false,true);},0);
   }
   clearTimeout(_channelStableTimer[channelKey]);
-  _channelStableTimer[channelKey]=setTimeout(()=>{_realtimeReconnectAttempts[channelKey]=0;},5000);
+  _channelStableTimer[channelKey]=setTimeout(()=>{_realtimeReconnectAttempts[channelKey]=0;if(channelKey==="sched")_coordinatedReconnectAttempts=0;},5000);
 }
 function _onChannelDropped(channelKey){
   clearTimeout(_channelStableTimer[channelKey]);_channelStableTimer[channelKey]=null;
   if(channelKey==="sched"){
     _realtimeScheduleReceiving=false;_resolveScheduleWaiters(_subscriptionGeneration,false);_syncDiag("realtime","schedule channel",0,"dropped");
-    if(DB){_applySyncUiState();try{syncNav();}catch(e){}}
   }
 }
 function _subscribeSchedChannel(gen){
@@ -23798,7 +23812,7 @@ function _subscribeSchedChannel(gen){
       // Unprotected rows can adopt the committed event immediately; protected rows stay local until review.
       const _before=JSON.stringify(ASSIGN[r.dept][r.week][_staff]||{});
       const _prevSyncApplying=_syncApplying;_syncApplying=true;
-      try{if(_deleted)delete ASSIGN[r.dept][r.week][_staff];else ASSIGN[r.dept][r.week][_staff]=Object.assign({},ASSIGN[r.dept][r.week][_staff]||{},r.days||{});save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
+      try{if(_deleted)delete ASSIGN[r.dept][r.week][_staff];else ASSIGN[r.dept][r.week][_staff]=JSON.parse(JSON.stringify(r.days||{}));save("hotel_assign",ASSIGN);}finally{_syncApplying=_prevSyncApplying;}
       _refreshUndoBaselineAfterRemote();
       const _after=JSON.stringify(ASSIGN[r.dept][r.week][_staff]||{});
       if(r.dept===DEPT&&r.week===weekKey(WEEK_START)&&_before!==_after)render();
@@ -23987,7 +24001,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       const fresh={};DEPT_KEYS.forEach(d=>fresh[d]={});
       rows.forEach(r=>{_notePulled("assign",r);if(!DEPT_KEYS.includes(r.dept))return;const staff=_canonicalStaffName(r.dept,r.staff,CFG);fresh[r.dept][r.week]=fresh[r.dept][r.week]||{};fresh[r.dept][r.week][staff]=JSON.parse(JSON.stringify(r.days||{}));});
       ASSIGN=fresh;
-    }else rows.forEach(r=>{_notePulled("assign",r);ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _staff=_canonicalStaffName(r.dept,r.staff,CFG),_dkey=_assignRowKey(r.dept,r.week,_staff);if(_isAssignRowProtected(r.dept,r.week,_staff))return;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][_staff]=Object.assign({},ASSIGN[r.dept][r.week][_staff]||{},r.days||{});});
+    }else rows.forEach(r=>{_notePulled("assign",r);ASSIGN[r.dept]=ASSIGN[r.dept]||{};ASSIGN[r.dept][r.week]=ASSIGN[r.dept][r.week]||{};const _staff=_canonicalStaffName(r.dept,r.staff,CFG),_dkey=_assignRowKey(r.dept,r.week,_staff);if(_isAssignRowProtected(r.dept,r.week,_staff))return;if(_assignDirtyStamp[_dkey]&&_assignDirtyStamp[_dkey]>=_assignsFetchStartedAt)return;ASSIGN[r.dept][r.week][_staff]=JSON.parse(JSON.stringify(r.days||{}));});
   });
   _retireLegacyReviewIfMatched();
   // See _pullGeneration's own comment for the full "overlapping pulls finishing out of order" fix this is part
@@ -24119,7 +24133,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       // question actually being asked here: an unrelated leave-request or push-subscription write says nothing
       // about whether this roster read is stale. Second, if the merge is genuinely skipped, that is recorded so
       // it can be retried rather than silently dropped forever.
-      const _cfgBlocked=(_outstandingConfigPushes>0);
+      const _cfgBlocked=(_outstandingConfigPushes>0||_dirtyConfig);
       if(row.data.FO&&!(_cfgDirtyStamp.FO>=_cfgFetchStartedAt)&&!_cfgBlocked){CFG.FO=row.data.FO;_rosterMergedByDept.FO=true;}
       if(row.data.HSK&&!(_cfgDirtyStamp.HSK>=_cfgFetchStartedAt)&&!_cfgBlocked){CFG.HSK=row.data.HSK;_rosterMergedByDept.HSK=true;}
       if(_rosterMergedFromLive)setTimeout(_flushDeferredConfigPush,0);
@@ -24852,7 +24866,7 @@ function _showOverwriteReview(title,items,okLabel){
     document.body.appendChild(bg);bg.dataset.ownKeys="1";const done=v=>{bg.remove();res(v);};bg.querySelectorAll("button").forEach(b=>b.onclick=()=>done(b.dataset.c==="ok"));bg.addEventListener("mousedown",e=>{if(e.target===bg)done(false);});bg.tabIndex=-1;bg.focus({preventScroll:true});
   });
 }
-function _backupCheckinDiff(current,next){const out=[];DEPT_KEYS.forEach(dp=>{const cD=(current||{})[dp]||{},nD=(next||{})[dp]||{};new Set([...Object.keys(cD),...Object.keys(nD)]).forEach(wk=>{const cW=cD[wk]||{},nW=nD[wk]||{};new Set([...Object.keys(cW),...Object.keys(nW)]).forEach(name=>{const a=cW[name]||{},b=nW[name]||{};if(_sameValue(a,b))return;out.push(`Check-ins — ${deptLabel(dp)}, week of ${wk}, ${name}: current ${Object.keys(a).length} day(s) · backup ${Object.keys(b).length} day(s)`);});});});return out;}
+function _backupCheckinDiff(current,next,onlyKeys){const out=[];DEPT_KEYS.forEach(dp=>{const cD=(current||{})[dp]||{},nD=(next||{})[dp]||{};new Set([...Object.keys(cD),...Object.keys(nD)]).forEach(wk=>{const cW=cD[wk]||{},nW=nD[wk]||{};new Set([...Object.keys(cW),...Object.keys(nW)]).forEach(name=>{if(onlyKeys instanceof Set&&!onlyKeys.has(_checkinRowKey(dp,wk,name)))return;const a=cW[name]||{},b=nW[name]||{};if(_sameValue(a,b))return;out.push(`Check-ins — ${deptLabel(dp)}, week of ${wk}, ${name}: current ${Object.keys(a).length} day(s) · backup ${Object.keys(b).length} day(s)`);});});});return out;}
 function _backupImportDiff(target){
   const cleanLeave=o=>{const x={};Object.keys(o||{}).forEach(id=>{const v=o[id];if(v&&typeof v==="object"&&Object.keys(v).length)x[id]=v;});return x;};
   const cur={assign:ASSIGN,demand:DEMAND,leaveRequests:cleanLeave(LEAVE_REQUESTS)},nxt={assign:target.assign,demand:target.demand,leaveRequests:cleanLeave(target.leaveRequests)};
@@ -24929,11 +24943,11 @@ function _exportRaNumbers(deptKey,wk,day){
 }
 function _exportDeptKeys(value,roomsOnly){let keys=(value&&DEPT_KEYS.includes(value))?[value]:DEPT_KEYS.slice();if(roomsOnly)keys=keys.filter(isRoomsDept);return keys;}
 function _exportRosterRows(deptKeys){const order=new Map((deptKeys||[]).map((d,i)=>[d,i])),out=[];(deptKeys||[]).forEach(dp=>((CFG[dp]||{}).staff||[]).filter(s=>s&&s.n&&s.employed!==false).forEach(s=>out.push({dept:dp,staff:s})));out.sort((a,b)=>(order.get(a.dept)-order.get(b.dept))||String(a.staff.role||"").localeCompare(String(b.staff.role||""))||String(a.staff.n).localeCompare(String(b.staff.n)));return out;}
-function _scopeStaffRows(opts){let rows=_exportRosterRows(opts.depts||_exportDeptKeys(opts.dept));if(opts.scope==="role")rows=rows.filter(x=>x.staff.role===opts.role);if(opts.scope==="staff")rows=rows.filter(x=>(opts.staffKeys||[]).includes(x.dept+"|"+x.staff.n));return rows;}
+function _scopeStaffRows(opts){let rows=_exportRosterRows(opts.depts||_exportDeptKeys(opts.dept));if(opts.scope==="role")rows=rows.filter(x=>opts.role===GRID_NO_ROLE?(!x.staff.role||!String(x.staff.role).trim()||!((CFG[x.dept]||{}).roles||[]).includes(x.staff.role)):x.staff.role===opts.role);if(opts.scope==="staff")rows=rows.filter(x=>(opts.staffKeys||[]).includes(x.dept+"|"+x.staff.n));return rows;}
 function _updateExportStaffCount(id){const box=document.getElementById(id),label=document.getElementById(id+"Count"),all=document.getElementById(id+"All");if(!box||!label)return;const n=box.querySelectorAll('input[type=checkbox]:checked').length,total=box.querySelectorAll('input[type=checkbox]').length;label.textContent=n+" of "+total+" selected";if(all){all.checked=total>0&&n===total;all.indeterminate=n>0&&n<total;}}
 function _setExportStaffChecks(id,checked){const box=document.getElementById(id);if(!box)return;box.querySelectorAll('input[type=checkbox]').forEach(x=>x.checked=checked);_updateExportStaffCount(id);}
-function _exportCheckPanelHtml(rows,id){return `<div class="exportStaffPanel"><label class="exportStaffToggle"><input type="checkbox" class="cbx" id="${id}All" onchange="_setExportStaffChecks('${id}',this.checked)"><span class="exportStaffToggleText"><b class="small">Staff members</b><span class="small muted" id="${id}Count">0 of ${rows.length} selected</span></span></label><div id="${id}" class="exportStaffList">${rows.map(x=>`<label class="small" style="display:flex;align-items:center;gap:6px;padding:3px 2px"><input type="checkbox" class="cbx" value="${esc(x.dept+"|"+x.staff.n)}" onchange="_updateExportStaffCount('${id}')"> <span>${esc(x.staff.n)}</span> <span class="muted">— ${esc(staffRoleContextLabel(x.dept,x.staff.role))}</span></label>`).join("")}</div></div>`;}
-function _exportRoles(rows){return [...new Set((rows||[]).map(x=>String((x.staff||{}).role||"").trim()).filter(r=>r&&r.length>1))].sort((a,b)=>pluralRoleLabel(a).localeCompare(pluralRoleLabel(b)));}
+function _exportCheckPanelHtml(rows,id){return `<div class="exportStaffPanel"><label class="exportStaffToggle"><input type="checkbox" class="cbx" id="${id}All" onchange="_setExportStaffChecks('${id}',this.checked)"><span class="exportStaffToggleText"><b class="small">Staff members</b><span class="small muted" id="${id}Count">0 of ${rows.length} selected</span></span></label><div id="${id}" class="exportStaffList">${rows.map(x=>`<label class="small" style="padding:3px 2px"><input type="checkbox" class="cbx" value="${esc(x.dept+"|"+x.staff.n)}" onchange="_updateExportStaffCount('${id}')"><span class="exportStaffLine">${esc(x.staff.n)}<span class="muted"> — ${esc(staffRoleContextLabel(x.dept,x.staff.role))}</span></span></label>`).join("")}</div></div>`;}
+function _exportRoles(rows){const list=[...new Set((rows||[]).map(x=>String((x.staff||{}).role||"").trim()).filter(r=>r&&r.length>1))];if((rows||[]).some(x=>!x.staff.role||!String(x.staff.role).trim()||!((CFG[x.dept]||{}).roles||[]).includes(x.staff.role)))list.push(GRID_NO_ROLE);return [...new Set(list)].sort((a,b)=>pluralRoleLabel(a).localeCompare(pluralRoleLabel(b)));}
 function _exportScopeControlsHtml(prefix,roomsOnly,from,to){
   const keys=DEPT_KEYS.filter(d=>!roomsOnly||isRoomsDept(d)),deptPrompt=roomsOnly?"Select…":"All departments";
   return `<div class="exportScopeGrid"><label class="small">Department <select id="${prefix}Dept" class="sfield" onchange="_renderExportScopeControls('${prefix}',${roomsOnly})"><option value="" selected>${deptPrompt}</option>${keys.map(d=>`<option value="${d}">${esc(deptLabel(d))}</option>`).join("")}</select></label><label class="small">Scope <select id="${prefix}Scope" class="sfield" onchange="_renderExportScopeControls('${prefix}',${roomsOnly})"><option value="all">All staff</option><option value="role">Role</option><option value="staff">Staff members</option></select></label><div id="${prefix}ScopeValue" class="exportScopeValue"></div></div><div class="exportDateRow"><label class="small">From <input type="date" required id="${prefix}From" class="sfield" value="${from}" data-range-peer="${prefix}To" data-range-edge="from" data-range-policy="auto"></label><label class="small">To <input type="date" required id="${prefix}To" class="sfield" value="${to}" data-range-peer="${prefix}From" data-range-edge="to" data-range-policy="auto"></label></div>`;
@@ -29512,6 +29526,8 @@ document.addEventListener("keydown",function(e){
 // actual control on screen).
 function _settingsNodePath(root,node){const path=[];for(let n=node;n&&n!==root;n=n.parentElement){const p=n.parentElement;if(!p)return null;path.unshift([...p.children].indexOf(n));}return node&&root.contains(node)?path:null;}
 function _settingsNodeFromPath(root,path){let n=root;for(const i of (path||[])){if(!n||!n.children||!n.children[i])return null;n=n.children[i];}return n;}
+function _settingsControlAnchor(node){if(!node)return null;if(node.dataset&&node.dataset.settingKey)return{type:"key",value:node.dataset.settingKey};if(node.id)return{type:"id",value:node.id};const on=node.getAttribute&&node.getAttribute("onchange");return on?{type:"onchange",value:on}:null;}
+function _settingsControlFromAnchor(root,a){if(!root||!a||!a.value)return null;try{if(a.type==="key")return root.querySelector('[data-setting-key="'+CSS.escape(a.value)+'"]');if(a.type==="id")return root.querySelector('#'+CSS.escape(a.value));if(a.type==="onchange")return [...root.querySelectorAll('[onchange]')].find(n=>n.getAttribute("onchange")===a.value)||null;}catch(e){}return null;}
 let _lastSettingsEditLabel=null;
 document.addEventListener("change",function(ev){
   try{
@@ -29523,7 +29539,7 @@ document.addEventListener("change",function(ev){
     const _container=ev.target.closest("label,.cfgrow,.mrow,tr,fieldset");
     if(!_container)return;
     _lastSettingsEditLabel=String(_container.textContent||"").trim().slice(0,120);
-    _setPendingUndoLocation({kind:"settings",dept:SETDEPT||null,key:(ev.target&&ev.target.dataset&&ev.target.dataset.settingKey)||"",label:_lastSettingsEditLabel||null,path:_settingsNodePath(body,_container)});
+    _setPendingUndoLocation({kind:"settings",dept:SETDEPT||null,key:(ev.target&&ev.target.dataset&&ev.target.dataset.settingKey)||"",label:_lastSettingsEditLabel||null,path:_settingsNodePath(body,_container),control:_settingsControlAnchor(ev.target)});
   }catch(e){}
 },true);
 // Copies ONE staff member's ENTIRE week of assignments onto an ADJACENT staff member's row (the person
@@ -30243,7 +30259,7 @@ function renderMobileScheduleView(){
     const _cov=(!demandOrChecksHiddenFromViewer()&&dept.coverage[role])?dept.coverage[role]:null;
     const _covTitle=_cov?("need ≥ "+_cov.min+" "+roleDisplayName(role,_cov.min)+" per "+(_cov.per||"day")+(_cov.note?" · "+_cov.note:"")):"";
     const _covPill=_cov?`<span class="pill warn" style="font-size:10px;padding:1px 6px" title="${esc(_covTitle)}">${esc(_covTitle)}</span>`:"";
-    bodyRows.push(`<tr class="mobRoleHeaderRow"><td class="mobRoleLabel" title="${esc(pluralRoleLabel(role))}">${esc(pluralRoleLabel(role))}</td><td class="mobRoleFiller" colspan="7">${_covPill}</td></tr>`);
+    bodyRows.push(`<tr class="mobRoleHeaderRow"><td class="mobRoleLabel" title="${esc(pluralRoleLabel(role))}">${esc(pluralRoleLabel(role))}</td><td class="mobRoleFiller" colspan="9">${_covPill}</td></tr>`);
     inRole.forEach(s=>{
       const cells=[];
       // See cellVisualMarkers()'s own comment (near render()'s top) for the full "pills about coverage missing in
@@ -30290,9 +30306,12 @@ function renderMobileScheduleView(){
       // untruncated name+type text so it's still available (e.g. On a hover, or a long-press-to-preview on a touch
       // device) even once the cell's own CSS truncates the visible text with an ellipsis.
       const _fullNameLabel=s.n+(s.type?" ("+(TYPE_LABEL[s.type]||s.type)+")":"");
-      bodyRows.push(`<tr><td title="${esc(_fullNameLabel)}">${esc(s.n)}${s.type?` <span class="small muted typebadge">(${esc(TYPE_LABEL[s.type]||s.type)})</span>`:""}</td>${cells.join("")}</tr>`);
+      const _wk2=personWeek(s),_ah=actualHrs(s.n),_isAct=_ah!=null,_shown=_isAct?_ah:_wk2.hrs,_ot=_shown>40;
+      const _hours=EDIT?`<input value="${_shown}" onchange="setActual(&quot;${esc(s.n).replace(/&quot;/g,'')}&quot;,this.value)" title="${_isAct?'actual (typed)':'projected — type to override'}" placeholder="${_wk2.hrs}" style="width:54px;text-align:center;border:1px solid ${_isAct?'#0e7c46':'#dfe4ea'};border-radius:4px;background:${_ot?'#fdecec':(_isAct?'#eef9f0':'#fff')};color:${_ot?'#b30000':(_isAct?'#0e7c46':'#596575')}">`:`${_shown}h`;
+      bodyRows.push(`<tr><td title="${esc(_fullNameLabel)}">${esc(s.n)}${s.type?` <span class="small muted typebadge">(${esc(TYPE_LABEL[s.type]||s.type)})</span>`:""}</td>${cells.join("")}<td class="mobWeekHours" style="${_ot?'background:#fdecec;color:#b30000;font-weight:700':''}">${_hours}${_wk2.unk?' <span class="pill warn">?</span>':''}</td><td class="mobWeekCost" title="${_wk2.reg}h regular + ${_wk2.ot}h overtime" style="color:#0e7c46">${(+_wk2.cost)?'$'+fmtNum(+_wk2.cost,2):'—'}${otBadge(_wk2,rateOf(s))}</td></tr>`);
     });
   });
+  if(bodyRows.length){let _mobTotalHours=0,_mobTotalCost=0;dept.staff.forEach(s=>{const w=personWeek(s);_mobTotalHours+=w.hrs;_mobTotalCost+=+w.cost;});bodyRows.push(`<tr class="wktotal"><td colspan="8" style="text-align:right;background:#eef2f6;font-weight:700">Week total</td><td class="mobWeekHours" style="background:#eef2f6;font-weight:700">${_mobTotalHours.toFixed(1)}h</td><td class="mobWeekCost" style="background:#eef2f6;color:#0e7c46;font-weight:700">$${fmtNum(_mobTotalCost,2)}</td></tr>`);}
   // These buttons have only ever lived inside the classic desktop grid card's own #gridTitle line (see
   // render()'s own gridTitle.innerHTML assembly) — a card that's completely HIDDEN while in App view, taking every
   // one of these actions down with it with no Equivalent anywhere reachable. By adding the exact SAME buttons
@@ -30401,7 +30420,7 @@ function renderMobileScheduleView(){
       // ~4px gap (more clearance than desktop's own already-proven-safe gap at its own width) — both reports
       // resolved by the one change, since the overlap was never a marker positioning problem on its own, only ever
       // a symptom of the wrap this same width fix also closes.
-      ?`<div id="mobScheduleTblWrap"><table id="mobScheduleTable"><colgroup><col style="width:var(--namecolWidth)">${DOW.map(()=>`<col style="width:92px">`).join("")}</colgroup><thead><tr><th>Staff</th>${headCells}</tr></thead><tbody>${bodyRows.join("")}</tbody></table></div>`
+      ?`<div id="mobScheduleTblWrap"><table id="mobScheduleTable"><colgroup><col style="width:var(--namecolWidth)">${DOW.map(()=>`<col style="width:92px">`).join("")}<col style="width:70px"><col style="width:84px"></colgroup><thead><tr><th>Staff</th>${headCells}<th>Hours</th><th>Cost</th></tr></thead><tbody>${bodyRows.join("")}</tbody></table></div>`
       :'<div class="small muted" style="padding:14px;text-align:center">No staff in this department yet.</div>');
   applyMobileSelectionHighlight();
   // Restored AFTER the freshly-recreated wrapper has real, laid-out dimensions to clamp/scroll against — see this
@@ -33119,7 +33138,7 @@ function _renderSettingsInner(){
        unambiguous on its own (matching the exact same greyed/not-allowed treatment already used for a locked past-week
        Settings fieldset), a separate always-visible text explanation is redundant — the tooltip (title attribute,
        unchanged) still gives the full reason on hover for anyone who wants it. -->
-  <div class="twoCreditScaleRow" title="Checked = the two-credit-room extra scales down as OOO/House-use/Unassigned rooms increase. Unchecked = the extra stays flat. Credits reach 0 once all physical rooms are accounted for."><input type="checkbox" class="cbx" ${D.rules.creditsProportionalScaling?"checked":""} ${D.rules.twoCreditExtra?"":"disabled"} onchange="setCreditsProportionalScaling(this.checked)"><span class="small">Scale</span><input type="number" min="0" class="sfield" value="${D.rules.twoCreditExtra!=null?D.rules.twoCreditExtra:HSK_TWO_CREDIT_EXTRA_DEFAULT}" title="How many rooms count double toward Credits at full capacity" onchange="setRule('twoCreditExtra',this.value,${HSK_TWO_CREDIT_EXTRA_DEFAULT})"><span class="small">two-credit rooms with OOO/House-use/Unassigned (off = flat)</span></div>
+  <div class="twoCreditScaleRow" title="Checked = the two-credit-room extra scales down as OOO/House-use/Unassigned rooms increase. Unchecked = the extra stays flat. Credits reach 0 once all physical rooms are accounted for."><input type="checkbox" class="cbx" data-setting-key="creditsProportionalScaling" ${D.rules.creditsProportionalScaling?"checked":""} ${D.rules.twoCreditExtra?"":"disabled"} onchange="setCreditsProportionalScaling(this.checked)"><span class="small">Scale</span><input type="number" min="0" class="sfield" value="${D.rules.twoCreditExtra!=null?D.rules.twoCreditExtra:HSK_TWO_CREDIT_EXTRA_DEFAULT}" title="How many rooms count double toward Credits at full capacity" onchange="setRule('twoCreditExtra',this.value,${HSK_TWO_CREDIT_EXTRA_DEFAULT})"><span class="small">two-credit rooms with OOO/House-use/Unassigned (off = flat)</span></div>
   <div class="mrow"><label class="small">"Thin margin" flag when RAs above needed &lt; <input class="sfield" style="width:44px" value="${D.rules.thinMarginMin!=null?D.rules.thinMarginMin:HSK_THIN_MARGIN_DEFAULT}" onchange="setRule('thinMarginMin',this.value,${HSK_THIN_MARGIN_DEFAULT})"></label><label class="small">"Checkout load" flag when checkouts/RA &gt; <input class="sfield" style="width:44px" value="${D.rules.checkoutRatioMax!=null?D.rules.checkoutRatioMax:HSK_CHECKOUT_RATIO_MAX_DEFAULT}" onchange="setRule('checkoutRatioMax',this.value,${HSK_CHECKOUT_RATIO_MAX_DEFAULT})"></label></div>
     <!-- "Rooms per outsourced worker" shares a line with the outsourced-crew checkboxes — same thematic group. -->
   <div class="cfgrow"><b>Outsourced crews — in use?</b></div>
