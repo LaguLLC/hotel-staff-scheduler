@@ -21876,6 +21876,7 @@ let REALTIME_RECEIVE_ERR=null; // schedule-channel receiving error; only SUBSCRI
 let _realtimeScheduleReceiving=false;
 let _schedEverSubscribed=false;
 let _pullInFlight=0;
+let _comparisonMismatchCount=0;
 let _pullQueue=Promise.resolve();
 let _subscriptionGeneration=0;
 let _scheduleReadyWaiters=[];
@@ -21884,6 +21885,7 @@ function _resolvedSyncState(){
   if(!DB)return {status:"local",color:"#c7d0da",action:"connect"};
   if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_pullInFlight>0||_workweekSyncPending>0)return {status:"reviewing",color:"#c9891b",action:"reviewing"};
   if(_hasLocalSyncWork())return {status:"unsynced",color:"#e0a800",action:"review"};
+  if(_comparisonMismatchCount>0)return {status:"different from live",color:"#e0a800",action:"review"};
   if(SYNC_ERR||!navigator.onLine||(!_realtimeScheduleReceiving&&Date.now()>=_realtimeGraceUntil))return {status:"unsynced",color:"#e0a800",action:"retry"};
   return {status:"live",color:"#2c9e5f",action:"disconnect"};
 }
@@ -21997,7 +21999,7 @@ function setStatus(txt,color){
   // unsynced, an error - is still allowed through, because those remain true regardless of the answer.
   if((_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_workweekSyncPending>0)&&txt==="live"){txt="reviewing";color="#c9891b";}
   else if(txt==="live"&&(_hasLocalSyncWork()||SYNC_ERR||(!_realtimeScheduleReceiving&&Date.now()>=_realtimeGraceUntil))){txt="unsynced";color="#e0a800";}
-  const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault();el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span>&nbsp;${String(txt).charAt(0).toUpperCase()+String(txt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();showUnsyncedHelp();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
+  const _errText=[SYNC_ERR,REALTIME_RECEIVE_ERR].filter(Boolean).join(" | ");const _showErr=_errText&&DB;const _staleKey=SYNC_ERR&&DB&&!_savedConnectionMatchesCurrentDefault(),_displayTxt=txt==="live"?"connected":txt;el("syncStatus").innerHTML=`<span class="dot" style="background:${color}" ${_showErr?`title="${esc(_errText)}"`:""}></span><span title="Connected means the live feed is active. It does not claim this browser's local memory is identical to live; use Compare to verify equality.">&nbsp;${String(_displayTxt).charAt(0).toUpperCase()+String(_displayTxt).slice(1)}</span>${_showErr?` <span class="pill err" title="${esc(_errText)}${SYNC_ERR?"\n\nClick to dismiss the REST error.":""}" ${SYNC_ERR?`onclick="event.stopPropagation();showUnsyncedHelp();"`:""}>Sync error ⚠</span>`:""}${_staleKey?` <a href="javascript:void(0)" class="small" style="color:#fff;text-decoration:underline" title="This device's saved connection info differs from this deployment's current default — the project key may have been rotated. Reconnecting only updates the connection info itself; no schedule/roster data is ever affected." onclick="event.stopPropagation();reconnectWithLatestDefault();">Reconnect with latest info</a>`:""}`;
   requestAnimationFrame(_syncTagRowAlign); // the error pill/"Reconnect" link above are optional content that changes .tag's own width -- see .tag.wrappedRow's own comment
   // Mirrors this SAME color onto the compact app-mode-only status dot (see that element's own comment) — this is
   // the ONE place sync color/text is ever actually decided in this whole app, so mirroring it here (rather than
@@ -22207,7 +22209,7 @@ const DEMAND_FIELD_LABELS={
 };
 function _assignmentDateView(assign,dept){
   const out=new Map(),weeks=((assign||{})[dept])||{};
-  Object.keys(weeks).forEach(wk=>{const start=new Date(wk+"T00:00:00");Object.keys(weeks[wk]||{}).forEach(name=>{Object.keys(weeks[wk][name]||{}).forEach(ds=>{const day=Number(ds);if(!Number.isInteger(day)||day<0||day>6)return;const dt=new Date(start);dt.setDate(dt.getDate()+day);const key=name+"\u0000"+weekKey(dt),rowKey=_assignRowKey(dept,wk,name),cur=out.get(key);if(!cur||cur.value==null||cur.value==="")out.set(key,{name,date:weekKey(dt),value:weeks[wk][name][ds],rowKeys:new Set([rowKey])});else cur.rowKeys.add(rowKey);});});});
+  Object.keys(weeks).forEach(wk=>{const start=new Date(wk+"T00:00:00");Object.keys(weeks[wk]||{}).forEach(name=>{Object.keys(weeks[wk][name]||{}).forEach(ds=>{const day=Number(ds);if(!Number.isInteger(day)||day<0||day>6)return;const dt=new Date(start);dt.setDate(dt.getDate()+day);const iso=weekKey(dt),key=name+"\u0000"+iso,rowKey=_assignRowKey(dept,wk,name),cur=out.get(key),expected=weekKey(mondayOfWeekStartThu(dt,dept)),priority=wk===expected?2:1,value=weeks[wk][name][ds];if(!cur||priority>cur.priority||(priority===cur.priority&&(cur.value==null||cur.value==="")&&value!=null&&value!==""))out.set(key,{name,date:iso,value,rowKeys:new Set([rowKey]),priority,sourceWeek:wk});else cur.rowKeys.add(rowKey);});});});
   return out;
 }
 function _demandDateView(demand){
@@ -22302,7 +22304,7 @@ const SHARED_APP_CFG_KEYS=[
   // The one deliberate exception to this list's "no underscore-prefixed key" rule. Every other _xxx key is a
   // per-device migration guard that would cause harm if shared; this one is the opposite — a app-wide decision
   // that is only effective if every device honours it, since each re-runs seedRoster() at boot.
-  "_deletedStaff","_v26ApprovedInactiveShared"
+  "_deletedStaff","_v26ApprovedInactiveShared","_v26JustinJomarieShared"
 ];
 // Closes a real gap: the local-vs-live conflict popup already itemized ASSIGN/DEMAND/ LEAVE_REQUESTS
 // differences line-by-line (see analyzeUploadChanges() above), but CFG.FO/CFG.HSK (the staff roster, coverage
@@ -22376,10 +22378,11 @@ function _withoutAutoAvail(o){
   const out={};Object.keys(o).forEach(k=>{if(!_isAutoAvail(o[k]))out[k]=o[k];});
   return Object.keys(out).length?out:undefined;
 }
+function _syncRelevantAvailDates(o){const src=_withoutAutoAvail(o)||{},out={},today=todayISO();Object.keys(src).forEach(k=>{const a=src[k]||{};if(!a.to||a.to>=today)out[k]=a;});return Object.keys(out).length?out:undefined;}
 // The same, applied to every staff record of a department-config snapshot, for the whole-object comparison.
 function _cfgCompareView(depts){
   const c=JSON.parse(JSON.stringify(depts||{}));
-  DEPT_KEYS.forEach(d=>{((c[d]||{}).staff||[]).forEach(st=>{if(st&&st.availDates){const a=_withoutAutoAvail(st.availDates);if(a)st.availDates=a;else delete st.availDates;}});});
+  DEPT_KEYS.forEach(d=>{((c[d]||{}).staff||[]).forEach(st=>{if(st&&st.availDates){const a=_syncRelevantAvailDates(st.availDates);if(a)st.availDates=a;else delete st.availDates;}});});
   // Internal bookkeeping (underscore keys such as the deleted-staff record) is not something the dialog itemizes, so
   // it must not make two copies look different with nothing to show. Key order is also ignored.
   if(c.appWide)Object.keys(c.appWide).forEach(k=>{if(String(k).charAt(0)==="_")delete c.appWide[k];});
@@ -22640,7 +22643,7 @@ function humanizeWeeklyAvail(obj){
 // the entry's own `from` date for availDates; by actual weekday order, not object key order, for avail) per the
 // same "sort by ... date" request.
 function _diffAvailDatesEntries(localObj,liveObj){
-  localObj=_withoutAutoAvail(localObj)||{};liveObj=_withoutAutoAvail(liveObj)||{};
+  localObj=_syncRelevantAvailDates(localObj)||{};liveObj=_syncRelevantAvailDates(liveObj)||{};
   const allKeys=new Set([...Object.keys(localObj),...Object.keys(liveObj)]);
   const rows=[];
   allKeys.forEach(k=>{
@@ -22735,7 +22738,7 @@ function analyzeCfgChanges(localDepts,liveDepts){
           changes.push(sl);conflicts.push(sl);
         }
         const diffFields=STAFF_FIELDS.filter(f=>f==="availDates"
-          ?!_staffFieldMeansSame(f,_withoutAutoAvail(l[f]),_withoutAutoAvail(r[f]))
+          ?!_staffFieldMeansSame(f,_syncRelevantAvailDates(l[f]),_syncRelevantAvailDates(r[f]))
           :!_staffFieldMeansSame(f,l[f],r[f]));
         if(diffFields.length){
           // Friendly field label (STAFF_FIELD_LABELS, falling back to the raw key itself only if a future field
@@ -23413,7 +23416,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   // Compared without the dates-off records the schedule editor creates itself (see _withoutAutoAvail).
   const _cfgChanged=_cfgDiff.changes.length>0;
   if(!changes.length&&!_cfgChanged){
-    _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);setPending(false);_applySyncUiState();try{syncNav();}catch(e){}render();
+    _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);_comparisonMismatchCount=0;setPending(false);_applySyncUiState();try{syncNav();}catch(e){}render();
     if(_stay)flashNote("This device matches the live copy. Nothing to upload.");return;
   } // nothing itemized, but protected rows are still freshly verified before their registry entries are cleared
     const _isFirstAppWideSync=!(_lastPulledAppConfig&&_lastPulledAppConfig.appWide&&Object.keys(_lastPulledAppConfig.appWide).length);
@@ -23457,7 +23460,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     try{await _readLiveForReview();}catch(e){reportSyncError("post-upload verification read",e);}
     {const _handled=[...(choice.sections||[]),...(choice.dropped||[])];if(_handled.some(k=>k==="people"||k==="details"||k==="settings"||k==="roster"))_clearDirtyConfig();}
     if((choice.dropped||[]).indexOf("demand")>=0)_clearAllDirtyDemandWeeks();if((choice.dropped||[]).indexOf("leave")>=0)_clearAllDirtyLeaveIds();if((choice.dropped||[]).indexOf("schedule")>=0)_clearAllDirtyCheckinRows();
-    _reviewUploadInProgress=false;_reconcilePendingFlag();_applySyncUiState();render();
+    _reviewUploadInProgress=false;_comparisonMismatchCount=0;_reconcilePendingFlag();_applySyncUiState();render();
     {const _nm={people:"Roster people",details:"Roster details",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
   }
   else if(choice==="live"){ _clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);ASSIGN=JSON.parse(JSON.stringify(liveSnapshot.assign));DEMAND=JSON.parse(JSON.stringify(liveSnapshot.demand));LEAVE_REQUESTS=JSON.parse(JSON.stringify(liveSnapshot.leaveRequests));CHECKINS=JSON.parse(JSON.stringify(liveSnapshot.checkins));_pullingConfigNow=true;const _rawLiveCfg=_lastPulledAppConfig||{};CFG.FO=JSON.parse(JSON.stringify(_rawLiveCfg.FO||_cfgDeptsLive.FO));CFG.HSK=JSON.parse(JSON.stringify(_rawLiveCfg.HSK||_cfgDeptsLive.HSK));if(_rawLiveCfg.DB||_cfgDeptsLive.DB)CFG.DB=JSON.parse(JSON.stringify(_rawLiveCfg.DB||_cfgDeptsLive.DB));SHARED_APP_CFG_KEYS.forEach(k=>{const _rawAW=_rawLiveCfg.appWide||{};CFG[k]=JSON.parse(JSON.stringify(Object.prototype.hasOwnProperty.call(_rawAW,k)?_rawAW[k]:_cfgDeptsLive.appWide[k]));});_releaseLocalDeletions();
@@ -23469,7 +23472,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     // being tracked.
     const _prevSyncApplying1=_syncApplying;_syncApplying=true;
     try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying1;}
-    _pullingConfigNow=false;rebuildWeekStart();setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
+    _pullingConfigNow=false;rebuildWeekStart();_comparisonMismatchCount=0;setPending(false);if(DB)setStatus("live","#2c9e5f");render(); }
   else { // Cancel / dismissed — do NOT go live; keep local data and tear the connection back down
     // Bug: disconnect() must run FIRST, before the save() calls below, not after. Save("hotel_cfg",CFG)
     // triggers pushConfig() (a fire-and-forget async push) whenever DB is still non-null at the moment it's called
@@ -24148,7 +24151,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       if(_cfgBlocked||(_cfgDirtyStamp.FO>=_cfgFetchStartedAt)||(_cfgDirtyStamp.HSK>=_cfgFetchStartedAt))_cfgMergeDeferred=true;
       if(row.data.appWide&&!(_cfgDirtyStamp.appWide>=_cfgFetchStartedAt)&&_outstandingConfigPushes===0)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
       _pullingConfigNow=false;
-      if(!_cfgBlocked)_restoreV26ApprovedInactiveFromLive();
+      if(!_cfgBlocked){_restoreV26ApprovedInactiveFromLive();_restoreV26RequiredActiveFromLive();}
       // The roster that just arrived can still contain someone this hotel permanently deleted - most likely
       // pushed back up by a device running an older deployment, or by an Upload of a locally re-seeded roster.
       // Re-applying the deletion here, and pushing that correction, is what makes a permanent delete actually
@@ -24227,7 +24230,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // A tombstone correction made during this pull is pushed HERE rather than inside the pullTable() callback,
   // for the same "only when the merge actually happened" reason, and after the callback has fully settled.
   if(_tombstonePushAfterPull){_tombstonePushAfterPull=false;if(!_cfgMergeDeferred&&typeof pushConfig==="function")pushConfig();}
-  if(_v26InactivePushAfterPull&&!_cfgMergeDeferred)setTimeout(_flushV26InactiveMigration,0);
+  if(_v26InactivePushAfterPull&&!_cfgMergeDeferred)setTimeout(_flushV26InactiveMigration,0);if(_v26ActiveRosterPushAfterPull&&!_cfgMergeDeferred)setTimeout(_flushV26ActiveRosterMigration,0);
   // Reported once per session, after the pull has fully settled. Deliberately a prompt rather than a silent
   // self-repair: the roster on this device may itself be a seeded default, so writing it back could confirm the
   // very loss being reported. A person has to decide.
@@ -24692,7 +24695,7 @@ async function pushConfig(opts){
       }
       // if neither side has this department, it is omitted - there is nothing to write
     });
-    {const _payloadCfg={FO:payload.FO,_deletedStaff:payload.appWide._deletedStaff,_v26ApprovedInactiveShared:payload.appWide._v26ApprovedInactiveShared};if(payload.FO&&!_v26InactiveMigrationComplete(_payloadCfg)){_applyV26ApprovedInactiveToDepartment(payload.FO,payload.appWide._deletedStaff);payload.appWide._v26ApprovedInactiveShared="2026-10-16";}}
+    {const _payloadCfg={FO:payload.FO,_deletedStaff:payload.appWide._deletedStaff,_v26ApprovedInactiveShared:payload.appWide._v26ApprovedInactiveShared};if(payload.FO&&!_v26InactiveMigrationComplete(_payloadCfg)){_applyV26ApprovedInactiveToDepartment(payload.FO,payload.appWide._deletedStaff);payload.appWide._v26ApprovedInactiveShared="2026-10-16";}const _activeCfg={FO:payload.FO,_deletedStaff:payload.appWide._deletedStaff,_v26JustinJomarieShared:payload.appWide._v26JustinJomarieShared};if(payload.FO&&!_v26ActiveRosterComplete(_activeCfg)){_applyV26RequiredActiveFO(payload.FO,payload.appWide._deletedStaff);payload.appWide._v26JustinJomarieShared="2026-10-16";}}
 
     const {error}=await DB.from("app_config").upsert({id:"depts",data:payload},{onConflict:"id"});
     if(error){reportSyncError("push settings & roster",error);_pushSettled(false,"config");return {ok:false,error};}
@@ -24889,6 +24892,25 @@ function _normaliseImportedBackup(b){
   _normaliseStaffNamesInState(cfg,assign,leaveRequests);return target;
 }
 
+function _backupPlanId(prefix){_backupPlanId.n=(_backupPlanId.n||0)+1;return prefix+"|"+_backupPlanId.n;}
+function _backupStaffCore(st){if(!st)return null;const x=JSON.parse(JSON.stringify(st));delete x.avail;delete x.availDates;delete x.off;return x;}
+function _backupRestorePlan(target){_backupPlanId.n=0;const ops=[],add=(o)=>{o.id=_backupPlanId(o.section);ops.push(o);};
+  DEPT_KEYS.forEach(dp=>{const cur=_assignmentDateView(ASSIGN,dp),bak=_assignmentDateView(target.assign,dp);new Set([...cur.keys(),...bak.keys()]).forEach(k=>{const a=cur.get(k),b=bak.get(k),rec=a||b,av=(a&&a.value)||"",bv=(b&&b.value)||"";if(av===bv)return;add({section:"schedule",kind:"schedule",dept:dp,person:rec.name,dateFrom:rec.date,dateTo:rec.date,target:bv,label:deptLabel(dp)+" schedule — "+rec.name+" — "+rec.date+": current "+(av||"Blank")+" · backup "+(bv||"Blank")});});
+    const curStaff=new Map((((CFG[dp]||{}).staff)||[]).map(x=>[x.n,x])),bakStaff=new Map((((target.cfg[dp]||{}).staff)||[]).map(x=>[x.n,x]));new Set([...curStaff.keys(),...bakStaff.keys()]).forEach(name=>{const a=curStaff.get(name),b=bakStaff.get(name),ac=_backupStaffCore(a),bc=_backupStaffCore(b);if(!_sameValue(ac,bc))add({section:"roster",kind:"roster",dept:dp,person:name,target:bc,label:deptLabel(dp)+" roster — "+name+": selected restore replaces this person's roster record"});const aa=(a&&a.availDates)||{},ba=(b&&b.availDates)||{};new Set([...Object.keys(aa),...Object.keys(ba)]).forEach(key=>{if(_sameValue(aa[key],ba[key]))return;const v=ba[key]||null,x=aa[key]||v||{};add({section:"availability",kind:"availDate",dept:dp,person:name,key,target:JSON.parse(JSON.stringify(v)),dateFrom:x.from||null,dateTo:x.to||x.from||null,label:deptLabel(dp)+" availability — "+name+" — "+(x.from||key)+(x.to&&x.to!==x.from?" to "+x.to:"")});});["avail","off"].forEach(field=>{if(!_sameValue(a&&a[field],b&&b[field]))add({section:"availability",kind:"staffField",dept:dp,person:name,field,target:JSON.parse(JSON.stringify((b&&b[field])??null)),label:deptLabel(dp)+" availability — "+name+" — "+field});});});
+    const curSet=JSON.parse(JSON.stringify(CFG[dp]||{})),bakSet=JSON.parse(JSON.stringify(target.cfg[dp]||{}));delete curSet.staff;delete bakSet.staff;if(!_sameValue(curSet,bakSet))add({section:"settings",kind:"deptSettings",dept:dp,target:bakSet,label:deptLabel(dp)+" department settings"});
+  });
+  const fields=["occ","arr","dep","credits","ooo","house","events","transportation","unassigned"],curD=_demandDateView(DEMAND),bakD=_demandDateView(target.demand);new Set([...curD.keys(),...bakD.keys()]).forEach(date=>{fields.forEach(field=>{const a=((curD.get(date)||{}).fields||{})[field],b=((bakD.get(date)||{}).fields||{})[field];if(_sameValue(a,b))return;add({section:"demand",kind:"demand",dateFrom:date,dateTo:date,field,target:JSON.parse(JSON.stringify(b??null)),label:"Demand — "+date+" — "+(DEMAND_FIELD_LABELS[field]||field)+": current "+_formatDiffValue("demand",field,a)+" · backup "+_formatDiffValue("demand",field,b)});});});
+  new Set([...Object.keys(LEAVE_REQUESTS||{}),...Object.keys(target.leaveRequests||{})]).forEach(id=>{const a=LEAVE_REQUESTS[id],b=target.leaveRequests[id];if(_sameValue(a,b))return;const r=b||a||{};add({section:"leave",kind:"leave",key:id,target:JSON.parse(JSON.stringify(b??null)),dateFrom:r.from||null,dateTo:r.to||r.from||null,label:"Leave request — "+(r.name||id)+" — "+(r.from||"date not recorded")});});
+  DEPT_KEYS.forEach(dp=>{const a=(CHECKINS||{})[dp]||{},b=(target.checkins||{})[dp]||{};new Set([...Object.keys(a),...Object.keys(b)]).forEach(wk=>{const aw=a[wk]||{},bw=b[wk]||{};new Set([...Object.keys(aw),...Object.keys(bw)]).forEach(name=>{if(_sameValue(aw[name],bw[name]))return;add({section:"checkins",kind:"checkins",dept:dp,week:wk,person:name,target:JSON.parse(JSON.stringify(bw[name]??null)),dateFrom:wk,dateTo:dateAddIso(wk,6),label:"Check-ins — "+deptLabel(dp)+" — "+name+" — week of "+wk});});});});
+  const curAW={},bakAW={};SHARED_APP_CFG_KEYS.forEach(k=>{curAW[k]=CFG[k];bakAW[k]=target.cfg[k];});Object.keys(bakAW).forEach(k=>{if(!_sameValue(curAW[k],bakAW[k]))add({section:"settings",kind:"appSetting",key:k,target:JSON.parse(JSON.stringify(bakAW[k]??null)),label:"App-wide setting — "+(APP_WIDE_SETTING_LABELS[k]||k)});});
+  _FULL_BACKUP_EXTRA_SPECS.forEach(([prop,label])=>{if(!_sameValue((_fullBackupExtrasSnapshot()||{})[prop],(target.extras||{})[prop]))add({section:"extras",kind:"extra",key:prop,target:JSON.parse(JSON.stringify((target.extras||{})[prop]??{})),label:"Additional app data — "+label});});return ops;}
+function dateAddIso(iso,n){const d=new Date(iso+"T00:00:00");d.setDate(d.getDate()+Number(n||0));return weekKey(d);}
+function _backupOpInRange(op,from,to){if(!op.dateFrom&&!op.dateTo)return true;return (!to||op.dateFrom<=to)&&(!from||(op.dateTo||op.dateFrom)>=from);}
+function _showBackupItemReview(plan){return new Promise(res=>{const labels={roster:"Staff roster & details",availability:"Availability",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests",checkins:"Check-ins",extras:"Additional app data"},order=["roster","availability","settings","schedule","demand","leave","checkins","extras"],bg=document.createElement("div");bg.className="modalbg";bg.id="backupItemReviewModal";bg.style.display="flex";const from=weekKey(WEEK_START),to=weekKey(dayDate(6));bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><h2>Restore selected backup items</h2><div class="small muted">Choose individual items. The date range filters dated items; roster and settings items remain visible. Nothing changes until Restore selected items is confirmed.</div><div class="exportDateRow" style="margin-top:8px"><label class="small">From <input type="date" id="backupItemFrom" class="sfield" value="${from}"></label><label class="small">To <input type="date" id="backupItemTo" class="sfield" value="${to}"></label></div><div id="backupItemList" class="diffReviewList" style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px"></div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Restore selected items</button></div></div>`;document.body.appendChild(bg);const render=()=>{const f=bg.querySelector("#backupItemFrom").value,t=bg.querySelector("#backupItemTo").value,shown=plan.filter(o=>_backupOpInRange(o,f,t)),by={};shown.forEach(o=>(by[o.section]=by[o.section]||[]).push(o));bg.querySelector("#backupItemList").innerHTML=order.filter(k=>by[k]&&by[k].length).map(k=>`<details style="margin-top:6px" open><summary><label onclick="event.stopPropagation()"><input type="checkbox" class="cbx backupGroupPick" data-section="${k}"> <b>${esc(labels[k])}</b> (${nfmt(by[k].length)})</label></summary><div>${by[k].map(o=>`<label class="small" style="display:flex;gap:6px;align-items:flex-start;padding:3px 0"><input type="checkbox" class="cbx backupItemPick" data-id="${esc(o.id)}" data-section="${k}"><span>${esc(o.label)}</span></label>`).join("")}</div></details>`).join("")||'<div class="small muted">No differences in this date range.</div>';bg.querySelectorAll(".backupGroupPick").forEach(x=>x.onchange=()=>bg.querySelectorAll('.backupItemPick[data-section="'+x.dataset.section+'"]').forEach(y=>y.checked=x.checked));};bg.querySelector("#backupItemFrom").onchange=render;bg.querySelector("#backupItemTo").onchange=render;render();const done=v=>{bg.remove();res(v);};bg.querySelector('[data-c="cancel"]').onclick=()=>done(null);bg.querySelector('[data-c="ok"]').onclick=()=>{const ids=new Set([...bg.querySelectorAll('.backupItemPick:checked')].map(x=>x.dataset.id));if(!ids.size){uiAlert("Select at least one item to restore.");return;}done(ids);};bg.addEventListener("mousedown",e=>{if(e.target===bg)done(null);});});}
+function _removeScheduleDateEverywhere(store,dept,name,date){Object.keys((store||{})[dept]||{}).forEach(wk=>{const row=((store[dept]||{})[wk]||{})[name];if(!row)return;Object.keys(row).forEach(di=>{const dt=dateAddIso(wk,Number(di));if(dt===date)delete row[di];});if(!Object.keys(row).length)delete store[dept][wk][name];});}
+function _setScheduleDateValue(store,dept,name,date,value){_removeScheduleDateEverywhere(store,dept,name,date);if(value==null||value==="")return;const dt=new Date(date+"T00:00:00"),ws=mondayOfWeekStartThu(dt,dept),wk=weekKey(ws),di=Math.round((dt-ws)/86400000);store[dept]=store[dept]||{};store[dept][wk]=store[dept][wk]||{};store[dept][wk][name]=store[dept][wk][name]||{};store[dept][wk][name][di]=value;}
+function _setDemandDateField(date,field,value){Object.keys(DEMAND||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).forEach(wk=>{Object.keys(DEMAND[wk]||{}).forEach(di=>{if(dateAddIso(wk,Number(di))===date&&DEMAND[wk][di]){delete DEMAND[wk][di][field];if(!Object.keys(DEMAND[wk][di]).length)delete DEMAND[wk][di];}});});if(value==null||value==="")return;const dt=new Date(date+"T00:00:00"),ws=mondayOfWeekStartThu(dt,"FO"),wk=weekKey(ws),di=Math.round((dt-ws)/86400000);DEMAND[wk]=DEMAND[wk]||{};DEMAND[wk][di]=DEMAND[wk][di]||{};DEMAND[wk][di][field]=value;}
+async function _applyBackupSelectedOperations(target,ops){try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify(Object.assign(_fullBackupObject(),{savedAt:new Date().toISOString()})));}catch(e){}const bA=JSON.parse(JSON.stringify(ASSIGN)),bD=JSON.parse(JSON.stringify(DEMAND)),bL=JSON.parse(JSON.stringify(LEAVE_REQUESTS)),bC=JSON.parse(JSON.stringify(CHECKINS));let cfgChanged=false,extrasChanged=false;ops.forEach(o=>{if(o.kind==="schedule")_setScheduleDateValue(ASSIGN,o.dept,o.person,o.dateFrom,o.target);else if(o.kind==="demand")_setDemandDateField(o.dateFrom,o.field,o.target);else if(o.kind==="roster"){const D=CFG[o.dept],i=(D.staff||[]).findIndex(x=>x.n===o.person),cur=i>=0?D.staff[i]:null;if(o.target){const rec=Object.assign({},o.target);if(cur){["avail","availDates","off"].forEach(k=>{if(cur[k]!==undefined)rec[k]=JSON.parse(JSON.stringify(cur[k]));});D.staff[i]=rec;}else D.staff.push(rec);}else if(i>=0)D.staff.splice(i,1);cfgChanged=true;}else if(o.kind==="availDate"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){st.availDates=st.availDates||{};if(o.target)st.availDates[o.key]=JSON.parse(JSON.stringify(o.target));else delete st.availDates[o.key];cfgChanged=true;}}else if(o.kind==="staffField"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){if(o.target==null)delete st[o.field];else st[o.field]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}}else if(o.kind==="deptSettings"){const staff=CFG[o.dept].staff;CFG[o.dept]=Object.assign({},JSON.parse(JSON.stringify(o.target)),{staff});cfgChanged=true;}else if(o.kind==="appSetting"){if(o.target==null)delete CFG[o.key];else CFG[o.key]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}else if(o.kind==="leave"){if(o.target)LEAVE_REQUESTS[o.key]=JSON.parse(JSON.stringify(o.target));else delete LEAVE_REQUESTS[o.key];}else if(o.kind==="checkins"){CHECKINS[o.dept]=CHECKINS[o.dept]||{};CHECKINS[o.dept][o.week]=CHECKINS[o.dept][o.week]||{};if(o.target)CHECKINS[o.dept][o.week][o.person]=JSON.parse(JSON.stringify(o.target));else delete CHECKINS[o.dept][o.week][o.person];}else if(o.kind==="extra"){const spec=_FULL_BACKUP_EXTRA_SPECS.find(x=>x[0]===o.key);if(spec){spec[3](JSON.parse(JSON.stringify(o.target)));save(spec[4],o.target);extrasChanged=true;}}});if(cfgChanged){_markConfigDirty();const p=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=p;}}_markChangedAssignmentRows(bA,ASSIGN);new Set([...Object.keys(bD),...Object.keys(DEMAND)]).forEach(w=>{if(!_sameValue(bD[w],DEMAND[w]))_markDemandDirty(w);});new Set([...Object.keys(bL),...Object.keys(LEAVE_REQUESTS)]).forEach(id=>{if(!_sameValue(bL[id],LEAVE_REQUESTS[id]))_protectLeaveId(id);});DEPT_KEYS.forEach(dp=>new Set([...Object.keys(bC[dp]||{}),...Object.keys(CHECKINS[dp]||{})]).forEach(wk=>new Set([...Object.keys((bC[dp]||{})[wk]||{}),...Object.keys((CHECKINS[dp]||{})[wk]||{})]).forEach(n=>{if(!_sameValue(((bC[dp]||{})[wk]||{})[n],((CHECKINS[dp]||{})[wk]||{})[n]))_markCheckinDirty(dp,wk,n);})));save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);_flagPendingLocalWork();_reconcilePendingFlag();_applySyncUiState();render();flashNote("Selected backup items restored locally — Review & upload is required before synced items can replace live data.");}
 function _backupImportSectionForLine(line){
   const c=_categorizeConflictLine(String(line).replace(/\bcurrent\b/g,"local").replace(/\bbackup\b/g,"live"));
   if(c==="Staff availability")return "availability";
@@ -24918,22 +24940,7 @@ function _applyBackupCfgSections(targetCfg,sections){
   return next;
 }
 
-function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{
-  const b=JSON.parse(r.result),target=_normaliseImportedBackup(b),diff=_backupImportDiff(target);if(!diff.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}
-  const sections=await _showBackupSectionReview(diff);if(!sections)return;
-  try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify(Object.assign(_fullBackupObject(),{savedAt:new Date().toISOString()})));}catch(e2){}
-  const beforeAssign=ASSIGN,beforeDemand=DEMAND,beforeLeave=LEAVE_REQUESTS,beforeCheckins=CHECKINS;
-  if(sections.has("roster")||sections.has("availability")||sections.has("settings")){CFG=_applyBackupCfgSections(target.cfg,sections);_markConfigDirty();}
-  if(sections.has("schedule"))ASSIGN=target.assign;if(sections.has("demand"))DEMAND=target.demand;if(sections.has("leave"))LEAVE_REQUESTS=target.leaveRequests;if(sections.has("checkins"))CHECKINS=target.checkins;if(sections.has("extras"))_applyFullBackupExtras(target.extras);
-  if(sections.has("roster"))_dedupeRosterRecords();if(sections.has("leave")){_normaliseLeaveDeptKeys();_pruneEmptyLeaveRequestRecords();}
-  if(sections.has("schedule"))_markChangedAssignmentRows(beforeAssign,ASSIGN);
-  if(sections.has("demand"))new Set([...Object.keys(beforeDemand||{}),...Object.keys(DEMAND||{})]).forEach(wk=>{if(!_sameValue((beforeDemand||{})[wk],(DEMAND||{})[wk]))_markDemandDirty(wk);});
-  if(sections.has("leave"))new Set([...Object.keys(beforeLeave||{}),...Object.keys(LEAVE_REQUESTS||{})]).forEach(id=>{if(!_sameValue((beforeLeave||{})[id],(LEAVE_REQUESTS||{})[id]))_protectLeaveId(id);});
-  if(sections.has("checkins"))DEPT_KEYS.forEach(dp=>{const a=(beforeCheckins||{})[dp]||{},z=(CHECKINS||{})[dp]||{};new Set([...Object.keys(a),...Object.keys(z)]).forEach(wk=>{const aw=a[wk]||{},zw=z[wk]||{};new Set([...Object.keys(aw),...Object.keys(zw)]).forEach(n=>{if(!_sameValue(aw[n],zw[n]))_markCheckinDirty(dp,wk,n);});});});
-  const _prevPulling=_pullingConfigNow;_pullingConfigNow=true;try{if(sections.has("roster")||sections.has("availability")||sections.has("settings"))save("hotel_cfg",CFG);}finally{_pullingConfigNow=_prevPulling;}
-  if(sections.has("schedule"))save("hotel_assign",ASSIGN);if(sections.has("demand"))save("hotel_demand",DEMAND);if(sections.has("leave"))save("hotel_leaverequests",LEAVE_REQUESTS);if(sections.has("checkins"))save("hotel_checkins",CHECKINS);
-  const _syncable=["roster","availability","settings","schedule","demand","leave","checkins"].some(k=>sections.has(k));if(_syncable)_flagPendingLocalWork();_reconcilePendingFlag();_applySyncUiState();render();flashNote(_syncable?"Selected backup sections imported locally — Review & upload is required before synced sections can replace live data.":"Selected local-only backup data imported.");
-}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
+function importJSON(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=async()=>{try{const b=JSON.parse(r.result),target=_normaliseImportedBackup(b),plan=_backupRestorePlan(target);if(!plan.length){uiAlert("This backup matches the current data. Nothing was imported.");return;}const ids=await _showBackupItemReview(plan);if(!ids)return;await _applyBackupSelectedOperations(target,plan.filter(o=>ids.has(o.id)));}catch(err){uiAlert("Bad file: "+err.message);}finally{e.target.value="";}};r.readAsText(f);}
 /* XLSX EXPORT (approximate the hotel's sheet layout) ---------- */
 let _scheduleExcelExportOpen=false;
 function _scheduleExcelDateGroups(fromIso,toIso){
@@ -36924,8 +36931,8 @@ async function backupMenu(){
   // rare, one-off maintenance actions that made this list feel dense — their underlying functions
   // (cleanupFormerStaffSchedules(), resortRosterByRoleWithConfirm(), both further below) are deliberately LEFT IN
   // PLACE, just no longer reachable from this specific menu.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Import backup sections (JSON)","Save version now","View version history","View change log","Compare against the shared copy"]);
-  if(pick==="Import backup sections (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare against the shared copy")showCompareModal();
+  const pick=await uiDialog("Backup & versions:",["Cancel","Restore selected backup items (JSON)","Save version now","View version history","View change log","Compare against the shared copy"]);
+  if(pick==="Restore selected backup items (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare against the shared copy")showCompareModal();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -43186,6 +43193,12 @@ function _restoreV26ApprovedInactiveFromLive(){
 async function _flushV26InactiveMigration(){
   clearTimeout(_v26InactiveRetryTimer);_v26InactiveRetryTimer=null;if(!_v26InactivePushAfterPull||!DB)return;if(_syncReviewPending||_awaitingSyncChoice){_v26InactiveRetryTimer=setTimeout(_flushV26InactiveMigration,500);return;}_restoreV26ApprovedInactiveFromLive();const r=await pushConfig();if(r&&r.ok)_v26InactivePushAfterPull=false;else if(DB)_v26InactiveRetryTimer=setTimeout(_flushV26InactiveMigration,1500);
 }
+let _v26ActiveRosterPushAfterPull=false,_v26ActiveRosterRetryTimer=null;
+const _V26_REQUIRED_ACTIVE_FO=[{n:"Jomarie Ebo",role:"Bell Attendants",type:"FT"},{n:"Justin Biven",role:"Bell Attendants",type:"FT"}];
+function _v26ActiveRosterComplete(cfg){const D=(cfg&&cfg.FO)||{},by=new Map((D.staff||[]).map(x=>[String(x.n||"").toLowerCase(),x])),t=(((cfg||{})._deletedStaff||{}).FO)||{};return !!(cfg&&cfg._v26JustinJomarieShared)&&_V26_REQUIRED_ACTIVE_FO.every(x=>{const s=by.get(x.n.toLowerCase());return s&&s.employed!==false&&!t[x.n];});}
+function _applyV26RequiredActiveFO(D,tombRoot){const staff=D.staff=D.staff||[],by=new Map(staff.map(x=>[String(x.n||"").toLowerCase(),x]));_V26_REQUIRED_ACTIVE_FO.forEach(t=>{let st=by.get(t.n.toLowerCase());if(!st){st=Object.assign({},t);staff.push(st);by.set(t.n.toLowerCase(),st);}st.employed=true;delete st.inactiveSince;try{if(tombRoot&&tombRoot.FO)delete tombRoot.FO[t.n];}catch(e){}});}
+function _restoreV26RequiredActiveFromLive(){if(_v26ActiveRosterComplete(CFG))return false;_applyV26RequiredActiveFO(CFG.FO,CFG._deletedStaff);CFG._v26JustinJomarieShared="2026-10-16";_v26ActiveRosterPushAfterPull=true;return true;}
+async function _flushV26ActiveRosterMigration(){clearTimeout(_v26ActiveRosterRetryTimer);_v26ActiveRosterRetryTimer=null;if(!_v26ActiveRosterPushAfterPull||!DB)return;if(_syncReviewPending||_awaitingSyncChoice){_v26ActiveRosterRetryTimer=setTimeout(_flushV26ActiveRosterMigration,500);return;}_restoreV26RequiredActiveFromLive();const r=await pushConfig();if(r&&r.ok)_v26ActiveRosterPushAfterPull=false;else if(DB)_v26ActiveRosterRetryTimer=setTimeout(_flushV26ActiveRosterMigration,1500);}
 function isStaffTombstoned(dept,name){try{return !!_tombstones(dept)[name];}catch(e){return false;}}
 function addStaffTombstone(dept,name){try{_tombstones(dept)[name]=todayISO();}catch(e){}}
 function clearStaffTombstone(dept,name){try{delete _tombstones(dept)[name];}catch(e){}}
@@ -43701,24 +43714,17 @@ async function _freshLiveComparisonSource(){
   return{name:"Connected live copy (fresh read)",cfg,assign};
 }
 function _comparisonRows(source,opts){
-  const diffs=[],groups=_scheduleExcelDateGroups(opts.from,opts.to);let checkedCells=0,checkedPeople=0;
-  window._cmpOtherCfg=source.cfg;
-  opts.depts.forEach(dept=>{
-    const localRoster=_compareRosterMap(CFG,dept),otherRoster=_compareRosterMap(source.cfg,dept),names=new Set([...localRoster.keys(),...otherRoster.keys()]);
-    groups.forEach((dates,wk)=>{Object.keys(((ASSIGN[dept]||{})[wk])||{}).forEach(n=>names.add(n));Object.keys(((source.assign[dept]||{})[wk])||{}).forEach(n=>names.add(n));});
-    [...names].sort().filter(n=>_compareNameInScope(dept,n,opts,localRoster,otherRoster)).forEach(name=>{
-      checkedPeople++;const a=localRoster.get(name),b=otherRoster.get(name),state=x=>!x?"Missing":(x.employed===false?"Inactive":"Active");
-      if(state(a)!==state(b))diffs.push({cat:"Roster status",dept:deptLabel(dept),item:name,local:state(a),other:state(b)});
-      else if(a&&b){["role","type"].forEach(k=>{const av=String(a[k]||""),bv=String(b[k]||"");if(av!==bv)diffs.push({cat:"Roster detail",dept:deptLabel(dept),item:name+" — "+(k==="role"?"Role":"Type"),local:av||"Blank",other:bv||"Blank"});});}
-      groups.forEach((dates,wk)=>dates.forEach(d=>{checkedCells++;const av=String((((ASSIGN[dept]||{})[wk]||{})[name]||{})[d.day]||"").trim(),bv=String((((source.assign[dept]||{})[wk]||{})[name]||{})[d.day]||"").trim();if(av!==bv)diffs.push({cat:"Schedule",dept:deptLabel(dept),item:name+" — "+d.iso,local:av||"Blank",other:bv||"Blank"});}));
-    });
-  });
-  delete window._cmpOtherCfg;return{diffs,checkedCells,checkedPeople};
+  const diffs=[];let checkedCells=0,checkedPeople=0;window._cmpOtherCfg=source.cfg;
+  opts.depts.forEach(dept=>{const localRoster=_compareRosterMap(CFG,dept),otherRoster=_compareRosterMap(source.cfg,dept),names=new Set([...localRoster.keys(),...otherRoster.keys()]);const localDates=_assignmentDateView(ASSIGN,dept),otherDates=_assignmentDateView(source.assign,dept);
+    new Set([...localDates.keys(),...otherDates.keys()]).forEach(k=>{const r=localDates.get(k)||otherDates.get(k);if(r&&r.date>=opts.from&&r.date<=opts.to)names.add(r.name);});
+    [...names].sort().filter(n=>_compareNameInScope(dept,n,opts,localRoster,otherRoster)).forEach(name=>{checkedPeople++;const a=localRoster.get(name),b=otherRoster.get(name),state=x=>!x?"Missing":(x.employed===false?"Inactive":"Active");if(state(a)!==state(b))diffs.push({cat:"Roster status",dept:deptLabel(dept),item:name,local:state(a),other:state(b)});else if(a&&b){["role","type"].forEach(k=>{const av=String(a[k]||""),bv=String(b[k]||"");if(av!==bv)diffs.push({cat:"Roster detail",dept:deptLabel(dept),item:name+" — "+(k==="role"?"Role":"Type"),local:av||"Blank",other:bv||"Blank"});}
+      );}const prefix=name+"\u0000",keys=new Set([...localDates.keys(),...otherDates.keys()]);[...keys].filter(k=>k.indexOf(prefix)===0).sort().forEach(k=>{const l=localDates.get(k),r=otherDates.get(k),rec=l||r;if(!rec||rec.date<opts.from||rec.date>opts.to)return;checkedCells++;const av=String((l&&l.value)||"").trim(),bv=String((r&&r.value)||"").trim();if(av!==bv)diffs.push({cat:"Schedule",dept:deptLabel(dept),item:name+" — "+rec.date,local:av||"Blank",other:bv||"Blank"});});});
+  });delete window._cmpOtherCfg;return{diffs,checkedCells,checkedPeople};
 }
 async function runScopedComparison(){
   const box=el("syncCompareBox");if(!box)return;const opts=_readExportScopeControls("cmp",false);if(!opts)return;box.innerHTML='<span class="small muted">Reading and comparing…</span>';
   try{const mode=el("cmpSource").value,source=mode==="file"?_COMPARE_BACKUP:await _freshLiveComparisonSource();if(!source)throw new Error("Choose or drop a scheduler JSON backup first.");const r=_comparisonRows(source,opts),label=esc(source.name),detail=r.diffs.length?r.diffs.map(x=>`<tr><td>${esc(x.cat)}</td><td>${esc(x.dept)}</td><td style="text-align:left">${esc(x.item)}</td><td style="text-align:left">${esc(x.local)}</td><td style="text-align:left">${esc(x.other)}</td></tr>`).join(""):`<tr><td colspan="5" style="text-align:left;color:#2c7a4b"><b>Exact match</b> for the selected roster status, roles/types, dates, and schedule cells.</td></tr>`;
-    box.innerHTML=`<div class="small" style="margin-bottom:6px"><b>Source:</b> ${label}<br><b>Checked:</b> ${nfmt(r.checkedPeople)} person/department records and ${nfmt(r.checkedCells)} schedule cells · <b>${nfmt(r.diffs.length)} difference(s)</b></div><div class="tblwrap" style="overflow:auto;max-height:44vh;border-radius:8px"><table class="small" style="min-width:760px;table-layout:auto"><tr><th>Category</th><th>Department</th><th>Person/date</th><th>This device</th><th>${mode==="file"?"Uploaded backup":"Live copy"}</th></tr>${detail}</table></div>`;
+    if(mode==="live"){_comparisonMismatchCount=r.diffs.length;_applySyncUiState();try{syncNav();}catch(e){}}box.innerHTML=`<div class="small" style="margin-bottom:6px"><b>Source:</b> ${label}<br><b>Checked:</b> ${nfmt(r.checkedPeople)} person/department records and ${nfmt(r.checkedCells)} nonblank schedule coordinates · <b>${nfmt(r.diffs.length)} difference(s)</b>${mode==="live"&&r.diffs.length?"<br><b>Status changed:</b> this browser differs from live; use Review & upload or discard after checking the listed items.":""}</div><div class="tblwrap" style="overflow:auto;max-height:44vh;border-radius:8px"><table class="small" style="min-width:760px;table-layout:auto"><tr><th>Category</th><th>Department</th><th>Person/date</th><th>This device</th><th>${mode==="file"?"Uploaded backup":"Live copy"}</th></tr>${detail}</table></div>`;
   }catch(e){box.innerHTML=`<div class="mflag"><b>Comparison could not run.</b> ${esc(e.message||String(e))}</div>`;}
 }
 async function compareWithServer(){return runScopedComparison();}
