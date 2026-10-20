@@ -12361,8 +12361,35 @@ function _makeUndoEntry(before,after,paths){return{before,after,paths:Array.isAr
 function _undoEntryBefore(entry){return entry&&typeof entry==="object"?entry.before:entry;}
 function _undoEntryAfter(entry,fallback){return entry&&typeof entry==="object"?entry.after:fallback;}
 function _undoPathKey(path){return path.map(x=>String(x).replace(/~/g,"~0").replace(/\//g,"~1")).join("/");}
+/* Per-person undo for roster lists. A roster is a list, and the conditional (connected) undo used to treat a whole list as one value, so any other
+   change to the list - another device, a merge with live, a second edit - made the undo "skip" and the step was lost. For comparison each
+   department's list is turned into one entry per person (by name), so only that person's own fields decide whether an undo can apply. The lists are
+   turned back into lists, in the same order, before the snapshot is restored. */
+function _undoStaffMaps(snaps){
+  const done={},orders=snaps.map(()=>({}));
+  DEPT_KEYS.forEach(d=>{
+    const ok=snaps.every(s=>{const D=s&&s.CFG&&s.CFG[d];if(!D||!Array.isArray(D.staff))return false;const names=D.staff.map(x=>x&&x.n);return names.every(n=>typeof n==="string"&&n)&&new Set(names).size===names.length;});
+    if(!ok)return;
+    snaps.forEach((s,i)=>{const D=s.CFG[d],m={};D.staff.forEach(x=>{m[x.n]=x;});orders[i][d]=D.staff.map(x=>x.n);D.staff={"\u0001staff":1,rec:m};});
+    done[d]=true;
+  });
+  return {done,orders};
+}
+function _undoStaffBack(target,sm,refOrder,curOrder){
+  DEPT_KEYS.forEach(d=>{
+    if(!sm.done[d])return;
+    const D=target.CFG&&target.CFG[d];if(!D||!D.staff||!D.staff.rec)return;
+    const rec=D.staff.rec,keep=(curOrder[d]||[]).filter(n=>rec[n]&&Object.keys(rec[n]).length);
+    Object.keys(rec).forEach(n=>{
+      if(keep.indexOf(n)>=0||!rec[n]||!Object.keys(rec[n]).length)return;
+      const at=(refOrder[d]||[]).indexOf(n);keep.splice(at>=0?Math.min(at,keep.length):keep.length,0,n);
+    });
+    D.staff=keep.map(n=>rec[n]);
+  });
+}
 function _conditionalUndoTarget(entry,direction){
   const current=JSON.parse(_undoSnapshot()||"{}"),before=JSON.parse(_undoEntryBefore(entry)||"{}"),after=JSON.parse(_undoEntryAfter(entry,_undoSnapshot())||"{}");
+  const _sm=_undoStaffMaps([current,before,after]);
   const target=JSON.parse(JSON.stringify(current)),allowed=entry&&Array.isArray(entry.paths)?new Set(entry.paths.map(_undoPathKey)):null,applied=[],skipped=[];
   const same=(a,b)=>JSON.stringify(a===undefined?null:a)===JSON.stringify(b===undefined?null:b);
   const plain=x=>x!==null&&typeof x==="object"&&!Array.isArray(x);
@@ -12376,12 +12403,13 @@ function _conditionalUndoTarget(entry,direction){
     if(same(c,expected)){setAt(target,path,replacement);applied.push(path);}else skipped.push(path);
   };
   walk(before,after,current,[]);
-  return{snapshot:JSON.stringify(target),paths:applied,skipped:skipped.length};
+  _undoStaffBack(target,_sm,direction==="undo"?_sm.orders[1]:_sm.orders[2],_sm.orders[0]);
+  return{snapshot:JSON.stringify(target),paths:applied,skipped:skipped.length,skippedPaths:skipped};
 }
 let _undoApplying=false,_undoBatchTimer=null,_undoBatchPre=null,_undoBatchLocation=null;
 let _pendingUndoLocation=null;
 function _setPendingUndoLocation(loc){_pendingUndoLocation=loc?JSON.parse(JSON.stringify(loc)):null;}
-function _refreshUndoBaselineAfterRemote(){try{/* S3-02 not applied: per-field undo stays active while connected, and it needs this baseline refreshed */if(!_undoApplying&&_undoBatchPre===null&&!_workweekSyncPending)_lastSettledSnapshot=_undoSnapshot();/* Also refreshed while Redo exists: a frozen baseline would let Undo revert another device's edit */}catch(e){}}
+function _refreshUndoBaselineAfterRemote(){try{_applyLeavesFromCfg();}catch(eLv){}try{/* S3-02 not applied: per-field undo stays active while connected, and it needs this baseline refreshed */if(!_undoApplying&&_undoBatchPre===null&&!_workweekSyncPending)_lastSettledSnapshot=_undoSnapshot();/* Also refreshed while Redo exists: a frozen baseline would let Undo revert another device's edit */}catch(e){}}
 let _undoPrePushSnapshot=null; // see _undoRestore()'s own comment
 // save()'s own undo-capture block below checks `!_undoApplying` (prevents an undo/redo RESTORE from re-triggering
 // itself) AND `!_syncApplying` — pullAll() (a reconnect/live-sync pull) calls save() separately for ASSIGN,
@@ -12545,7 +12573,8 @@ function _clearAllDirtyDemandWeeks(){_dirtyDemandWeeks={};_persistDirtyDemandWee
 const DIRTY_LEAVE_IDS_KEY="hotel_dirty_leave_ids";
 let _dirtyLeaveIds=load(DIRTY_LEAVE_IDS_KEY,{});if(!_dirtyLeaveIds||typeof _dirtyLeaveIds!=="object"||Array.isArray(_dirtyLeaveIds))_dirtyLeaveIds={};try{Object.assign(_dirtyLeaveIds,_dirtyMirrorGet(DIRTY_LEAVE_IDS_KEY));}catch(e){}
 function _persistDirtyLeaveIds(){try{if(Object.keys(_dirtyLeaveIds).length)localStorage.setItem(DIRTY_LEAVE_IDS_KEY,JSON.stringify(_dirtyLeaveIds));else localStorage.removeItem(DIRTY_LEAVE_IDS_KEY);}catch(e){_dirtyMirrorSet(DIRTY_LEAVE_IDS_KEY,_dirtyLeaveIds);_storageFail(DIRTY_LEAVE_IDS_KEY,e);}}
-function _protectLeaveId(id){if(id){_dirtyLeaveIds[id]=1;_persistDirtyLeaveIds();_flagPendingLocalWork();}}
+var _leaveEditStamp={};
+function _protectLeaveId(id){if(id){_dirtyLeaveIds[id]=1;try{_leaveEditStamp[id]=Date.now();}catch(eS){}_persistDirtyLeaveIds();_flagPendingLocalWork();}}
 function _clearDirtyLeaveId(id){if(_dirtyLeaveIds[id]){delete _dirtyLeaveIds[id];_persistDirtyLeaveIds();}}
 function _clearAllDirtyLeaveIds(){_dirtyLeaveIds={};_persistDirtyLeaveIds();}
 // How long after a local demand write an incoming realtime demand payload for that same week is treated as a
@@ -12832,6 +12861,7 @@ function _undoRestore(snapStr,actionLocation){
     const _deferWeekCfg=!!(actionLocation&&actionLocation.kind==="settings"&&actionLocation.key==="weekStartDow"),_prevWeekCfgDefer=_pcvDeferLivePush;if(_deferWeekCfg)_pcvDeferLivePush=true;
     try{save("hotel_cfg",CFG);}finally{if(_deferWeekCfg){_pcvDeferLivePush=_prevWeekCfgDefer;_pcvPushPendingWhileWizardOpen=false;}}
     save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);save("hotel_actuald_autosrc",ACTUALD_AUTOSRC);save("hotel_actuald_importdate",ACTUALD_IMPORTDATE);save("hotel_actuald_times",ACTUALD_TIMES);save("hotel_actuald_reviewed",ACTUALD_REVIEWED);if(_undoIsWeekStart)save("hotel_checkins",CHECKINS);save("hotel_roomassign",ROOM_ASSIGN);save("hotel_floors",FLOORS);save("hotel_locks",LOCKS);save("hotel_leaves",LEAVES);save("hotel_leaverequests",LEAVE_REQUESTS);
+    try{_leavesCfgJson=JSON.stringify(CFG.approvedLeaves===undefined?null:CFG.approvedLeaves);}catch(eLv){}/* PATCH rev6: LEAVES and CFG.approvedLeaves were restored together */
     if(typeof MULTISEL!=="undefined"){MULTISEL.cells.clear();MULTISEL.active=false;MULTISEL.lastCell=null;}
     // An undo/redo used to be LOCAL ONLY for everything except CFG (save("hotel_cfg") has its own pushConfig()
     // hook; no other tracked key has one). So the shared copy still held the pre-undo values, and this device's
@@ -12839,7 +12869,9 @@ function _undoRestore(snapStr,actionLocation){
     // change as the edit it reverses, so the reverted weeks are pushed here. Scoped to weeks that ACTUALLY
     // differ from what was on screen a moment ago, so an undo of a roster-only change sends nothing.
     // The restored rows are pushed once, after the local restore finishes, using _undoPushScope below.
+    const _undoY=window.scrollY,_undoWasSettings=(VIEW==="settings"),_undoHadHint=!!(_undoCfgScrollHint||_undoScrollHint||_undoDemandScrollHint);
     render();
+    if(_undoWasSettings&&!_undoHadHint)requestAnimationFrame(()=>{window.scrollTo(0,_undoY);});/* a roster change has no scroll target: stay where you were */
     // Undo and redo navigate to the first affected location so the result is visible. Schedule, Demand, and
     // Settings use the same scroll helper; bulk changes use their first changed cell or field as the anchor.
     // ONE shared helper now does the actual scroll+flash for all three hint types below (schedule cell, demand
@@ -13015,11 +13047,11 @@ function flushPendingUndoBatch(){
     _lastSettledSnapshot=_undoSnapshot();
   }
 }
-function _snapshotUndoBlocked(){return false;}
 function _resetSnapshotUndoHistory(){
   if(_undoBatchTimer!=null){clearTimeout(_undoBatchTimer);_undoBatchTimer=null;}
   _undoBatchPre=null;_undoBatchLocation=null;_pendingUndoLocation=null;UNDO_STACK=[];REDO_STACK=[];UNDO_LOCATIONS=[];REDO_LOCATIONS=[];_lastSettledSnapshot=_undoSnapshot();_refreshUndoRedoButtons();
 }
+function _undoHeldSuffix(){try{if(_syncReviewPending||_awaitingSyncChoice||_reviewUploadInProgress||(typeof _restoreHoldActive==="function"&&_restoreHoldActive()))return " Not sent to live yet \u2014 it uploads when the review finishes.";}catch(e){}return "";}
 function undoAction(){
   flushPendingUndoBatch();
   if(!UNDO_STACK.length){flashNote("Nothing to undo.");return;}
@@ -13027,7 +13059,9 @@ function undoAction(){
   if(DB){
     const result=_conditionalUndoTarget(entry,"undo");
     if(result.paths.length){REDO_STACK.push(_makeUndoEntry(_undoEntryBefore(entry),_undoEntryAfter(entry,_undoSnapshot()),result.paths));REDO_LOCATIONS.push(loc);if(REDO_STACK.length>UNDO_MAX){REDO_STACK.shift();REDO_LOCATIONS.shift();}_undoRestore(result.snapshot,loc);}
-    flashNote(result.paths.length?("Undid "+result.paths.length+" field"+(result.paths.length===1?"":"s")+(result.skipped?"; skipped "+result.skipped+" changed on another device":"")+"."):("Nothing was undone"+(result.skipped?" because the changed field was updated on another device":"")+"."));
+    /* PATCH rev5: fields skipped because another device changed them stay available as a residual step (on top if something was undone, otherwise parked at the bottom so it never blocks earlier steps) instead of being silently discarded */
+    if(result.skippedPaths&&result.skippedPaths.length){const _res=_makeUndoEntry(_undoEntryBefore(entry),_undoEntryAfter(entry),result.skippedPaths);if(result.paths.length){UNDO_STACK.push(_res);UNDO_LOCATIONS.push(loc);}else{UNDO_STACK.unshift(_res);UNDO_LOCATIONS.unshift(loc);}if(UNDO_STACK.length>UNDO_MAX){UNDO_STACK.shift();UNDO_LOCATIONS.shift();}}
+    flashNote((result.paths.length?("Undid "+result.paths.length+" field"+(result.paths.length===1?"":"s")+(result.skipped?"; skipped "+result.skipped+" changed on another device":"")+"."):("Nothing was undone"+(result.skipped?" because the changed field was updated on another device":"")+"."))+_undoHeldSuffix());
   }else{
     const cur=_undoSnapshot();REDO_STACK.push(_makeUndoEntry(_undoEntryBefore(entry),_undoEntryAfter(entry,cur),entry&&entry.paths));REDO_LOCATIONS.push(loc);if(REDO_STACK.length>UNDO_MAX){REDO_STACK.shift();REDO_LOCATIONS.shift();}_undoRestore(_undoEntryBefore(entry),loc);flashNote("Undid last change. ("+UNDO_STACK.length+" more to undo)");
   }
@@ -13040,7 +13074,9 @@ function redoAction(){
   if(DB){
     const result=_conditionalUndoTarget(entry,"redo");
     if(result.paths.length){UNDO_STACK.push(_makeUndoEntry(_undoEntryBefore(entry),_undoEntryAfter(entry),result.paths));UNDO_LOCATIONS.push(loc);if(UNDO_STACK.length>UNDO_MAX){UNDO_STACK.shift();UNDO_LOCATIONS.shift();}_undoRestore(result.snapshot,loc);}
-    flashNote(result.paths.length?("Redid "+result.paths.length+" field"+(result.paths.length===1?"":"s")+(result.skipped?"; skipped "+result.skipped+" changed on another device":"")+"."):("Nothing was redone"+(result.skipped?" because the field changed after Undo":"")+"."));
+    /* PATCH rev5: mirror of the undo residual-step handling */
+    if(result.skippedPaths&&result.skippedPaths.length){const _res=_makeUndoEntry(_undoEntryBefore(entry),_undoEntryAfter(entry),result.skippedPaths);if(result.paths.length){REDO_STACK.push(_res);REDO_LOCATIONS.push(loc);}else{REDO_STACK.unshift(_res);REDO_LOCATIONS.unshift(loc);}if(REDO_STACK.length>UNDO_MAX){REDO_STACK.shift();REDO_LOCATIONS.shift();}}
+    flashNote((result.paths.length?("Redid "+result.paths.length+" field"+(result.paths.length===1?"":"s")+(result.skipped?"; skipped "+result.skipped+" changed on another device":"")+"."):("Nothing was redone"+(result.skipped?" because the field changed after Undo":"")+"."))+_undoHeldSuffix());
   }else{
     const cur=_undoSnapshot();UNDO_STACK.push(_makeUndoEntry(_undoEntryBefore(entry,cur),_undoEntryAfter(entry),entry&&entry.paths));UNDO_LOCATIONS.push(loc);if(UNDO_STACK.length>UNDO_MAX){UNDO_STACK.shift();UNDO_LOCATIONS.shift();}_undoRestore(_undoEntryAfter(entry),loc);flashNote("Redid change. ("+REDO_STACK.length+" more to redo)");
   }
@@ -13571,13 +13607,13 @@ function _syncViewerVisibilityClass(){
     b.classList.toggle("viewerHidesDemand",!!hide);
   }catch(e){}
 }
-function syncNav(){_syncViewerVisibilityClass();const hv=CFG.hideForViewers&&!partialEditDepts().length;if(el("btnSET"))el("btnSET").style.display=hv?"none":"";if(el("btnREAD"))el("btnREAD").style.display=hv?"none":"";if(el("checksCard"))el("checksCard").style.display=(demandOrChecksHiddenFromViewer()||checksHiddenForNonManagers())?"none":"";if(el("demandCard"))el("demandCard").style.display=demandOrChecksHiddenFromViewer()?"none":"";
+function syncNav(){_syncViewerVisibilityClass();const hv=CFG.hideForViewers&&!partialEditDepts().length;if(el("btnSET"))el("btnSET").style.display=hv?"none":"";if(el("btnREAD"))el("btnREAD").style.display=hv?"none":"";if(el("checksCard"))el("checksCard").style.display=(VIEW!=="schedule"||demandOrChecksHiddenFromViewer()||checksHiddenForNonManagers())?"none":"";if(el("demandCard"))el("demandCard").style.display=(VIEW!=="schedule"||demandOrChecksHiddenFromViewer())?"none":"";
   if(el("carryoverBanner"))el("carryoverBanner").style.display=VIEW==="schedule"?"":"none";
   // The relocated "This week at a glance" card (see its own comment in the static HTML for the full "moved out of
   // the Checks card, higher up the page" reasoning) needs this SAME visibility rule applied independently now that
   // it's a separate DOM element from #checksCard, rather than a child that inherited #checksCard's own display:none
   // automatically.
-  if(el("weeklyInsightsCard"))el("weeklyInsightsCard").style.display=(demandOrChecksHiddenFromViewer()||checksHiddenForNonManagers())?"none":"";// Driven by DEPT_KEYS. This second toggle site set FO and HSK by name and silently left DB out, so clicking
+  if(el("weeklyInsightsCard"))el("weeklyInsightsCard").style.display=(VIEW!=="schedule"||demandOrChecksHiddenFromViewer()||checksHiddenForNonManagers())?"none":"";// Driven by DEPT_KEYS. This second toggle site set FO and HSK by name and silently left DB out, so clicking
 // Dusit Beach highlighted it (via syncNav) and then render() removed the highlight again a moment later.
 DEPT_KEYS.forEach(_d=>{const _b=el("btn"+_d);if(_b)_b.classList.toggle("active",VIEW==="schedule"&&DEPT===_d);});if(el("btnSET"))el("btnSET").classList.toggle("active",VIEW==="settings");if(el("btnREAD"))el("btnREAD").classList.toggle("active",VIEW==="readme");if(el("btnLEAVE"))el("btnLEAVE").classList.toggle("active",VIEW==="leave"); /* Leave Requests stays visible even to view-only users — everyone across both departments must be able to submit and see requests, per transparency requirement */
   // See the header button's own comment for the full "Connect vs Disconnect" reasoning. Three states now, not two:
@@ -21934,7 +21970,7 @@ async function retryDeferredConfigMerge(){
         _mergedAny=true;
       });
       if(row.data.appWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(row.data.appWide[k]!==undefined)CFG[k]=row.data.appWide[k];});
-      save("hotel_cfg",CFG);
+      save("hotel_cfg",CFG);try{_applyLeavesFromCfg();}catch(eLv){}
     }finally{_pullingConfigNow=false;}
     if(!_mergedAny)return;                                   // nothing actually merged; leave the gate as it was
     setTimeout(_flushDeferredConfigPush,0);
@@ -22064,6 +22100,7 @@ function _guardDbWrites(client){
     const q=realFrom(table);
     return new Proxy(q,{get(t,k){
       if(k==="upsert"||k==="insert"||k==="update"||k==="delete")return function(){
+        if(_restoreHold&&_RESTORE_HELD_TABLES.has(table)&&_restoreHoldActive())return noop;
         if(_syncReviewPending){
           _blockedDbWrites++;
           // A write refused while the review dialog is open is a change that did not reach live, and nothing else records
@@ -22076,7 +22113,7 @@ function _guardDbWrites(client){
       const v=t[k];return typeof v==="function"?v.bind(t):v;
     }});
   };
-  if(typeof client.rpc==="function"){const realRpc=client.rpc.bind(client);client.rpc=function(){if(_syncReviewPending){_blockedDbWrites++;return noop;}return realRpc.apply(client,arguments);};}
+  if(typeof client.rpc==="function"){const realRpc=client.rpc.bind(client);client.rpc=function(){if(_restoreHold&&/^apply_/.test(String(arguments[0]||""))&&_restoreHoldActive())return noop;if(_syncReviewPending){_blockedDbWrites++;return noop;}return realRpc.apply(client,arguments);};}
   return client;
 }
 function setStatus(txt,color){
@@ -22171,6 +22208,7 @@ async function _freshLiveAssignmentsForReview(keys){
 }
 async function pushPending(opts){ opts=opts||{}; if(!DB){uiAlert("Connect a Supabase project first (Sync & data).");return {failed:true};}
   if(!opts.fromReview){console.warn("pushPending refused: it is only sent from the review (reviewAndUpload / connect).");return {failed:true};}
+  _setRestoreHold(false);/* the review happened: the restored items may go up */
   _reviewUploadInProgress=true;_beginFullPushRetry();
   const _secs=opts.sections?new Set(opts.sections):null;
   const _want=k=>!_secs||_secs.has(k);
@@ -22384,6 +22422,9 @@ const SHARED_APP_CFG_KEYS=[
   // for that sibling map (different devices are typically learning DIFFERENT, new names, so genuine conflicts
   // are rare, and this app already carries that same acceptable risk for this exact shape of data).
   "pcvDirectory",
+  // Approved leave records (LEAVES). Mirrored here by _mirrorLeavesToCfg() on every add/remove so they ride the same
+  // read-merge-write push as every other shared setting; pushConfig() merges this key per record (see _mergeApprovedLeaves).
+  "approvedLeaves",
   // Positions (Paycom schedule groups) typed in the same Convert table, for anyone whose roster Role is not the
   // right schedule group or who is not on a roster. Same plain overwrite-on-push/pull treatment as pcvDirectory.
   "pcvPositions",
@@ -22665,7 +22706,7 @@ const APP_WIDE_SETTING_LABELS={
   hideLeaveTypeReasonFromViewers:"Hide leave type/reason from viewers",hideShiftBidsFromViewers:"Hide shift bidding from viewers",
   otDisplayMode:"Overtime display mode",overstaffEnabled:"Overstaff flagging enabled",overstaffMargin:"Overstaff margin",
   paycomAppCodeAlias:"Paycom app-code alias",paycomDeptCode:"Paycom department code",paycomEarnCodeMap:"Paycom earning-code map",
-  paycomEmployeeIdType:"Paycom employee ID type",pcvPositions:"Paycom positions",pcvDirectory:"Remembered employee numbers and departments",paycomLunchMode:"Paycom lunch anchor mode",paycomLunchStart:"Paycom lunch break clock-time (IL/OL)",paycomLunchHoursAfterStart:"Paycom lunch hours after shift start (IL/OL)",paycomNameAliases:"Paycom name aliases",
+  paycomEmployeeIdType:"Paycom employee ID type",pcvPositions:"Paycom positions",approvedLeaves:"Approved leave records",pcvDirectory:"Remembered employee numbers and departments",paycomLunchMode:"Paycom lunch anchor mode",paycomLunchStart:"Paycom lunch break clock-time (IL/OL)",paycomLunchHoursAfterStart:"Paycom lunch hours after shift start (IL/OL)",paycomNameAliases:"Paycom name aliases",
   sameDayOffCheckDaysByDept:"Same-day-off check days (by department)",sameDayOffNoteScope:"Same-day-off note scope",
   shiftBandCreditMode:"Shift-band credit mode",taskCodesCombineTime:"Task codes combine with time",
   unpaidBreakMinShiftHours:"Unpaid break applies from (hours)",draftWeeks:"Weeks hidden from view-only users",
@@ -23045,7 +23086,7 @@ function _dateKeyOfDiffLine(line){
   if(m)return {key:m[1],label:"Week of "+m[1]};
   return null;
 }
-function _renderCategoryItemsList(items){
+function _renderCategoryItemsList(items,pick,W){
   // Only worth a second level once there is enough to sort through, and only when the lines genuinely span
   // more than one week - otherwise every line would sit under a single heading saying what the category
   // already said.
@@ -23059,24 +23100,30 @@ function _renderCategoryItemsList(items){
     });
     if(groups.size>1&&undated===0){
       return [...groups.entries()].sort((a,b)=>(a[0]<b[0]?1:-1)).map(([k,g])=>
-        `<details class="diffReviewList" style="margin-top:3px"${g.items.length<=3?" open":""}><summary style="cursor:pointer;opacity:.85"><b>${esc(g.label)}</b> (${g.items.length})</summary>${_renderPlainItemsList(g.items)}</details>`
+        `<details class="diffReviewList" style="margin-top:3px"${g.items.length<=3?" open":""}><summary style="cursor:pointer;opacity:.85"><b>${esc(g.label)}</b> (${g.items.length})</summary>${_renderPlainItemsList(g.items,pick,W)}</details>`
       ).join("");
     }
   }
-  return _renderPlainItemsList(items);
+  return _renderPlainItemsList(items,pick,W);
 }
 // One list item per line. A line that carries a "\u0001" marker shows the text before it and expands to the text after it
 // (used for "38 people" and for long date lists). Any other line that is very long or runs past four rows collapses the
 // same way, with its first row as the summary, so no category ever shows a wall of text or a truncated "and N more".
-function _renderPlainItemsList(items){
+function _renderPlainItemsList(items,pick,W){
   const strip=t=>String(t).replace(/^App-wide setting \u2014 /,"");
+  const word=t=>W?W.line(t):t;
+  const cb=x=>{if(!pick)return "";const ids=pick.idsOf(x);return ids&&ids.length?`<input type="checkbox" class="cbx diffItemPick" data-ids="${esc(ids.join(","))}" ${pick.checked(ids)?"checked":""}>`:"";};
   const li=x=>{
     const t=String(x);let head=null,body=null;
     const m=t.indexOf("\u0001");
     if(m>=0){head=t.slice(0,m);body=t.slice(m+1);}
     else if(t.split("\n").length>4){head=t.split("\n")[0];body=t;}
-    if(head===null)return `<li style="margin-bottom:4px;line-height:1.5;white-space:pre-line;padding-left:14px;text-indent:-14px">${esc(strip(t))}</li>`;
-    return `<li style="list-style:none;margin:0 0 4px -14px;line-height:1.5"><details><summary style="cursor:pointer" title="Click to expand">${esc(strip(head))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(body))}</div></details></li>`;
+    if(pick){
+      if(head===null)return `<li style="list-style:none;margin:0 0 4px -20px;line-height:1.5"><label style="display:flex;flex-wrap:nowrap;gap:8px;align-items:flex-start;cursor:pointer">${cb(x)}<span style="white-space:pre-line;min-width:0">${esc(strip(word(t)))}</span></label></li>`;
+      return `<li style="list-style:none;margin:0 0 4px -20px;line-height:1.5"><div style="display:flex;flex-wrap:nowrap;gap:8px;align-items:flex-start">${cb(x)}<details style="flex:1;min-width:0"><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></div></li>`;
+    }
+    if(head===null)return `<li style="margin-bottom:4px;line-height:1.5;white-space:pre-line;padding-left:14px;text-indent:-14px">${esc(strip(word(t)))}</li>`;
+    return `<li style="list-style:none;margin:0 0 4px -14px;line-height:1.5"><details><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></li>`;
   };
   return `<ul class="diffReviewList" style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(li).join("")}</ul>`;
 }
@@ -23157,6 +23204,138 @@ function _collapseScheduleLines(changes,conflicts){
   keep.forEach(l=>{outCh.push(l);if(conf.has(l))outCf.push(l);});
   return {changes:outCh,conflicts:outCf};
 }
+/* ===== ONE SET OF RULES FOR EVERY LIST OF DIFFERENCES =====
+   The upload review, the restore window and the comparison window show differences the same way: the lines are written by analyzeUploadChanges and
+   analyzeCfgChanges (so every field they know about is listed, including demand events and transportation), the sections and categories come in the same
+   order, conflicts are shown apart from other changes, long lists are grouped by week, and each section is the same card. A window chooses only its
+   own wording (W) and whether items carry checkboxes (pick). Lines are always written in the engine's own words ("local" and "live") and
+   re-worded only when shown, so a line's category never depends on the window. */
+const _DIFF_SECTIONS=[
+  {k:"people",t:"Roster people",tip:"Who is on each roster: people added here, people deleted here, and who is active or inactive. People who exist only on live are kept unless deleted here.",cats:["Staff added locally, not on live","Staff on live, not local","Staff status"]},
+  {k:"details",t:"Roster details",tip:"What is recorded about people who are on both rosters: role, rate, hire date, notes, and dates off you entered. Active or inactive is under Roster people.",cats:["Staff roster","Staff availability"]},
+  {k:"settings",t:"Settings",cats:["Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings"]},
+  {k:"schedule",t:"Schedule",cats:["Schedule","Check-ins"]},
+  {k:"demand",t:"Demand",cats:["Demand"]},
+  {k:"leave",t:"Leave requests",cats:["Leave requests"]},
+  {k:"extras",t:"Additional app data",cats:["Additional app data"]}
+];
+const _DIFF_WORDING_UPLOAD={conflictTitle:"Conflicts \u2014 live holds a different value",otherTitle:"Other local changes",plainTitle:"Local changes",noun:"local change",line:l=>l,catLabel:c=>c};
+function _diffWording(local,other,extra){
+  const re=(l)=>String(l).replace(/\blocal\b/g,local).replace(/\blive\b/g,other).replace(/^(Check-ins \u2014 .*?): current (\d+ day\(s\)) \u00b7 backup /,"$1: "+local+" $2 \u00b7 "+other+" ");
+  return Object.assign({conflictTitle:"Conflicts",otherTitle:"Other changes",plainTitle:"Changes",noun:"change",line:re,catLabel:c=>c},extra||{});
+}
+function _diffSectionsModel(changes,conflicts){
+  const cf=new Set(conflicts||[]);
+  return _DIFF_SECTIONS.map(S=>{const o=Object.assign({},S);o.items=(changes||[]).filter(x=>S.cats.indexOf(_categorizeConflictLine(x))>=0);o.conf=o.items.filter(x=>cf.has(x));o.other=o.items.filter(x=>!cf.has(x));return o;});
+}
+function _diffSectionBodyHtml(S,W,pick){
+  const byCat={};S.items.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
+  return _CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
+    const catItems=byCat[c],catConf=catItems.filter(x=>S.conf.indexOf(x)>=0),catOther=catItems.filter(x=>S.conf.indexOf(x)<0);
+    const openAttr=catItems.length<=2?" open":"";
+    const block=(title,list,color)=>list.length?`<div class="small" style="margin-top:4px"><b${color?` style="color:${color}"`:""}>${title}</b></div>${_renderCategoryItemsList(list,pick,W)}`:"";
+    return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(W.catLabel(c))}</b> (${nfmt(catItems.length)})</summary><div style="margin-top:2px;margin-left:4px">${block(W.conflictTitle,catConf,"#b30000")}${block(catConf.length?W.otherTitle:W.plainTitle,catOther,"")}</div></details>`;
+  }).join("");
+}
+/* o: {W, pick, tick, disabled, mt, note, noCheck} */
+function _diffSectionCardHtml(S,o){
+  const W=o.W||_DIFF_WORDING_UPLOAD;
+  const counts=(S.conf.length?`<span style="color:#b30000">${nfmt(S.conf.length)} conflict${S.conf.length===1?"":"s"}</span>`:"")
+    +(S.conf.length&&S.other.length?" \u00b7 ":"")+(S.other.length?`${nfmt(S.other.length)} ${S.conf.length?"additional ":""}${W.noun}${S.other.length===1?"":"s"}`:"");
+  const headStyle="padding:6px 8px;background:#f3f6fa;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:3;border-bottom:1px solid var(--line)";
+  const head=o.noCheck
+    ?`<div ${S.tip?`title="${esc(S.tip)}"`:""} style="${headStyle}"><b>${S.t}</b><span class="small" style="margin-left:6px">\u2014 ${counts}</span></div>`
+    :`<label ${S.tip?`title="${esc(S.tip)}"`:""} style="display:flex;align-items:center;${headStyle.replace("padding:6px 8px;","padding:6px 8px;cursor:pointer;")}"><input type="checkbox" class="cbx ucSecChk" data-sec="${S.k}" ${o.tick?"checked":""} ${o.disabled?"disabled":""}><b style="margin-left:6px">${S.t}</b><span class="small" style="margin-left:6px">\u2014 ${counts}</span></label>`;
+  return `<div class="ucSec" style="border:1px solid var(--line);border-radius:6px;margin:${o.mt||"0"} 0 6px">
+        ${head}
+        <div style="padding:2px 8px 6px;font-size:11.5px">${o.note||""}${_diffSectionBodyHtml(S,W,o.pick)}</div>
+      </div>`;
+}
+/* ---- restore window: one line (or a few) per restore item, written by the same engine ---- */
+const _DIFF_WORDING_RESTORE=_diffWording("current","backup",{conflictTitle:"Conflicts \u2014 restoring replaces or erases a value on this device",otherTitle:"Other changes",plainTitle:"Changes",noun:"change",
+  catLabel:c=>c==="Staff added locally, not on live"?"Staff only on this device":c==="Staff on live, not local"?"Staff only in the backup":c});
+function _extraSize(v){
+  if(Array.isArray(v))return v.length;
+  if(v&&typeof v==="object"){let n=0;const walk=(o,d)=>{Object.keys(o).forEach(k=>{const x=o[k];if(Array.isArray(x))n+=x.length;else if(x&&typeof x==="object"&&d<4)walk(x,d+1);else n++;});};walk(v,0);return n;}
+  return v==null||v===""?0:1;
+}
+function _restoreOpLines(op){
+  const res={lines:[],conf:false},dl=deptLabel(op.dept||"");
+  const blank=v=>v==null||v===""||(typeof v==="object"&&!Object.keys(v).length);
+  const take=r=>{(r.changes||[]).forEach(x=>res.lines.push(x));if((r.conflicts||[]).length)res.conf=true;};
+  try{
+    if(op.kind==="schedule"){
+      const c=_assignmentDateView(ASSIGN,op.dept).get(op.person+"\u0000"+op.dateFrom),cv=(c&&c.value)||"",bv=op.target==null?"":op.target;
+      const a={},b={};if(cv!=="")_setScheduleDateValue(a,op.dept,op.person,op.dateFrom,cv);if(bv!=="")_setScheduleDateValue(b,op.dept,op.person,op.dateFrom,bv);
+      take(analyzeUploadChanges({assign:a},{assign:b}));if(cv!==""&&bv==="")res.conf=true;
+    }else if(op.kind==="demand"){
+      const cur=((_demandDateView(DEMAND).get(op.dateFrom)||{}).fields||{})[op.field],mk=v=>{const s={};if(v!=null&&v!==""){const dt=new Date(op.dateFrom+"T00:00:00"),ws=mondayOfWeekStartThu(dt,"FO");s[weekKey(ws)]={[Math.round((dt-ws)/86400000)]:{[op.field]:v}};}return s;};
+      take(analyzeUploadChanges({demand:mk(cur)},{demand:mk(op.target)}));if(!blank(cur)&&blank(op.target))res.conf=true;
+    }else if(op.kind==="leave"){
+      const cur=LEAVE_REQUESTS[op.key];
+      take(analyzeUploadChanges({leaveRequests:cur&&!_emptyLeaveRequestRecord(cur)?{[op.key]:cur}:{}},{leaveRequests:op.target?{[op.key]:op.target}:{}}));if(cur&&!op.target)res.conf=true;
+    }else if(op.kind==="checkins"){
+      const cur=((((CHECKINS||{})[op.dept]||{})[op.week])||{})[op.person]||{},bak=op.target||{};
+      _backupCheckinDiff({[op.dept]:{[op.week]:{[op.person]:cur}}},{[op.dept]:{[op.week]:{[op.person]:bak}}}).forEach(x=>res.lines.push(x));if(Object.keys(cur).length&&!Object.keys(bak).length)res.conf=true;
+    }else if(op.kind==="roster"){
+      const D=CFG[op.dept]||{},cu=(D.staff||[]).find(x=>x.n===op.person),c=cu?_backupStaffCore(cu):null,b=op.target||null;
+      if(c&&!b){res.lines.push(`${dl} roster: ${op.person} \u2014 local only`);res.conf=true;}
+      else if(!c&&b)res.lines.push(`${dl} roster: ${op.person} \u2014 live only`);
+      else if(c&&b){
+        const stat=x=>x.employed===false?("inactive"+(x.inactiveSince?" since "+x.inactiveSince:"")):"active";
+        if(stat(c)!==stat(b)){res.lines.push(`${dl} status: ${op.person} \u2014 local ${stat(c)} \u00b7 live ${stat(b)}`);res.conf=true;}
+        const fields=[...new Set([...Object.keys(c),...Object.keys(b)])].filter(f=>f!=="n"&&f!=="employed"&&f!=="inactiveSince"&&!_staffFieldMeansSame(f,c[f],b[f]));
+        if(fields.length){res.lines.push(`${dl} roster: ${op.person} \u2014 `+fields.map(f=>`${STAFF_FIELD_LABELS[f]||f}: local ${humanizeDiffValue(c[f]??null)} \u00b7 live ${humanizeDiffValue(b[f]??null)}`).join("; "));res.conf=true;}
+      }
+    }else if(op.kind==="availDate"||op.kind==="staffField"){
+      const mk=v=>({[op.dept]:{label:dl,staff:[Object.assign({n:op.person},op.kind==="availDate"?{availDates:v==null?{}:{[op.key]:v}}:(v==null?{}:{[op.field]:v}))]}});
+      const st=(CFG[op.dept].staff||[]).find(x=>x.n===op.person)||{},cur=op.kind==="availDate"?(st.availDates||{})[op.key]:st[op.field];
+      take(analyzeCfgChanges(mk(cur),mk(op.target)));if(!blank(cur)&&blank(op.target))res.conf=true;
+    }else if(op.kind==="deptSettings"){
+      const cur=JSON.parse(JSON.stringify(CFG[op.dept]||{}));delete cur.staff;const bak=JSON.parse(JSON.stringify(op.target||{}));delete bak.staff;
+      cur.label=cur.label||dl;bak.label=bak.label||cur.label;take(analyzeCfgChanges({[op.dept]:cur},{[op.dept]:bak}));
+    }else if(op.kind==="appSetting"){
+      take(analyzeCfgChanges({appWide:{[op.key]:CFG[op.key]}},{appWide:{[op.key]:op.target}}));
+    }else if(op.kind==="extra"){
+      const spec=_FULL_BACKUP_EXTRA_SPECS.find(x=>x[0]===op.key),a=_extraSize(spec?spec[2]():null),bz=_extraSize(op.target);
+      res.lines.push(`Additional app data \u2014 ${spec?spec[1]:op.key}: local ${nfmt(a)} item${a===1?"":"s"} \u00b7 live ${nfmt(bz)} item${bz===1?"":"s"}`);if(bz<a)res.conf=true;
+    }
+  }catch(e){_swallow("restore item line",e);}
+  if(!res.lines.length)res.lines.push(String(op.label||"Item").replace(/\bcurrent\b/g,"local").replace(/\bbackup\b/g,"live"));
+  return res;
+}
+function _showBackupItemReview(plan){return new Promise(res=>{
+  const W=_DIFF_WORDING_RESTORE,from0=weekKey(WEEK_START),to0=weekKey(dayDate(6));
+  plan.forEach(op=>{const r=_restoreOpLines(op);op._lines=r.lines;op._conf=r.conf;});
+  const picked=new Set(),bg=document.createElement("div");bg.className="modalbg";bg.id="backupItemReviewModal";bg.style.display="flex";
+  const live=!!DB,waiting=live&&_hasLocalSyncWork();
+  bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><h2>Restore selected backup items</h2>
+    <div class="small muted">Each line shows what this device holds now (<b>current</b>) and what the backup would put there (<b>backup</b>). Conflicts replace or erase a value on this device. The date range filters dated items; roster and settings items remain visible. Nothing changes until Restore selected items is confirmed.${live?" This device is connected: restored items stay on this device until you press Review & upload in the header.":" When you connect, you will be asked to review restored items before anything replaces live data."}${waiting?" This device already has changes waiting to upload; restored items join them.":""}</div>
+    <div class="exportDateRow" style="margin-top:8px"><label class="small">From <input type="date" id="backupItemFrom" class="sfield" value="${from0}"></label><label class="small">To <input type="date" id="backupItemTo" class="sfield" value="${to0}"></label></div>
+    <div id="backupItemList" style="margin-top:8px;max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px 6px 0"></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:12px;gap:6px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Restore selected items</button></div></div>`;
+  document.body.appendChild(bg);
+  const box=bg.querySelector("#backupItemList");let lineIds=new Map();
+  const idsOf=line=>{const t=String(line),m=t.indexOf("\u0001");if(m>=0)return t.slice(m+1).split("\n").reduce((a,l)=>a.concat(lineIds.get(l)||[]),[]);return lineIds.get(t)||[];};
+  const pick={idsOf,checked:ids=>ids.length>0&&ids.every(i=>picked.has(i))};
+  const refreshOk=()=>{const b=bg.querySelector('[data-c="ok"]');if(b)b.textContent=picked.size?`Restore selected items (${nfmt(picked.size)})`:"Restore selected items";};
+  const render=()=>{
+    const f=bg.querySelector("#backupItemFrom").value,t=bg.querySelector("#backupItemTo").value,shown=plan.filter(o=>_backupOpInRange(o,f,t));
+    lineIds=new Map();const changes=[],conflicts=[];
+    shown.forEach(op=>op._lines.forEach(l0=>{let l=l0;while(lineIds.has(l)&&lineIds.get(l).indexOf(op.id)<0)l+="\u200b";if(!lineIds.has(l))lineIds.set(l,[]);lineIds.get(l).push(op.id);changes.push(l);if(op._conf)conflicts.push(l);}));
+    const c2=_collapseScheduleLines(changes,conflicts),secs=_diffSectionsModel(c2.changes,c2.conflicts).filter(S=>S.items.length);
+    box.innerHTML=secs.map((S,i)=>{const ids=[...new Set(S.items.reduce((a,x)=>a.concat(idsOf(x)),[]))];return _diffSectionCardHtml(S,{W,pick,tick:ids.length&&ids.every(x=>picked.has(x)),mt:i?"0":"6px"});}).join("")||'<div class="small muted">No differences in this date range.</div>';
+    box.querySelectorAll(".ucSecChk").forEach(x=>{const S=secs.find(s=>s.k===x.dataset.sec),ids=[...new Set(S.items.reduce((a,y)=>a.concat(idsOf(y)),[]))],n=ids.filter(i=>picked.has(i)).length;x.indeterminate=n>0&&n<ids.length;
+      x.onchange=()=>{ids.forEach(i=>x.checked?picked.add(i):picked.delete(i));render();refreshOk();};});
+    box.querySelectorAll(".diffItemPick").forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.onchange=()=>{ids.forEach(i=>x.checked?picked.add(i):picked.delete(i));render();refreshOk();};});
+    refreshOk();
+  };
+  bg.querySelector("#backupItemFrom").onchange=render;bg.querySelector("#backupItemTo").onchange=render;render();
+  const done=v=>{bg.remove();res(v);},okClick=()=>{if(!picked.size){uiAlert("Select at least one item to restore.");return;}done(new Set(picked));};
+  bg.querySelector('[data-c="cancel"]').onclick=()=>done(null);bg.querySelector('[data-c="ok"]').onclick=okClick;
+  bg.addEventListener("mousedown",e=>{if(e.target===bg)done(null);});
+  _wireModalKeys(bg,()=>done(null),()=>{const a=document.activeElement;if(a&&a.tagName==="INPUT"&&a.type==="date"){a.blur();return;}okClick();});
+});}
 function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,safety,noPending){
   {const _c=_collapseScheduleLines(changes,conflicts);changes=_c.changes;conflicts=_c.conflicts;}
   return new Promise(res=>{
@@ -23193,27 +23372,11 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     };
     // A category is rendered once per section. Conflict and non-conflict labels sit inside that one category,
     // preventing duplicate headings such as two separate App-wide settings groups in the same review.
-    const sectionBody=S=>{
-      const byCat={};S.items.forEach(x=>{const c=_categorizeConflictLine(x);(byCat[c]=byCat[c]||[]).push(x);});
-      return _CONFLICT_CATEGORY_ORDER.filter(c=>byCat[c]&&byCat[c].length).map(c=>{
-        const catItems=byCat[c],catConf=catItems.filter(x=>S.conf.indexOf(x)>=0),catOther=catItems.filter(x=>S.conf.indexOf(x)<0);
-        const openAttr=catItems.length<=2?" open":"";
-        const block=(title,list,color)=>list.length?`<div class="small" style="margin-top:4px"><b${color?` style="color:${color}"`:""}>${title}</b></div>${_renderCategoryItemsList(list)}`:"";
-        return `<details style="margin-top:4px"${openAttr}><summary style="cursor:pointer;font-size:11px"><b>${esc(c)}</b> (${nfmt(catItems.length)})</summary><div style="margin-top:2px;margin-left:4px">${block("Conflicts \u2014 live holds a different value",catConf,"#b30000")}${block(catConf.length?"Other local changes":"Local changes",catOther,"")}</div></details>`;
-      }).join("");
-    };
     // The six sections the upload can be split into. Every itemized line belongs to exactly one, by its category.
     // Roster people is who is on each roster (people added here, people deleted here); Roster details is what is
     // recorded about people who are on both lists. They are separate so details can go up without adding or removing
     // anyone on live, or the reverse.
-    const SECS=[
-      {k:"people",t:"Roster people",tip:"Who is on each roster: people added here, people deleted here, and who is active or inactive. People who exist only on live are kept unless deleted here.",cats:["Staff added locally, not on live","Staff on live, not local","Staff status"]},
-      {k:"details",t:"Roster details",tip:"What is recorded about people who are on both rosters: role, rate, hire date, notes, and dates off you entered. Active or inactive is under Roster people.",cats:["Staff roster","Staff availability"]},
-      {k:"settings",t:"Settings",cats:["Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings"]},
-      {k:"schedule",t:"Schedule",cats:["Schedule","Check-ins"]},
-      {k:"demand",t:"Demand",cats:["Demand"]},
-      {k:"leave",t:"Leave requests",cats:["Leave requests"]}
-    ];
+    const SECS=_DIFF_SECTIONS.map(S=>Object.assign({},S));
     const unsafe=!!(safety&&!safety.safe);
     SECS.forEach(S=>{
       S.items=changes.filter(x=>S.cats.indexOf(_categorizeConflictLine(x))>=0);
@@ -23230,12 +23393,8 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       const risky=S.conf.length>0||(_isRoster&&unsafe);
       // With no unsynced edits nothing is a known local change, so nothing starts ticked.
       const tick=!risky&&!noPending;
-      const counts=(S.conf.length?`<span style="color:#b30000">${nfmt(S.conf.length)} conflict${S.conf.length===1?"":"s"}</span>`:"")
-        +(S.conf.length&&S.other.length?" \u00b7 ":"")+(S.other.length?`${nfmt(S.other.length)} ${S.conf.length?"additional ":""}local change${S.other.length===1?"":"s"}`:"");
-      return `<div class="ucSec" style="border:1px solid var(--line);border-radius:6px;margin:${_mt} 0 6px">
-        <label ${S.tip?`title="${esc(S.tip)}"`:""} style="display:flex;align-items:center;padding:6px 8px;cursor:pointer;background:#f3f6fa;border-radius:6px 6px 0 0;position:sticky;top:0;z-index:3;border-bottom:1px solid var(--line)"><input type="checkbox" class="cbx ucSecChk" data-sec="${S.k}" ${tick?"checked":""} ${(_isRoster&&unsafe)?"disabled":""}><b style="margin-left:6px">${S.t}</b><span class="small" style="margin-left:6px">\u2014 ${counts}</span></label>
-        <div style="padding:2px 8px 6px;font-size:11.5px">${S.k==="people"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">Uploading adds people who are missing from the live copy and applies local active/inactive status. People found only on live are kept unless they were deleted on this device.</div>`:S.k==="details"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">For people on both rosters, uploading replaces live roster details with this device's values, except when a field is blank on this device.</div>`:""}${sectionBody(S)}</div>
-      </div>`;
+      const note=S.k==="people"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">Uploading adds people who are missing from the live copy and applies local active/inactive status. People found only on live are kept unless they were deleted on this device.</div>`:S.k==="details"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">For people on both rosters, uploading replaces live roster details with this device\'s values, except when a field is blank on this device.</div>`:"";
+      return _diffSectionCardHtml(S,{W:_DIFF_WORDING_UPLOAD,tick,disabled:(_isRoster&&unsafe),mt:_mt,note});
     }).join("");
     // Personal, device-only settings (own notification choices, expanded panels) are never part of any section.
     const cfgBlock=(cfgChanged&&SECS.some(S=>S.shown))?`<div class="small muted" style="margin-top:4px">\u2139\ufe0f Personal, device-only settings (e.g. your own notification choices, or which panels are expanded) are never uploaded and are not listed.</div>`:"";
@@ -23393,7 +23552,7 @@ function _downloadDiscardedLocalBackup(){
 async function maybeUploadOnConnect(fromOnlineEvent,review,opt){
   if(!_hasLocalSyncWork()&&!review)return;
   if(_syncReviewFlowPromise)return _syncReviewFlowPromise;
-  const run=(async()=>{_syncReviewPending=true;try{return await _maybeUploadOnConnect(fromOnlineEvent,review,opt);}finally{_syncReviewPending=false;try{syncNav();}catch(e){}}})();
+  const run=(async()=>{_syncReviewPending=true;try{return await _maybeUploadOnConnect(fromOnlineEvent,review,opt);}finally{_syncReviewPending=false;try{_restoreHoldActive();}catch(e){}try{syncNav();}catch(e){}}})();
   _syncReviewFlowPromise=run;
   try{return await run;}finally{if(_syncReviewFlowPromise===run)_syncReviewFlowPromise=null;}
 }
@@ -24045,8 +24204,20 @@ let _awayChangesDismissed=false;
 let _realtimeDiffBefore=null,_realtimeDiffTimer=null;
 function _appendReceivedDifferences(lines){const incoming=(lines||[]).filter(Boolean);if(!incoming.length)return;_awayChanges=[...new Set(_awayChanges.concat(incoming))];_awayChangesDismissed=false;try{renderAwayChangesBadge();}catch(e){}}
 function _sharedCfgSnapshot(){const appWide={};SHARED_APP_CFG_KEYS.forEach(k=>{appWide[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return {FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),DB:JSON.parse(JSON.stringify(CFG.DB)),appWide};}
-function _beginRealtimeDiffBatch(){if(_realtimeDiffBefore)return;_realtimeDiffBefore={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS)),cfg:_sharedCfgSnapshot()};}
-function _finishRealtimeDiffBatch(){clearTimeout(_realtimeDiffTimer);_realtimeDiffTimer=null;const before=_realtimeDiffBefore;_realtimeDiffBefore=null;if(!before)return;const after={assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,cfg:_sharedCfgSnapshot()},sched=analyzeUploadChanges(before,after,{suppressOwnRecentEdits:true}),cfg=analyzeCfgChanges(before.cfg,after.cfg);_appendReceivedDifferences(sched.changes.concat(cfg.changes));}
+/* PATCH rev6: the before-snapshot of a pull / realtime batch predates any edit made while it was in flight, so that edit would be reported as received from live. Anything this device edited since the snapshot was taken is taken as already known on the before side. */
+function _overlayOwnEditsSince(before,after,since){
+  try{
+    if(!before||!after||!since)return;
+    const cl=x=>x===undefined?undefined:JSON.parse(JSON.stringify(x));
+    Object.keys(_demandDirtyStamp||{}).forEach(wk=>{if(_demandDirtyStamp[wk]>=since){const v=cl((after.demand||{})[wk]);if(v===undefined)delete before.demand[wk];else before.demand[wk]=v;}});
+    Object.keys(_leaveEditStamp||{}).forEach(id=>{if(_leaveEditStamp[id]>=since){const v=cl((after.leaveRequests||{})[id]);if(v===undefined)delete before.leaveRequests[id];else before.leaveRequests[id]=v;}});
+    const cs=_cfgDirtyStamp||{};
+    ["FO","HSK","DB","appWide"].forEach(sc=>{if(cs[sc]>=since&&before.cfg&&after.cfg&&after.cfg[sc]!==undefined)before.cfg[sc]=cl(after.cfg[sc]);});
+  }catch(e){}
+}
+var _realtimeDiffStartedAt=0;
+function _beginRealtimeDiffBatch(){if(_realtimeDiffBefore)return;_realtimeDiffStartedAt=Date.now();_realtimeDiffBefore={assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS)),cfg:_sharedCfgSnapshot()};}
+function _finishRealtimeDiffBatch(){clearTimeout(_realtimeDiffTimer);_realtimeDiffTimer=null;const before=_realtimeDiffBefore;_realtimeDiffBefore=null;if(!before)return;const after={assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,cfg:_sharedCfgSnapshot()};_overlayOwnEditsSince(before,after,_realtimeDiffStartedAt);const sched=analyzeUploadChanges(before,after,{suppressOwnRecentEdits:true}),cfg=analyzeCfgChanges(before.cfg,after.cfg);_appendReceivedDifferences(sched.changes.concat(cfg.changes));}
 function _scheduleRealtimeDiffFinish(){clearTimeout(_realtimeDiffTimer);_realtimeDiffTimer=setTimeout(_finishRealtimeDiffBatch,900);}
 function _liveReceivedLine(line){return String(line).replace(/\blocal\b/g,"before").replace(/\blive\b/g,"live received");}
 function _everPulledBefore(){try{return localStorage.getItem("hotel_everPulled")==="1";}catch(e){return false;}}
@@ -24225,7 +24396,7 @@ function _applyRowEvent(kind,payload){
   return changed;
 }
 let _refetchQueue=[],_refetchTimer=null;
-function _refetchRowSoon(kind,p){_refetchQueue.push([kind,p]);if(_refetchTimer)return;_refetchTimer=setTimeout(async()=>{_refetchTimer=null;const q=_refetchQueue.splice(0,200);for(const [k,pp] of q){const _t0=Date.now(),_qk=k+"|"+_kindKey(k,pp);const r=await _readRow(k,pp);if((_ownWriteDoneAt.get(_qk)||0)>=_t0){_refetchRowSoon(k,pp);continue;}if(r.ok&&!_deferIfWriting(k,pp)&&_ingest(k,pp,r.exists?r.days:null,!r.exists)){try{_refreshUndoBaselineAfterRemote();}catch(e){}_renderRemote();}}},50);}
+function _refetchRowSoon(kind,p){_refetchQueue.push([kind,p]);if(_refetchTimer)return;_refetchTimer=setTimeout(async()=>{_refetchTimer=null;const q=_refetchQueue.splice(0,200);for(const [k,pp] of q){const _t0=Date.now(),_qk=k+"|"+_kindKey(k,pp);const r=await _readRow(k,pp);if((_ownWriteDoneAt.get(_qk)||0)>=_t0){_refetchRowSoon(k,pp);continue;}if(r.ok&&!_deferIfWriting(k,pp)){/* PATCH rev5: report refetched rows on the received-differences badge */try{_beginRealtimeDiffBatch();}catch(eB){}if(_ingest(k,pp,r.exists?r.days:null,!r.exists)){try{_refreshUndoBaselineAfterRemote();}catch(e){}_renderRemote();}try{_scheduleRealtimeDiffFinish();}catch(eB){}}}},50);}
 function _deferIfWriting(kind,p){const qk=kind+"|"+_kindKey(kind,p);if(!_rowWriteQueues.has(qk))return false;_needRefetch.set(qk,[kind,p]);return true;}
 async function _readRow(kind,p){
   try{
@@ -24382,8 +24553,21 @@ async function _verifyEventsDuringPull(){
 }
 /* ---- upload of this device's pending changes (cell-level, safe to repeat) ---- */
 function _scheduleFlushRetry(ms){clearTimeout(_flushTimer);_flushTimer=setTimeout(()=>{_flushTimer=null;_autoFlushDirty("retry");},ms||4000);}
+/* RESTORE HOLD. Items brought in from a backup are marked as unsent like any other local change, and a connected device uploads unsent changes in
+   the background (after a pull, on resume, on a timer). A restore must not reach live that way: the window promises a review first. While the hold is on,
+   background and edit-time writes of schedule, demand, check-in, leave and shared-settings data are held on this device, and the header offers
+   Review & upload. The hold ends when a review upload starts or when nothing is waiting any more (for example after Discard local). It survives a reload. */
+var _restoreHold=(function(){try{return localStorage.getItem("hotel_restore_hold")==="1";}catch(e){return false;}})();
+const _RESTORE_HELD_TABLES=new Set(["assignments","demand","checkins","leave_requests"]);
+function _setRestoreHold(v){_restoreHold=!!v;try{if(v)localStorage.setItem("hotel_restore_hold","1");else localStorage.removeItem("hotel_restore_hold");}catch(e){}try{_applySyncUiState();}catch(e){}}
+function _restoreHoldActive(){
+  if(!_restoreHold)return false;
+  try{if(!_hasLocalSyncWork()){_setRestoreHold(false);return false;}}catch(e){}
+  return true;
+}
 async function _autoFlushDirty(reason){
   if(!DB)return;
+  if(_restoreHoldActive())return;
   if(_flushInFlight){_flushAgain=true;return;}
   if(_syncReviewPending||_awaitingSyncChoice||_reviewUploadInProgress||_v23ReviewRequired||_workweekSyncPending>0)return;
   if(typeof navigator!=="undefined"&&navigator.onLine===false)return;
@@ -24637,6 +24821,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
   // this specific sync, the correct baseline for "what changed while I was away" (as opposed to
   // maybeUploadOnConnect()'s OWN, separate snapshot, which serves a different purpose: preserving a genuinely
   // pending LOCAL edit so it isn't silently lost — see that function's own comment).
+  const _awaySnapStartedAt=Date.now();
   const _awaySnapBefore=computeAwayBadge?{
     assign:JSON.parse(JSON.stringify(ASSIGN)),demand:JSON.parse(JSON.stringify(DEMAND)),leaveRequests:JSON.parse(JSON.stringify(LEAVE_REQUESTS)),
     cfg:{FO:JSON.parse(JSON.stringify(CFG.FO)),HSK:JSON.parse(JSON.stringify(CFG.HSK)),DB:JSON.parse(JSON.stringify(CFG.DB)),appWide:(()=>{const o={};SHARED_APP_CFG_KEYS.forEach(k=>{o[k]=JSON.parse(JSON.stringify(CFG[k]??null));});return o;})()}
@@ -24933,6 +25118,7 @@ async function _pullAllInner(isRetry,computeAwayBadge,_myPullGen){
       // popup already uses, just with the roles reversed (here, "local" IS the before-snapshot and "live" IS the
       // after-snapshot, since there's no pending local edit to protect in this scenario at all).
       // suppressOwnRecentEdits applies ONLY here, to the away badge — see analyzeUploadChanges()'s own comment.
+      _overlayOwnEditsSince(_awaySnapBefore,_awaySnapAfter,_awaySnapStartedAt);
       const _sched=analyzeUploadChanges(_awaySnapBefore,_awaySnapAfter,{suppressOwnRecentEdits:true});
       const _cfgDiff=analyzeCfgChanges(_awaySnapBefore.cfg,_awaySnapAfter.cfg);
       const _received=[..._sched.changes,..._cfgDiff.changes];
@@ -25225,8 +25411,39 @@ async function _writeAppConfigCas(payload,token){
     return {ok:true};
   }catch(e){return {error:e};}
 }
+/* PATCH rev6: approved leave records sync. CFG.approvedLeaves is the shared copy; LEAVES stays the working copy the UI reads. */
+var _leavesCfgJson=null;
+function _leaveRecKey(r){return [r&&r.name,r&&r.code,r&&r.from,r&&r.to].join("|");}
+/* Three-way set merge per department: start from the shared copy, add what this device added since it last synced, drop what this device removed. Two devices adding different leave records both keep theirs. */
+function _mergeApprovedLeaves(mine,base,theirs){
+  const norm=x=>(x&&typeof x==="object"&&!Array.isArray(x))?x:{},out={};
+  mine=norm(mine);base=norm(base);theirs=norm(theirs);
+  new Set([...Object.keys(mine),...Object.keys(base),...Object.keys(theirs)]).forEach(d=>{
+    const M=Array.isArray(mine[d])?mine[d]:[],B=Array.isArray(base[d])?base[d]:[],T=Array.isArray(theirs[d])?theirs[d]:[];
+    const mk=new Map(M.map(r=>[_leaveRecKey(r),r])),bk=new Set(B.map(_leaveRecKey)),res=new Map();
+    T.forEach(r=>res.set(_leaveRecKey(r),r));
+    mk.forEach((r,k)=>{if(!bk.has(k)&&!res.has(k))res.set(k,r);});
+    bk.forEach(k=>{if(!mk.has(k))res.delete(k);});
+    out[d]=[...res.values()];
+  });
+  return out;
+}
+function _mirrorLeavesToCfg(){try{CFG.approvedLeaves=JSON.parse(JSON.stringify(LEAVES||{}));_leavesCfgJson=JSON.stringify(CFG.approvedLeaves);save("hotel_cfg",CFG);}catch(e){console.warn("leave mirror to settings skipped (non-fatal):",e);}}
+/* Applies a changed shared copy to LEAVES. Runs after every remote settings receive and after connect. */
+function _applyLeavesFromCfg(){
+  try{
+    const a=CFG&&CFG.approvedLeaves,j=JSON.stringify(a===undefined?null:a);
+    if(j===_leavesCfgJson)return;
+    _leavesCfgJson=j;
+    if(!a||typeof a!=="object"||Array.isArray(a))return;
+    if(typeof LEAVES==="undefined"||JSON.stringify(a)===JSON.stringify(LEAVES))return;
+    LEAVES=JSON.parse(JSON.stringify(a));
+    const p=_syncApplying;_syncApplying=true;try{save("hotel_leaves",LEAVES);}finally{_syncApplying=p;}
+    if(typeof VIEW!=="undefined"&&VIEW==="settings"&&typeof drawLeaveList==="function")try{drawLeaveList();}catch(e){}
+  }catch(e){}
+}
 async function pushConfig(opts){
-  if(!DB||_syncReviewPending)return;
+  if(!DB||_syncReviewPending||_restoreHoldActive())return;
   if(Date.now()<_cfgBlockedUntil)return;/* Live access policy B: refused recently, retry later instead of every few seconds */
   const _secs=(opts&&opts.sections)?new Set(opts.sections):null;
   const _want=k=>{if(!_secs)return true;if(k==="people"||k==="details")return _secs.has(k)||_secs.has("roster");return _secs.has(k);};
@@ -25300,6 +25517,7 @@ async function pushConfig(opts){
     // p:"" markers so an erase also wins over an older copy.
     const _remotePos=((remote||{}).appWide||{}).pcvPositions;
     if(_want("settings")&&(CFG.pcvPositions!==undefined||_remotePos!==undefined))appWide.pcvPositions=_pcvMergePositions(CFG.pcvPositions,_remotePos);
+    try{const _remoteLv=((remote||{}).appWide||{}).approvedLeaves;if(_want("settings")&&(CFG.approvedLeaves!==undefined||_remoteLv!==undefined)){const _mergedLv=_mergeApprovedLeaves(CFG.approvedLeaves,((_cfgSyncBase||{}).appWide||{}).approvedLeaves,_remoteLv);appWide.approvedLeaves=_mergedLv;CFG.approvedLeaves=JSON.parse(JSON.stringify(_mergedLv));_applyLeavesFromCfg();}}catch(eLv){console.warn("approved-leave merge skipped (non-fatal):",eLv);}
     // Saved numbers and departments are one record per person. A push made from the connect review (opts.sections) keeps
     // every record that exists only on live and lets this device's record win where both hold one, because the review
     // promises that anything only live holds is left in place; replacing the whole map would erase numbers another
@@ -25365,7 +25583,7 @@ async function pushConfig(opts){
       if(!_secs&&!_deliberateRosterChange&&_cfgSyncBase&&remote){
         const _bAW=_cfgSyncBase.appWide||{},_rAW=remote.appWide||{};
         SHARED_APP_CFG_KEYS.forEach(k=>{
-          if(String(k).charAt(0)==="_"||k==="pcvPositions"||k==="pcvDirectory")return;
+          if(String(k).charAt(0)==="_"||k==="pcvPositions"||k==="pcvDirectory"||k==="approvedLeaves")return;
           if(!_sameValue(appWide[k],_bAW[k])||_rAW[k]===undefined||_sameValue(appWide[k],_rAW[k]))return;
           appWide[k]=JSON.parse(JSON.stringify(_rAW[k]));_prefAdopt.push(k);
         });
@@ -25633,14 +25851,14 @@ function _backupRestorePlan(target){_backupPlanId.n=0;const ops=[],add=(o)=>{o.i
   _FULL_BACKUP_EXTRA_SPECS.forEach(([prop,label])=>{if(!_sameValue((_fullBackupExtrasSnapshot()||{})[prop],(target.extras||{})[prop]))add({section:"extras",kind:"extra",key:prop,target:JSON.parse(JSON.stringify((target.extras||{})[prop]??{})),label:"Additional app data — "+label});});return ops;}
 function dateAddIso(iso,n){const d=new Date(iso+"T00:00:00");d.setDate(d.getDate()+Number(n||0));return weekKey(d);}
 function _backupOpInRange(op,from,to){if(!op.dateFrom&&!op.dateTo)return true;return (!to||op.dateFrom<=to)&&(!from||(op.dateTo||op.dateFrom)>=from);}
-function _showBackupItemReview(plan){return new Promise(res=>{const labels={roster:"Staff roster & details",availability:"Availability",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests",checkins:"Check-ins",extras:"Additional app data"},order=["roster","availability","settings","schedule","demand","leave","checkins","extras"],bg=document.createElement("div");bg.className="modalbg";bg.id="backupItemReviewModal";bg.style.display="flex";const from=weekKey(WEEK_START),to=weekKey(dayDate(6));bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><h2>Restore selected backup items</h2><div class="small muted">Choose individual items. The date range filters dated items; roster and settings items remain visible. Nothing changes until Restore selected items is confirmed.</div><div class="exportDateRow" style="margin-top:8px"><label class="small">From <input type="date" id="backupItemFrom" class="sfield" value="${from}"></label><label class="small">To <input type="date" id="backupItemTo" class="sfield" value="${to}"></label></div><div id="backupItemList" class="diffReviewList" style="max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:8px"></div><div class="mrow" style="justify-content:flex-end;margin-top:12px"><button data-c="cancel">Cancel</button><button class="brand" data-c="ok">Restore selected items</button></div></div>`;document.body.appendChild(bg);const render=()=>{const f=bg.querySelector("#backupItemFrom").value,t=bg.querySelector("#backupItemTo").value,shown=plan.filter(o=>_backupOpInRange(o,f,t)),by={};shown.forEach(o=>(by[o.section]=by[o.section]||[]).push(o));bg.querySelector("#backupItemList").innerHTML=order.filter(k=>by[k]&&by[k].length).map(k=>`<details style="margin-top:6px" open><summary><label onclick="event.stopPropagation()"><input type="checkbox" class="cbx backupGroupPick" data-section="${k}"> <b>${esc(labels[k])}</b> (${nfmt(by[k].length)})</label></summary><div>${by[k].map(o=>`<label class="small" style="display:flex;gap:6px;align-items:flex-start;padding:3px 0"><input type="checkbox" class="cbx backupItemPick" data-id="${esc(o.id)}" data-section="${k}"><span>${esc(o.label)}</span></label>`).join("")}</div></details>`).join("")||'<div class="small muted">No differences in this date range.</div>';bg.querySelectorAll(".backupGroupPick").forEach(x=>x.onchange=()=>bg.querySelectorAll('.backupItemPick[data-section="'+x.dataset.section+'"]').forEach(y=>y.checked=x.checked));};bg.querySelector("#backupItemFrom").onchange=render;bg.querySelector("#backupItemTo").onchange=render;render();const done=v=>{bg.remove();res(v);};bg.querySelector('[data-c="cancel"]').onclick=()=>done(null);bg.querySelector('[data-c="ok"]').onclick=()=>{const ids=new Set([...bg.querySelectorAll('.backupItemPick:checked')].map(x=>x.dataset.id));if(!ids.size){uiAlert("Select at least one item to restore.");return;}done(ids);};bg.addEventListener("mousedown",e=>{if(e.target===bg)done(null);});});}
+/* The restore window is defined with the shared difference list (_showBackupItemReview). */
 function _removeScheduleDateEverywhere(store,dept,name,date){if(_unsafeKey(String(dept))||_unsafeKey(String(name)))return;/* AUDIT S6-01 */Object.keys((store||{})[dept]||{}).forEach(wk=>{const row=((store[dept]||{})[wk]||{})[name];if(!row)return;Object.keys(row).forEach(di=>{const dt=dateAddIso(wk,Number(di));if(dt===date)delete row[di];});if(!Object.keys(row).length)delete store[dept][wk][name];});}
 function _setScheduleDateValue(store,dept,name,date,value){if(_unsafeKey(String(dept))||_unsafeKey(String(name)))return;/* AUDIT S6-01 */_removeScheduleDateEverywhere(store,dept,name,date);if(value==null||value==="")return;const dt=new Date(date+"T00:00:00"),ws=mondayOfWeekStartThu(dt,dept),wk=weekKey(ws),di=Math.round((dt-ws)/86400000);store[dept]=store[dept]||{};store[dept][wk]=store[dept][wk]||{};store[dept][wk][name]=store[dept][wk][name]||{};store[dept][wk][name][di]=value;}
 function _setDemandDateField(date,field,value){Object.keys(DEMAND||{}).filter(k=>/^\d{4}-\d{2}-\d{2}$/.test(k)).forEach(wk=>{Object.keys(DEMAND[wk]||{}).forEach(di=>{if(dateAddIso(wk,Number(di))===date&&DEMAND[wk][di]){delete DEMAND[wk][di][field];if(!Object.keys(DEMAND[wk][di]).length)delete DEMAND[wk][di];}});});if(value==null||value==="")return;const dt=new Date(date+"T00:00:00"),ws=mondayOfWeekStartThu(dt,"FO"),wk=weekKey(ws),di=Math.round((dt-ws)/86400000);DEMAND[wk]=DEMAND[wk]||{};DEMAND[wk][di]=DEMAND[wk][di]||{};DEMAND[wk][di][field]=value;}
 async function _applyBackupSelectedOperations(target,ops){let _safetyOk=true;try{localStorage.setItem("hotel_pre_overwrite_backup",JSON.stringify(Object.assign(_fullBackupObject(),{savedAt:new Date().toISOString()})));}catch(e){_safetyOk=false;}
   /* AUDIT S6-03: never overwrite data without a recoverable copy unless the user explicitly accepts that */
   if(!_safetyOk&&!(await uiConfirm("A safety copy of your current data could not be stored (device storage is full), so this import cannot be undone. Export a backup first, or continue anyway?","No safety copy")))return;
-  const bA=JSON.parse(JSON.stringify(ASSIGN)),bD=JSON.parse(JSON.stringify(DEMAND)),bL=JSON.parse(JSON.stringify(LEAVE_REQUESTS)),bC=JSON.parse(JSON.stringify(CHECKINS));let cfgChanged=false,extrasChanged=false;ops.forEach(o=>{if(o.kind==="schedule")_setScheduleDateValue(ASSIGN,o.dept,o.person,o.dateFrom,o.target);else if(o.kind==="demand")_setDemandDateField(o.dateFrom,o.field,o.target);else if(o.kind==="roster"){const D=CFG[o.dept],i=(D.staff||[]).findIndex(x=>x.n===o.person),cur=i>=0?D.staff[i]:null;if(o.target){const rec=Object.assign({},o.target);if(cur){["avail","availDates","off"].forEach(k=>{if(cur[k]!==undefined)rec[k]=JSON.parse(JSON.stringify(cur[k]));});D.staff[i]=rec;}else D.staff.push(rec);}else if(i>=0)D.staff.splice(i,1);cfgChanged=true;}else if(o.kind==="availDate"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){st.availDates=st.availDates||{};if(o.target)st.availDates[o.key]=JSON.parse(JSON.stringify(o.target));else delete st.availDates[o.key];cfgChanged=true;}}else if(o.kind==="staffField"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){if(o.target==null)delete st[o.field];else st[o.field]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}}else if(o.kind==="deptSettings"){const staff=CFG[o.dept].staff;CFG[o.dept]=Object.assign({},JSON.parse(JSON.stringify(o.target)),{staff});cfgChanged=true;}else if(o.kind==="appSetting"){if(_unsafeKey(String(o.key)))return;if(o.target==null)delete CFG[o.key];else CFG[o.key]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}else if(o.kind==="leave"){if(o.target)LEAVE_REQUESTS[o.key]=JSON.parse(JSON.stringify(o.target));else delete LEAVE_REQUESTS[o.key];}else if(o.kind==="checkins"){CHECKINS[o.dept]=CHECKINS[o.dept]||{};CHECKINS[o.dept][o.week]=CHECKINS[o.dept][o.week]||{};if(o.target)CHECKINS[o.dept][o.week][o.person]=JSON.parse(JSON.stringify(o.target));else delete CHECKINS[o.dept][o.week][o.person];}else if(o.kind==="extra"){const spec=_FULL_BACKUP_EXTRA_SPECS.find(x=>x[0]===o.key);if(spec){spec[3](JSON.parse(JSON.stringify(o.target)));save(spec[4],o.target);extrasChanged=true;}}});if(cfgChanged){_markConfigDirty();const p=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=p;}}_markChangedAssignmentRows(bA,ASSIGN);new Set([...Object.keys(bD),...Object.keys(DEMAND)]).forEach(w=>{if(!_sameValue(bD[w],DEMAND[w]))_markDemandDirty(w);});new Set([...Object.keys(bL),...Object.keys(LEAVE_REQUESTS)]).forEach(id=>{if(!_sameValue(bL[id],LEAVE_REQUESTS[id]))_protectLeaveId(id);});DEPT_KEYS.forEach(dp=>new Set([...Object.keys(bC[dp]||{}),...Object.keys(CHECKINS[dp]||{})]).forEach(wk=>new Set([...Object.keys((bC[dp]||{})[wk]||{}),...Object.keys((CHECKINS[dp]||{})[wk]||{})]).forEach(n=>{if(!_sameValue(((bC[dp]||{})[wk]||{})[n],((CHECKINS[dp]||{})[wk]||{})[n]))_markCheckinDirty(dp,wk,n);})));save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);_flagPendingLocalWork();_reconcilePendingFlag();_applySyncUiState();render();flashNote("Selected backup items restored locally — Review & upload is required before synced items can replace live data.");}
+  const bA=JSON.parse(JSON.stringify(ASSIGN)),bD=JSON.parse(JSON.stringify(DEMAND)),bL=JSON.parse(JSON.stringify(LEAVE_REQUESTS)),bC=JSON.parse(JSON.stringify(CHECKINS));let cfgChanged=false,extrasChanged=false;ops.forEach(o=>{if(o.kind==="schedule")_setScheduleDateValue(ASSIGN,o.dept,o.person,o.dateFrom,o.target);else if(o.kind==="demand")_setDemandDateField(o.dateFrom,o.field,o.target);else if(o.kind==="roster"){const D=CFG[o.dept],i=(D.staff||[]).findIndex(x=>x.n===o.person),cur=i>=0?D.staff[i]:null;if(o.target){const rec=Object.assign({},o.target);if(cur){["avail","availDates","off"].forEach(k=>{if(cur[k]!==undefined)rec[k]=JSON.parse(JSON.stringify(cur[k]));});D.staff[i]=rec;}else D.staff.push(rec);}else if(i>=0)D.staff.splice(i,1);cfgChanged=true;}else if(o.kind==="availDate"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){st.availDates=st.availDates||{};if(o.target)st.availDates[o.key]=JSON.parse(JSON.stringify(o.target));else delete st.availDates[o.key];cfgChanged=true;}}else if(o.kind==="staffField"){const st=(CFG[o.dept].staff||[]).find(x=>x.n===o.person);if(st){if(o.target==null)delete st[o.field];else st[o.field]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}}else if(o.kind==="deptSettings"){const staff=CFG[o.dept].staff;CFG[o.dept]=Object.assign({},JSON.parse(JSON.stringify(o.target)),{staff});cfgChanged=true;}else if(o.kind==="appSetting"){if(_unsafeKey(String(o.key)))return;if(o.target==null)delete CFG[o.key];else CFG[o.key]=JSON.parse(JSON.stringify(o.target));cfgChanged=true;}else if(o.kind==="leave"){if(o.target)LEAVE_REQUESTS[o.key]=JSON.parse(JSON.stringify(o.target));else delete LEAVE_REQUESTS[o.key];}else if(o.kind==="checkins"){CHECKINS[o.dept]=CHECKINS[o.dept]||{};CHECKINS[o.dept][o.week]=CHECKINS[o.dept][o.week]||{};if(o.target)CHECKINS[o.dept][o.week][o.person]=JSON.parse(JSON.stringify(o.target));else delete CHECKINS[o.dept][o.week][o.person];}else if(o.kind==="extra"){const spec=_FULL_BACKUP_EXTRA_SPECS.find(x=>x[0]===o.key);if(spec){spec[3](JSON.parse(JSON.stringify(o.target)));save(spec[4],o.target);extrasChanged=true;}}});if(cfgChanged){_markConfigDirty();const p=_pullingConfigNow;_pullingConfigNow=true;try{save("hotel_cfg",CFG);}finally{_pullingConfigNow=p;}}_markChangedAssignmentRows(bA,ASSIGN);new Set([...Object.keys(bD),...Object.keys(DEMAND)]).forEach(w=>{if(!_sameValue(bD[w],DEMAND[w]))_markDemandDirty(w);});new Set([...Object.keys(bL),...Object.keys(LEAVE_REQUESTS)]).forEach(id=>{if(!_sameValue(bL[id],LEAVE_REQUESTS[id]))_protectLeaveId(id);});DEPT_KEYS.forEach(dp=>new Set([...Object.keys(bC[dp]||{}),...Object.keys(CHECKINS[dp]||{})]).forEach(wk=>new Set([...Object.keys((bC[dp]||{})[wk]||{}),...Object.keys((CHECKINS[dp]||{})[wk]||{})]).forEach(n=>{if(!_sameValue(((bC[dp]||{})[wk]||{})[n],((CHECKINS[dp]||{})[wk]||{})[n]))_markCheckinDirty(dp,wk,n);})));save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);_flagPendingLocalWork();_reconcilePendingFlag();_applySyncUiState();render();{if(ops.some(o=>o.kind!=="extra"))_setRestoreHold(true);flashNote(DB?"Selected backup items restored on this device only. Nothing is sent to live until you press Review & upload in the header.":"Selected backup items restored on this device. When you connect, you will be asked to review them before anything replaces live data.");}}
 function _backupImportSectionForLine(line){
   const c=_categorizeConflictLine(String(line).replace(/\bcurrent\b/g,"local").replace(/\bbackup\b/g,"live"));
   if(c==="Staff availability")return "availability";
@@ -30720,10 +30938,10 @@ function renderMobileDrawerContent(){
   // button here rendered with the SAME full-opacity background/text color as an enabled one, genuinely
   // indistinguishable at a glance. Added the identical opacity/cursor treatment inline, conditioned on the same
   // stack-length check already driving `disabled`, so both states can never drift out of sync with each other.
-  const _undoLiveBlocked=_snapshotUndoBlocked(),_canUndo=!_undoLiveBlocked&&UNDO_STACK.length,_canRedo=!_undoLiveBlocked&&REDO_STACK.length;
+  const _canUndo=UNDO_STACK.length,_canRedo=REDO_STACK.length;
   h+=`<div class="mrow" style="padding:6px 16px;gap:8px">`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${_canUndo?"":";opacity:.4;cursor:not-allowed"}" onclick="undoAction()" ${_canUndo?"":"disabled"} title="${_undoLiveBlocked?"Undo is disabled while connected":(_canUndo?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo")}">↶ Undo</button>`
-    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${_canRedo?"":";opacity:.4;cursor:not-allowed"}" onclick="redoAction()" ${_canRedo?"":"disabled"} title="${_undoLiveBlocked?"Redo is disabled while connected":(_canRedo?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo")}">↷ Redo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${_canUndo?"":";opacity:.4;cursor:not-allowed"}" onclick="undoAction()" ${_canUndo?"":"disabled"} title="${_canUndo?`Undo (${UNDO_STACK.length} step(s) available)`:"Nothing to undo"}">↶ Undo</button>`
+    +`<button style="flex:1 1 0;border:1px solid var(--line);border-radius:6px;background:#fff;color:#1f2d3d;padding:6px${_canRedo?"":";opacity:.4;cursor:not-allowed"}" onclick="redoAction()" ${_canRedo?"":"disabled"} title="${_canRedo?`Redo (${REDO_STACK.length} step(s) available)`:"Nothing to redo"}">↷ Redo</button>`
     +`</div>`;
   h+=`<hr class="mob-drawer-sep">`;
   h+=`<div class="mob-drawer-label">Schedule</div>`;
@@ -33913,6 +34131,7 @@ truncate table public.snapshots;
 </ul></details>
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Version log</b></summary>
 <ul class="small">
+<li><b>2.7, revision 4</b>: One set of rules for every list of differences: the upload review, the restore window and the comparison window now use the same lines, sections, conflict grouping and layout, and the restore and comparison windows show current and backup values for every item (the comparison also covers demand, leave requests, check-ins and settings). Restored items are held for review and are not uploaded in the background. Marking someone inactive keeps their earlier days. Undo of a roster change works per person. Date fields in the roster save once when typing stops. The Settings, Leave and Readme tabs no longer show the Occupancy, Checks and weekly cards. The tab warning clears when the other tab goes away and names the page. Users &amp; roles dropdowns stay compact. The change log shows every stored entry. The Backup &amp; versions entry is named <i>Compare with other copy</i>.</li>
 <li><b>2.7, revision 3</b>: The header badge names the department on screen (schedule tab or Settings) when you hold edit access to it. <i>View change log</i> opens again (it failed on a missing variable) and reads the shared log first. Department lists in the Paycom export, cost center report, shift bids, leave requests, leave filter and exceptions filter now come from the department list, so DB HSK and any department added later appear by themselves; the cost center floor grouping now reads the floors of the department being reported.</li>
 <li><b>2.7, revision 261021</b>: Settings, Live access policy rows wrap beside their checkbox like the other Settings rows, and the divider uses the standard line colour. Users &amp; roles lists every department from the department list (so a department added later appears by itself); the shared choice reads <i>All depts</i>. Dismissing the <i>differences received from live</i> badge now clears its list, so dismissed items no longer come back with the next change. Lock clicks are ignored while a PIN is being checked and the header shows <i>Checking PIN</i>. Icon and manifest links carry a version suffix again; the publish workflow fills it in.</li>
 <li><b>2.7</b> (261020): PINs created in the app are exactly 4 digits; the starter PINs 1234, 0000 and 1111 are kept and no longer forced to change. A tab can hold one live PIN per department (setting <i>One live PIN per browser tab</i>, default off; needs the updated SQL). Live access policy switches (anonymous leave requests, shared manager PIN for multi-department saves), both off by default. Storage-full protection and a downloaded copy before <i>Discard local</i>. The shared change log works on older projects (SQL adds <code>audit_log.user_name</code>) and the SQL removes legacy policies that left anonymous writes open. Readme corrected: schedules upload as whole person-weeks sent as a merge of the differing days. Number inputs hide their arrows through one shared rule; icon links no longer carry a build placeholder.</li>
@@ -34017,12 +34236,10 @@ async function bulkRemoveSelected(){
   const names=(D.staff||[]).filter(s=>s.employed!==false&&sel.has(s.n)).map(s=>s.n);
   if(!names.length)return;
   if(!(await uiConfirm("Mark "+names.length+" selected staff member(s) as no longer employed?\n\n"+names.join(", ")+"\n\nThey stay in past weeks (history preserved) and move to Former Staff. They will not appear on new schedules.","Mark inactive")))return;
-  const curWk=weekKey(mondayOfWeekStartThu(new Date()));
   for(const nm of names){
     const st=D.staff.find(s=>s.n===nm);if(!st)continue;
     st.employed=false;st.inactiveSince=weekKey(new Date());
-    const wks=ASSIGN[SETDEPT]||{};const affected=[];
-    Object.keys(wks).forEach(wk=>{if(wk>=curWk&&wks[wk]&&wks[wk][nm]!=null&&Object.keys(wks[wk][nm]).length){wks[wk][nm]={};_markAssignDirty(SETDEPT,wk,nm);affected.push(wk);}});
+    const affected=_clearScheduleFrom(SETDEPT,nm,st.inactiveSince);
     if(DB)affected.forEach(wk=>pushWeekAll(SETDEPT,wk));
   }
   save("hotel_assign",ASSIGN);save("hotel_cfg",CFG);
@@ -34035,7 +34252,7 @@ async function bulkReemploySelected(){
   const names=(D.staff||[]).filter(s=>s.employed===false&&sel.has(s.n)).map(s=>s.n);
   if(!names.length)return;
   if(!(await uiConfirm("Re-employ "+names.length+" selected staff member(s)?\n\n"+names.join(", "),"Re-employ")))return;
-  names.forEach(nm=>{const st=D.staff.find(s=>s.n===nm);if(st){st.employed=true;delete st.inactiveSince;}});
+  names.forEach(nm=>{const st=D.staff.find(s=>s.n===nm);if(st){st.employed=true;delete st.inactiveSince;restoreStaffTombstone(SETDEPT,nm);restoreArchivedAssignments(SETDEPT,nm);}});
   save("hotel_cfg",CFG);
   clearRosterSel();
   flashNote("Re-employed "+names.length+" staff member(s).");
@@ -34718,7 +34935,7 @@ function _renderSettingsInner(){
        (130px/80px) at any screen size, matching how the Role/Department dropdowns right next to them (already
        narrow, never affected by this rule since selects aren't targeted) and the Unpaid Break field already
        behave. -->
-  <div class="cfgrow"><label><input class="sfield" id="uName" placeholder="Name" style="width:130px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"></label><select class="sfield" id="uRole" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"><option value="viewer">Viewer</option><option value="scheduler">Scheduler</option><option value="manager">Manager</option></select><label><input class="sfield" id="uPin" placeholder="PIN" style="width:80px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"></label><select class="sfield" id="uDept" title="Restrict this PIN to one department, or leave as All depts for the existing default behavior" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"><option value="">All depts</option>${DEPT_KEYS.map(k=>'<option value="'+k+'">'+esc(deptLabel(k))+' only</option>').join("")}</select><button onclick="addUser()">Add user</button></div>
+  <div class="cfgrow"><label><input class="sfield" id="uName" placeholder="Name" style="width:130px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"></label><select class="sfield selCompact" id="uRole" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"><option value="viewer">Viewer</option><option value="scheduler">Scheduler</option><option value="manager">Manager</option></select><label><input class="sfield" id="uPin" placeholder="PIN" style="width:80px" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"></label><select class="sfield selCompact" id="uDept" title="Restrict this PIN to one department, or leave as All depts for the existing default behavior" onkeydown="if(event.key==='Enter'){event.preventDefault();addUser();}"><option value="">All depts</option>${DEPT_KEYS.map(k=>'<option value="'+k+'">'+esc(deptLabel(k))+' only</option>').join("")}</select><button onclick="addUser()">Add user</button></div>
     <!-- See openBatchUserProvision()'s own extensive comment for the full feasibility answer and how this differs
        from the plain PIN-based Users list directly above (these are REAL Supabase Auth accounts with email/
        password sign-in, not the device-level PIN trust this app's own existing "Add user" row manages). Only
@@ -34862,7 +35079,7 @@ function _renderSettingsInner(){
            the Ratio option restated something already obvious from it being the option currently selected, and the
            muted PENDING-VERIFICATION span pointed to Readme detail that's still fully there, just no longer
            duplicated here. -->
-    <div class="cfgrow"><b>Front Desk Agents needed — model:</b> <select class="sfield small" onchange="setFdaModel(this.value)"><option value="ratio" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="ratio"?"selected":""}>Ratio (1 agent per N arr/dep)</option><option value="flat" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="flat"?"selected":""}>Flat (+N once threshold crossed)</option><option value="scaling" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="scaling"?"selected":""}>Scaling (multiples of threshold)</option></select></div>
+    <div class="cfgrow"><b>Front Desk Agents needed — model:</b> <select class="sfield small selCompact" onchange="setFdaModel(this.value)"><option value="ratio" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="ratio"?"selected":""}>Ratio (1 agent per N arr/dep)</option><option value="flat" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="flat"?"selected":""}>Flat (+N once threshold crossed)</option><option value="scaling" ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="scaling"?"selected":""}>Scaling (multiples of threshold)</option></select></div>
   ${(D.rules.fdaModel||FO_FDA_MODEL_DEFAULT)==="ratio"?`<div class="mrow"><label class="small">Ratio model: 1 agent per <input class="sfield" style="width:44px" value="${D.rules.fdaArrRatio||FO_FDA_ARR_RATIO_DEFAULT}" onchange="setRule('fdaArrRatio',this.value,${FO_FDA_ARR_RATIO_DEFAULT})"> Arrivals</label><label class="small">+ 1 per <input class="sfield" style="width:44px" value="${D.rules.fdaDepRatio||FO_FDA_DEP_RATIO_DEFAULT}" onchange="setRule('fdaDepRatio',this.value,${FO_FDA_DEP_RATIO_DEFAULT})"> Departures</label></div>`:""}
   <!-- Same bug class/fix as "Flag overstaffed when" and the Clock-in/out question labels above (see those
        comments for the full mechanism) — TWO risk factors compounding here: 4 plain-text inputs (none had
@@ -35779,7 +35996,12 @@ function _renderSettingsInner(){
   // became reachable without going through the normal disabled-fieldset gate (e.g. a stray direct DOM event,
   // programmatic dispatch, or a future bulk-edit path). Checked first, before dereferencing SETDEPT's own staff
   // array at all.
+  /* A date typed digit by digit fires a change for every valid in-between date (typing 20 passes through 02). Each one was saved, logged, uploaded and made an undo step.
+     Date fields now commit once, when typing pauses or the field loses focus. */
+  const _commitDateField=t=>{if(!t||!t.__dt)return;clearTimeout(t.__dt);t.__dt=null;if(!t.isConnected)return;const ev=new Event("change",{bubbles:true});ev.__flush=true;t.dispatchEvent(ev);};
+  b.querySelectorAll("[data-si]").forEach(inp=>{if(inp.type==="date")inp.addEventListener("blur",()=>_commitDateField(inp));});
   b.querySelectorAll("[data-si]").forEach(inp=>inp.addEventListener("change",e=>{
+    if(e.target.type==="date"&&!e.__flush){const t=e.target;clearTimeout(t.__dt);t.__dt=setTimeout(()=>_commitDateField(t),900);return;}
     if(!canEditSettingsFor(SETDEPT))return;
     const i=+e.target.dataset.si,k=e.target.dataset.k,v=e.target.value;const st=CFG[SETDEPT].staff[i];
     // Captured before the branch below writes, so the log can say what it changed FROM - see logRosterEdit().
@@ -36457,22 +36679,28 @@ function addStaffRow(){
 // every PAST week is completely untouched, preserving genuine history exactly as promised — and pushes each
 // affected week to the shared live copy too (if connected), so this takes effect immediately on every device, not
 // just this one.
+/* Marking someone inactive clears their schedule from the inactive date onward. Earlier days stay (history is kept). The cleared cells are archived,
+   so Re-employ can put them back. */
+function _clearScheduleFrom(dept,name,fromIso){
+  const archive={},touched=[];
+  Object.keys(ASSIGN[dept]||{}).forEach(wk=>{
+    const row=ASSIGN[dept][wk]&&ASSIGN[dept][wk][name];if(row==null)return;
+    Object.keys(row).forEach(di=>{
+      if(row[di]==null||row[di]==="")return;
+      if(dateAddIso(wk,Number(di))<fromIso)return;/* before the inactive date: kept */
+      (archive[wk]=archive[wk]||{})[di]=row[di];delete row[di];
+    });
+    if(archive[wk]){touched.push(wk);_markAssignDirty(dept,wk,name);}
+  });
+  if(touched.length)archiveAssignmentsFor(dept,name,archive);
+  return touched;
+}
 async function removeStaffRow(i){
   const st=CFG[SETDEPT].staff[i];
   if(!(await uiConfirm("Mark "+st.n+" as no longer employed?\n\nThey stay in past weeks (history is preserved) and move to ‘Former staff’. They will not appear on new schedules.","Mark inactive")))return;
   st.employed=false;st.inactiveSince=weekKey(new Date());
-  const _curWk=weekKey(mondayOfWeekStartThu(new Date()));
-  const _wks=ASSIGN[SETDEPT]||{};
-  const _affectedWks=[];
-  // Copied out before being cleared, so Re-employ can put them back - see DELETED_ASSIGN's own comment.
-  const _archive={};
-  Object.keys(_wks).forEach(wk=>{
-    if(wk>=_curWk&&_wks[wk]&&_wks[wk][st.n]!=null&&Object.keys(_wks[wk][st.n]).length){
-      _archive[wk]=JSON.parse(JSON.stringify(_wks[wk][st.n]));
-      _wks[wk][st.n]={};_markAssignDirty(SETDEPT,wk,st.n);_affectedWks.push(wk);
-    }
-  });
-  archiveAssignmentsFor(SETDEPT,st.n,_archive);
+  /* Only days from the inactive date onward are cleared; earlier days of the same week stay (history is kept). Cleared days are archived for Re-employ. */
+  const _affectedWks=_clearScheduleFrom(SETDEPT,st.n,st.inactiveSince);
   logChange("staff-remove",st.n+" marked no longer employed"+(_affectedWks.length?(" ("+_affectedWks.length+" future week(s) cleared, kept for re-employ)"):""));
   save("hotel_assign",ASSIGN);
   save("hotel_cfg",CFG);
@@ -38604,7 +38832,7 @@ function downloadBatchUserResultsCSV(){
 // when done rather than sitting there.
 let _COMPARE_BACKUP=null;
 function _compareSourceChanged(){const fileMode=(el("cmpSource")||{}).value==="file";const p=el("cmpFilePanel");if(p)p.style.display=fileMode?"block":"none";}
-function _compareSetBackupFile(file){if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const raw=JSON.parse(rd.result),cfg=JSON.parse(JSON.stringify(raw.cfg||raw.CFG||{})),assign=JSON.parse(JSON.stringify(raw.assign||raw.ASSIGN||{}));if(!cfg.FO||!assign.FO)throw new Error("The file does not contain the scheduler roster and schedule sections.");DEPT_KEYS.forEach(d=>{cfg[d]=cfg[d]||{staff:[]};assign[d]=assign[d]||{};});_normaliseStaffNamesInState(cfg,assign,{});_COMPARE_BACKUP={name:file.name,cfg,assign};const n=el("cmpFileName");if(n)n.textContent=file.name+" loaded";}catch(e){_COMPARE_BACKUP=null;uiAlert("Could not use this comparison file: "+(e.message||e));}};rd.readAsText(file);}
+function _compareSetBackupFile(file){if(!file)return;const rd=new FileReader();rd.onload=()=>{try{const raw=JSON.parse(rd.result),cfg=JSON.parse(JSON.stringify(raw.cfg||raw.CFG||{})),assign=JSON.parse(JSON.stringify(raw.assign||raw.ASSIGN||{}));if(!cfg.FO||!assign.FO)throw new Error("The file does not contain the scheduler roster and schedule sections.");DEPT_KEYS.forEach(d=>{cfg[d]=cfg[d]||{staff:[]};assign[d]=assign[d]||{};});_normaliseStaffNamesInState(cfg,assign,{});const _full=_normaliseImportedBackup(raw);_COMPARE_BACKUP={name:file.name,cfg:_full.cfg,assign:_full.assign,demand:_full.demand,leaveRequests:_full.leaveRequests,checkins:_full.checkins};const n=el("cmpFileName");if(n)n.textContent=file.name+" loaded";}catch(e){_COMPARE_BACKUP=null;uiAlert("Could not use this comparison file: "+(e.message||e));}};rd.readAsText(file);}
 function _compareWireDrop(){const z=el("cmpDropZone"),inp=el("cmpFileInput");if(!z||!inp)return;z.onclick=()=>inp.click();inp.onchange=()=>_compareSetBackupFile(inp.files&&inp.files[0]);["dragenter","dragover"].forEach(t=>z.addEventListener(t,e=>{e.preventDefault();z.classList.add("dragover");}));["dragleave","drop"].forEach(t=>z.addEventListener(t,e=>{e.preventDefault();z.classList.remove("dragover");}));z.addEventListener("drop",e=>_compareSetBackupFile(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0]));}
 async function showCompareModal(){
   _COMPARE_BACKUP=null;
@@ -38612,7 +38840,7 @@ async function showCompareModal(){
   const from=weekKey(WEEK_START),to=weekKey(dayDate(6));
   bg.innerHTML=`<div class="modal" style="max-width:820px;width:96%;max-height:88vh;overflow:auto">
     <h2>Compare this device with another copy</h2>
-    <p class="small muted">Choose current reads from the connected live copy or upload a full scheduler JSON backup. This scoped comparison checks roster status, roles/types, and schedule cells only. It does not check Demand, Leave Requests, check-ins, app-wide settings, or every roster field, and the live roster/schedule reads are separate rather than one database transaction. It does not upload or change anything.</p>
+    <p class="small muted">Choose current reads from the connected live copy or upload a full scheduler JSON backup. It lists differences in roster, schedule, demand (including events and transportation), leave requests and check-ins, and department and app-wide settings when a whole department is chosen, limited to the departments, people and dates below. The live reads are separate rather than one database transaction. It does not upload or change anything.</p>
     <div class="exportScopeGrid" style="grid-template-columns:minmax(180px,1fr)"><label class="small">Comparison source <select id="cmpSource" class="sfield" onchange="_compareSourceChanged()"><option value="live">Connected live copy (fresh read)</option><option value="file">Uploaded backup JSON</option></select></label></div>
     <div id="cmpFilePanel" style="display:none;margin-top:10px"><div id="cmpDropZone" class="compareDropZone"><b>Drop a scheduler JSON backup here</b><br><span class="small muted">or click to choose a file</span><input id="cmpFileInput" type="file" accept="application/json,.json" style="display:none"></div><div id="cmpFileName" class="small muted" style="margin-top:4px"></div></div>
     <div style="margin-top:10px">${_exportScopeControlsHtml("cmp",false,from,to)}</div>
@@ -38620,7 +38848,7 @@ async function showCompareModal(){
     <div id="syncCompareBox" style="margin-top:8px"></div>
   </div>`;
   document.body.appendChild(bg);_renderExportScopeControls("cmp",false);_compareWireDrop();_compareSourceChanged();
-  bg.addEventListener("mousedown",e=>{if(e.target===bg)_removeModalById("cmpModal");});_wireModalKeys(bg,()=>_removeModalById("cmpModal"));
+  bg.addEventListener("mousedown",e=>{if(e.target===bg)_removeModalById("cmpModal");});_wireModalKeys(bg,()=>_removeModalById("cmpModal"),()=>{const a=document.activeElement;if(a&&a.tagName==="INPUT"&&(a.type==="file"||a.type==="date")){if(a.type==="date")a.blur();return;}runScopedComparison();});bg.addEventListener("keydown",e=>{if(e.key==="Enter"&&e.target&&e.target.tagName==="SELECT"){e.preventDefault();runScopedComparison();}});try{const _rb=bg.querySelector("button.brand");if(_rb)_rb.focus();}catch(e){}
 }
 async function backupMenu(){
   // The 3 Paycom-import options (Actual hours CSV/Excel, Punch times) that used to live in THIS menu have moved
@@ -38649,8 +38877,8 @@ async function backupMenu(){
   // rare, one-off maintenance actions that made this list feel dense — their underlying functions
   // (cleanupFormerStaffSchedules(), resortRosterByRoleWithConfirm(), both further below) are deliberately LEFT IN
   // PLACE, just no longer reachable from this specific menu.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Restore selected backup items (JSON)","Save version now","View version history","View change log","Compare against the shared copy"]);
-  if(pick==="Restore selected backup items (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare against the shared copy")showCompareModal();
+  const pick=await uiDialog("Backup & versions:",["Cancel","Restore selected backup items (JSON)","Save version now","View version history","View change log","Compare with other copy"]);
+  if(pick==="Restore selected backup items (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare with other copy")showCompareModal();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -39469,7 +39697,7 @@ async function showAudit(){
   const _auditShared=!!DB&&!_auditTableMissing&&_auditReadOk;
   const _auditWhy=_auditBlockedReason||(DB&&_auditTableMissing?"this project has no audit_log table yet (run the v2.7 SQL)":((DB&&!_auditReadOk)?"this device needs a manager PIN or account to read it":""));
   const _deptManager=d=>((CFG[d]&&CFG[d].label)||d)+" Manager";
-  let rows=(AUDIT||[]).slice(-200).reverse().map(r=>
+  let rows=(AUDIT||[]).slice().reverse().map(r=>
     r.user?r:Object.assign({},r,{user:_deptManager(r.dept),_inferred:true}));
   // Says plainly why the log may look thin, because the honest answer is not obvious and the alternative is
   // someone concluding their work was lost. Two separate causes, both now fixed going forward and neither
@@ -39482,7 +39710,7 @@ async function showAudit(){
   const _gapNote=`<div class="cfgrow" style="background:#eef3fb;border:1px solid #b7c8e6;border-radius:6px;padding:8px 10px;margin-bottom:8px">
     <div class="small muted">
       The log records changes on the device where they were made.${_auditShared?" Entries from other devices arrive with the next sync.":(" They are not being shared with other devices"+(_auditWhy?" \u2014 "+esc(_auditWhy)+".":"."))}
-      ${DB?"":"<br><b>This device is not connected</b>, so only its own entries are shown."}
+      ${DB?"":"<br><b>This device is not connected</b>, so only its own entries are shown."}<br>Showing all ${nfmt(rows.length)} entries stored on this device.${rows.length>2000?' This device trims its log to the newest 2,000 the next time it records a change, so save older entries first: Export, Change log (CSV).':' It keeps the newest 2,000. Export, Change log (CSV) saves them as a file.'}
     </div></div>`;
   // The PREVIOUS fix (removing forced nowrap from User/Dept) only relocated the squeeze rather than fixing it:
   // with table-layout:fixed and NO explicit per-column widths, a browser simply divides available width EVENLY
@@ -39498,7 +39726,7 @@ async function showAudit(){
   const _tableWidth=fzOffsets(_colWidths).total;
   const _colgroup="<colgroup>"+_colWidths.map(w=>`<col style="width:${w}px">`).join("")+"</colgroup>";
   const _html=rows.length?(`<div class="tblwrap" style="overflow:auto;border-radius:8px;max-height:60vh"><table style="table-layout:fixed;min-width:${_tableWidth}px;width:100%">${_colgroup}<thead><tr><th>When</th><th>User</th><th>Dept</th><th style="text-align:left">Change</th></tr></thead><tbody>`+rows.map(r=>`<tr><td class="small" style="white-space:nowrap">${esc(new Date(r.ts).toLocaleString())}</td><td class="small" style="overflow-wrap:break-word">${r.user?(esc(r.user)+(r._inferred?' <span class="muted" title="No user was recorded for this entry. Shown as the department\'s manager account, which is who its changes are made under.">(assumed)</span>':'')):'<span class="muted">\u2014</span>'}</td><td class="small" style="text-align:center">${esc(r.dept)}</td><td class="small" style="text-align:left;overflow-wrap:break-word">${esc(r.detail)}</td></tr>`).join("")+"</tbody></table></div>"):"<span class='muted'>No changes logged yet.</span>";
-  openGenericViewModal("Change log (most recent 200)",_gapNote+_html);
+  openGenericViewModal("Change log ("+nfmt(rows.length)+(rows.length===1?" entry":" entries")+", newest first)",_gapNote+_html);
 }
 function exportAudit(){const rows=(AUDIT||[]);const csv=["timestamp,user,department,action,detail"].concat(rows.map(r=>`"${r.ts}","${r.user}","${deptLabel(r.dept)}","${r.action}","${(r.detail||"").replace(/"/g,'\'\'')}"`)).join("\n");const a=document.createElement("a");a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));a.download=_appendDownloadStamp("hotel_change_log.csv");a.click();}
 /* LEAVE RANGES (Settings-managed; stamped to schedule; auto-drop when past) ---------- */
@@ -39547,6 +39775,9 @@ function restoreArchivedAssignments(dept,name){
         ASSIGN[dept][wk][name]=JSON.parse(JSON.stringify(days));
         restored.push(wk);
         if(typeof _markAssignDirty==="function")_markAssignDirty(dept,wk,name);
+      }else{/* the week kept its earlier days: put back only the days that are blank now */
+        const add={};Object.keys(days).forEach(di=>{if(cur[di]==null||cur[di]==="")add[di]=days[di];});
+        if(Object.keys(add).length){Object.assign(cur,JSON.parse(JSON.stringify(add)));restored.push(wk);if(typeof _markAssignDirty==="function")_markAssignDirty(dept,wk,name);}
       }
     });
     if(restored.length){
@@ -42999,7 +43230,7 @@ function stampLeave(dept,rec,remove){const from=new Date(rec.from+"T00:00:00"),t
   save("hotel_actual",ACTUAL);save("hotel_actuald",ACTUALD);return weeks;
 }
 function addLeaveRange(){if(!_dateRangeCommit("lvFrom","lvTo","auto")){uiAlert("Pick a date.");return;}const nm=el("lvName").value,code=el("lvType").value,f=el("lvFrom").value,t=el("lvTo").value;
-  const rec={name:nm,code:code,from:f,to:t,reason:(el("lvReason")?el("lvReason").value:"")};logChange("leave",code+" "+nm+" "+f+"→"+t);LEAVES[SETDEPT]=LEAVES[SETDEPT]||[];LEAVES[SETDEPT].push(rec);save("hotel_leaves",LEAVES);
+  const rec={name:nm,code:code,from:f,to:t,reason:(el("lvReason")?el("lvReason").value:"")};logChange("leave",code+" "+nm+" "+f+"→"+t);LEAVES[SETDEPT]=LEAVES[SETDEPT]||[];LEAVES[SETDEPT].push(rec);save("hotel_leaves",LEAVES);_mirrorLeavesToCfg();
   const affectedWeeks=stampLeave(SETDEPT,rec,false);save("hotel_assign",ASSIGN);_pushSpecDateWeeks(SETDEPT,rec.name,affectedWeeks);el("lvFrom").value="";el("lvTo").value="";drawLeaveList();uiAlert(code+" added for "+nm+".");render();
 }
 function drawLeaveList(){const box=el("lvList");if(!box)return;const today=new Date();today.setHours(0,0,0,0);
@@ -43008,7 +43239,7 @@ function drawLeaveList(){const box=el("lvList");if(!box)return;const today=new D
   const list=LEAVES[SETDEPT]||[];
   box.innerHTML=list.length?("<b>Active/upcoming:</b><br>"+list.map((r,i)=>`• ${esc(r.name)} — ${r.code}${esc(parenWrap(r.reason))} ${r.from}→${r.to} <a href="javascript:void(0)" onclick="removeLeave(${i});return false">remove</a>`).join("<br>")):"<span class='muted'>No upcoming leave. (Past leave stays stamped on the schedule.)</span>";
 }
-function removeLeave(i){const r=(LEAVES[SETDEPT]||[])[i];if(!r)return;const affectedWeeks=stampLeave(SETDEPT,r,true);save("hotel_assign",ASSIGN);_pushSpecDateWeeks(SETDEPT,r.name,affectedWeeks);LEAVES[SETDEPT].splice(i,1);save("hotel_leaves",LEAVES);drawLeaveList();render();}
+function removeLeave(i){const r=(LEAVES[SETDEPT]||[])[i];if(!r)return;const affectedWeeks=stampLeave(SETDEPT,r,true);save("hotel_assign",ASSIGN);_pushSpecDateWeeks(SETDEPT,r.name,affectedWeeks);LEAVES[SETDEPT].splice(i,1);save("hotel_leaves",LEAVES);_mirrorLeavesToCfg();drawLeaveList();render();}
 /* CLEAR (day / week) ---------- */
 // Pastes the IMMEDIATELY PRIOR week's schedule (same weekday-for-weekday, e.g. This Thursday gets last
 // Thursday's value) into the currently-viewed week, then runs the SAME hard-block conflict checks the single-cell
@@ -45441,11 +45672,40 @@ function _compareNameInScope(dept,name,opts,localRoster,otherRoster){
 }
 async function _freshLiveComparisonSource(){
   if(!DB)throw new Error("Not connected. Connect first or choose Uploaded backup JSON.");
-  const got=await _fetchAllRows("assignments","*");if(!got.ok)throw (got.error||new Error("Could not read live schedule rows."));
+  const [got,dem,lv,ci]=await Promise.all([_fetchAllRows("assignments","*"),_fetchAllRows("demand","*"),_fetchAllRows("leave_requests","*"),_fetchAllRows("checkins","*")]);
+  if(!got.ok)throw (got.error||new Error("Could not read live schedule rows."));
+  if(!dem.ok||!lv.ok||!ci.ok)throw ((dem.error||lv.error||ci.error)||new Error("Could not read every live section."));
   const assign={};DEPT_KEYS.forEach(d=>assign[d]={});got.data.forEach(r=>{if(!DEPT_KEYS.includes(r.dept))return;assign[r.dept][r.week]=assign[r.dept][r.week]||{};assign[r.dept][r.week][_canonicalStaffName(r.dept,r.staff,CFG)]=JSON.parse(JSON.stringify(r.days||{}));});
+  const demand={};(dem.data||[]).forEach(r=>{demand[r.week]=JSON.parse(JSON.stringify(r.days||{}));});
+  const leaveRequests={};(lv.data||[]).forEach(r=>{if(r&&r.id&&!_emptyLeaveRequestRecord(r.data))leaveRequests[r.id]=JSON.parse(JSON.stringify(r.data||{}));});
+  const checkins={};DEPT_KEYS.forEach(d=>checkins[d]={});(ci.data||[]).forEach(r=>{if(!DEPT_KEYS.includes(r.dept))return;checkins[r.dept][r.week]=checkins[r.dept][r.week]||{};checkins[r.dept][r.week][r.staff]=JSON.parse(JSON.stringify(r.days||{}));});
   const cr=await DB.from("app_config").select("data").eq("id","depts");if(cr.error)throw cr.error;const data=_scrubCfgBlob(((cr.data&&cr.data[0])||{}).data||{});
   const cfg={};DEPT_KEYS.forEach(d=>cfg[d]=JSON.parse(JSON.stringify(data[d]||{staff:[],roles:[]})));
-  return{name:"Connected live copy (fresh read)",cfg,assign};
+  return{name:"Connected live copy (fresh read)",cfg,assign,demand,leaveRequests,checkins,appWide:JSON.parse(JSON.stringify(data.appWide||{}))};
+}
+/* The comparison uses the same engine and the same lists as the upload review (see _DIFF_SECTIONS). The chosen departments, people and dates narrow
+   both copies first; settings are compared only when the whole department is chosen. */
+function _compareScoped(source,opts){
+  const depts=new Set(opts.depts),inRange=iso=>iso>=opts.from&&iso<=opts.to;window._cmpOtherCfg=source.cfg;
+  try{
+    const rosters={};DEPT_KEYS.forEach(d=>{rosters[d]={l:_compareRosterMap(CFG,d),o:_compareRosterMap(source.cfg,d)};});
+    const inScope=(d,n)=>_compareNameInScope(d,n,opts,rosters[d].l,rosters[d].o);
+    const wholeDept=opts.scope!=="role"&&opts.scope!=="staff";
+    const cut=(snap,own)=>{
+      const o={assign:{},demand:{},leaveRequests:{},checkins:{}};
+      DEPT_KEYS.forEach(d=>{o.assign[d]={};o.checkins[d]={};if(!depts.has(d))return;
+        Object.keys((snap.assign||{})[d]||{}).forEach(wk=>Object.keys(snap.assign[d][wk]||{}).forEach(n=>{if(!inScope(d,n))return;const row={};Object.keys(snap.assign[d][wk][n]||{}).forEach(di=>{const v=snap.assign[d][wk][n][di];if(v!=null&&v!==""&&inRange(dateAddIso(wk,Number(di))))row[di]=v;});if(Object.keys(row).length){o.assign[d][wk]=o.assign[d][wk]||{};o.assign[d][wk][n]=row;}}));
+        Object.keys((snap.checkins||{})[d]||{}).forEach(wk=>{if(!(wk<=opts.to&&dateAddIso(wk,6)>=opts.from))return;Object.keys(snap.checkins[d][wk]||{}).forEach(n=>{if(!inScope(d,n))return;o.checkins[d][wk]=o.checkins[d][wk]||{};o.checkins[d][wk][n]=snap.checkins[d][wk][n];});});});
+      if(depts.has("FO")||depts.has("HSK"))Object.keys(snap.demand||{}).forEach(wk=>{if(!/^\d{4}-\d{2}-\d{2}$/.test(wk))return;const days={};Object.keys(snap.demand[wk]||{}).forEach(di=>{if(inRange(dateAddIso(wk,Number(di))))days[di]=snap.demand[wk][di];});if(Object.keys(days).length)o.demand[wk]=days;});
+      Object.keys(snap.leaveRequests||{}).forEach(id=>{const r=snap.leaveRequests[id];if(!r||!depts.has(deptKeyFromAny(r.dept)))return;if(r.name&&(opts.scope==="staff"||opts.scope==="role")&&!inScope(deptKeyFromAny(r.dept),r.name))return;const f=r.from||"",t=r.to||r.from||"";if(f&&!(f<=opts.to&&t>=opts.from))return;o.leaveRequests[id]=r;});
+      const cfg={appWide:{}};DEPT_KEYS.forEach(d=>{if(!depts.has(d)){cfg[d]={};return;}const D=(own?CFG:source.cfg)[d]||{};const c=wholeDept?JSON.parse(JSON.stringify(D)):{label:D.label};c.staff=(D.staff||[]).filter(s=>s&&s.n&&inScope(d,s.n)).map(s=>JSON.parse(JSON.stringify(s)));cfg[d]=c;});
+      if(wholeDept&&!opts.dept){const aw=own?(()=>{const x={};SHARED_APP_CFG_KEYS.forEach(k=>{x[k]=CFG[k];});return x;})():(source.appWide||(()=>{const x={};SHARED_APP_CFG_KEYS.forEach(k=>{x[k]=(source.cfg||{})[k];});return x;})());cfg.appWide=JSON.parse(JSON.stringify(aw||{}));}
+      return {snap:o,cfg};
+    };
+    const L=cut({assign:ASSIGN,demand:DEMAND,leaveRequests:LEAVE_REQUESTS,checkins:CHECKINS},true),O=cut(source,false);
+    const a=analyzeUploadChanges(L.snap,O.snap),c=analyzeCfgChanges(L.cfg,O.cfg);
+    return {changes:a.changes.concat(c.changes),conflicts:a.conflicts.concat(c.conflicts)};
+  }finally{delete window._cmpOtherCfg;}
 }
 function _comparisonRows(source,opts){
   const diffs=[];let checkedCells=0,checkedPeople=0;window._cmpOtherCfg=source.cfg;
@@ -45456,9 +45716,16 @@ function _comparisonRows(source,opts){
   });delete window._cmpOtherCfg;return{diffs,checkedCells,checkedPeople};
 }
 async function runScopedComparison(){
-  const box=el("syncCompareBox");if(!box)return;const opts=_readExportScopeControls("cmp",false);if(!opts)return;box.innerHTML='<span class="small muted">Reading and comparing…</span>';
-  try{const mode=el("cmpSource").value,source=mode==="file"?_COMPARE_BACKUP:await _freshLiveComparisonSource();if(!source)throw new Error("Choose or drop a scheduler JSON backup first.");const r=_comparisonRows(source,opts),label=esc(source.name),detail=r.diffs.length?r.diffs.map(x=>`<tr><td>${esc(x.cat)}</td><td>${esc(x.dept)}</td><td style="text-align:left">${esc(x.item)}</td><td style="text-align:left">${esc(x.local)}</td><td style="text-align:left">${esc(x.other)}</td></tr>`).join(""):`<tr><td colspan="5" style="text-align:left;color:#2c7a4b"><b>No differences found in this selected scope.</b> Checked roster status, roles/types, dates, and schedule cells only; this is not a whole-app exact match.</td></tr>`;
-    if(mode==="live"){_comparisonMismatchCount=r.diffs.length;_applySyncUiState();try{syncNav();}catch(e){}}box.innerHTML=`<div class="small" style="margin-bottom:6px"><b>Source:</b> ${label}<br><b>Checked:</b> ${nfmt(r.checkedPeople)} person/department records and ${nfmt(r.checkedCells)} nonblank schedule coordinates · <b>${nfmt(r.diffs.length)} difference(s)</b>${mode==="live"&&r.diffs.length?"<br><b>Status changed:</b> this browser differs from live; use Review & upload or discard after checking the listed items.":""}</div><div class="tblwrap" style="overflow:auto;max-height:44vh;border-radius:8px"><table class="small" style="min-width:760px;table-layout:auto"><tr><th>Category</th><th>Department</th><th>Person/date</th><th>This device</th><th>${mode==="file"?"Uploaded backup":"Live copy"}</th></tr>${detail}</table></div>`;
+  const box=el("syncCompareBox");if(!box)return;const opts=_readExportScopeControls("cmp",false);if(!opts)return;box.innerHTML='<span class="small muted">Reading and comparing\u2026</span>';
+  try{
+    const mode=el("cmpSource").value,source=mode==="file"?_COMPARE_BACKUP:await _freshLiveComparisonSource();if(!source)throw new Error("Choose or drop a scheduler JSON backup first.");
+    const r=_compareScoped(source,opts),label=esc(source.name),n=r.changes.length;
+    const W=_diffWording("this device",mode==="file"?"backup file":"live copy",{conflictTitle:"Both copies hold a value and they differ",otherTitle:"Present on one side only",plainTitle:"Present on one side only",noun:"difference"});
+    const c2=_collapseScheduleLines(r.changes,r.conflicts),secs=_diffSectionsModel(c2.changes,c2.conflicts).filter(S=>S.items.length);
+    const cards=secs.map((S,i)=>_diffSectionCardHtml(S,{W,noCheck:true,mt:i?"0":"6px"})).join("");
+    const none=`<div class="small" style="color:#2c7a4b;margin-top:6px"><b>No differences found in this selected scope.</b> Compared roster, schedule, demand, leave requests and check-ins for the chosen departments, people and dates${opts.scope==="all"&&!opts.dept?", plus department and app-wide settings":""}.</div>`;
+    if(mode==="live"){_comparisonMismatchCount=n;_applySyncUiState();try{syncNav();}catch(e){}}
+    box.innerHTML=`<div class="small" style="margin-bottom:6px"><b>Source:</b> ${label}<br><b>${nfmt(n)} difference${n===1?"":"s"}</b> in the chosen scope. Each line shows what this device holds and what the other copy holds.${mode==="live"&&n?"<br><b>Status changed:</b> this browser differs from live; use Review & upload or discard after checking the listed items.":""}</div><div style="overflow:auto;max-height:44vh;border:1px solid var(--line);border-radius:8px;padding:6px 6px 0">${cards||none}</div>`;
   }catch(e){box.innerHTML=`<div class="mflag"><b>Comparison could not run.</b> ${esc(e.message||String(e))}</div>`;}
 }
 async function compareWithServer(){return runScopedComparison();}
@@ -46073,13 +46340,48 @@ function seedRoster(){try{
 /* AUDIT S1-04: two tabs of the same browser share localStorage (dirty flags, merge bases, cached rows) but have separate memory, so each tab silently overwrites the
    other's unsent work and persisted state. Detect another live tab and say so, loudly, instead of failing silently. */
 (function _hotelTabGuard(){
-  const TAB_ID=Math.random().toString(36).slice(2)+Date.now().toString(36),EXPIRE_MS=75000,BEAT_MS=3000;let lastOtherLive=0,banner=null,ch=null;
-  function setBanner(on){try{if(on&&!banner){banner=document.createElement("div");banner.setAttribute("role","alert");banner.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:99999;max-width:92vw;background:#fff3cd;color:#5c4400;border:1px solid #e0c060;border-left:5px solid #c9891b;border-radius:8px;padding:8px 14px;font:13px/1.35 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.25)";banner.textContent="This scheduler is also open in another browser tab or window on this device. Edits made in both can overwrite each other and unsent changes can be lost - please keep only one open (to cover two departments, use one tab with each department's PIN).";document.body.appendChild(banner);}if(banner)banner.style.display=on?"block":"none";}catch(e){}}
-  function onBeat(m){if(!m||typeof m!=="object"||m.id===TAB_ID||typeof m.ts!=="number")return;if(m.closing){lastOtherLive=0;return;}lastOtherLive=Date.now();setBanner(true);/* Any other open tab shares this browser's saved data - live or not */}
-  try{if(typeof BroadcastChannel==="function"){ch=new BroadcastChannel("hotel-scheduler-tabs");ch.onmessage=function(e){onBeat(e.data);};}}catch(e){ch=null;}
-  if(!ch){try{window.addEventListener("storage",function(e){if(e.key==="hotel_tab_beat"&&e.newValue){try{onBeat(JSON.parse(e.newValue));}catch(x){}}});}catch(e){}}
-  setInterval(function(){const m={id:TAB_ID,ts:Date.now(),live:!!DB};try{if(ch)ch.postMessage(m);else localStorage.setItem("hotel_tab_beat",JSON.stringify(m));}catch(e){}if(banner&&banner.style.display!=="none"&&Date.now()-lastOtherLive>EXPIRE_MS)setBanner(false);},BEAT_MS);
-  try{window.addEventListener("pagehide",function(){try{if(ch)ch.postMessage({id:TAB_ID,ts:Date.now(),live:false,closing:true});}catch(e){}});}catch(e){}
+  /* Warns when this scheduler is open in more than one tab or window of this browser, because they share saved data and can overwrite each other.
+     Every tab announces itself every 3 s and answers a presence check at once, so a tab that was closed, crashed or frozen disappears from the list
+     within about 12 s (an orderly close is announced and removes it immediately). The warning names the page(s) it can see and can be hidden for the
+     tabs seen so far; a tab opened later brings it back. */
+  const TAB_ID=Math.random().toString(36).slice(2)+Date.now().toString(36),EXPIRE_MS=12000,BEAT_MS=3000;
+  const others=new Map(),dismissed=new Set();let banner=null,textEl=null,ch=null,gone=false;/* gone: this tab has said goodbye and must not announce itself again */
+  const myPage=()=>{try{return decodeURIComponent((location.pathname||"").split("/").pop()||"index.html");}catch(e){return "";}};
+  const me=extra=>Object.assign({id:TAB_ID,ts:Date.now(),live:!!DB,page:myPage(),vis:document.visibilityState},extra||{});
+  const send=m=>{if(gone&&!m.closing)return;try{if(ch)ch.postMessage(m);else localStorage.setItem("hotel_tab_beat",JSON.stringify(m));}catch(e){}};
+  function ensureBanner(){
+    if(banner)return;
+    banner=document.createElement("div");banner.setAttribute("role","alert");
+    banner.style.cssText="position:fixed;left:50%;transform:translateX(-50%);bottom:12px;z-index:99999;max-width:92vw;background:#fff3cd;color:#5c4400;border:1px solid #e0c060;border-left:5px solid #c9891b;border-radius:8px;padding:8px 14px;font:13px/1.35 system-ui,sans-serif;box-shadow:0 2px 10px rgba(0,0,0,.25);display:flex;gap:12px;align-items:flex-start";
+    textEl=document.createElement("span");banner.appendChild(textEl);
+    const hide=document.createElement("button");hide.type="button";hide.textContent="Hide";hide.title="Hide this warning for the tabs seen now";
+    hide.style.cssText="flex:0 0 auto;font:12px system-ui,sans-serif;padding:2px 8px;border:1px solid #c9a647;border-radius:5px;background:#fff;color:#5c4400;cursor:pointer";
+    hide.onclick=function(){others.forEach((v,id)=>dismissed.add(id));paint();};banner.appendChild(hide);document.body.appendChild(banner);
+  }
+  function paint(){
+    try{
+      const now=Date.now();others.forEach((v,id)=>{if(now-v.seen>EXPIRE_MS){others.delete(id);dismissed.delete(id);}});
+      const live=[...others.entries()].filter(([id])=>!dismissed.has(id));
+      if(!live.length){if(banner)banner.style.display="none";return;}
+      ensureBanner();
+      const pages=[...new Set(live.map(([id,v])=>(v.page||"this page")+(v.vis==="hidden"?" (in the background)":"")))];
+      textEl.textContent="This scheduler is also open in another browser tab or window on this device ("+pages.join(", ")+"). Edits made in both can overwrite each other and unsent changes can be lost - please keep only one open (to cover two departments, use one tab with each department's PIN).";
+      banner.style.display="flex";
+    }catch(e){}
+  }
+  function onMsg(m){
+    if(!m||typeof m!=="object"||m.id===TAB_ID||typeof m.ts!=="number")return;
+    if(m.closing){others.delete(m.id);dismissed.delete(m.id);paint();return;}
+    others.set(m.id,{seen:Date.now(),page:m.page||"",vis:m.vis||""});
+    if(m.ping)send(me());/* answer a presence check immediately, even from a background tab */
+    paint();
+  }
+  try{if(typeof BroadcastChannel==="function"){ch=new BroadcastChannel("hotel-scheduler-tabs");ch.onmessage=function(e){onMsg(e.data);};}}catch(e){ch=null;}
+  if(!ch){try{window.addEventListener("storage",function(e){if(e.key==="hotel_tab_beat"&&e.newValue){try{onMsg(JSON.parse(e.newValue));}catch(x){}}});}catch(e){}}
+  setInterval(function(){send(me(others.size?{ping:true}:null));paint();},BEAT_MS);
+  try{document.addEventListener("visibilitychange",function(){send(me(others.size?{ping:true}:null));});}catch(e){}
+  try{window.addEventListener("pageshow",function(e){if(e&&e.persisted){gone=false;send(me({ping:true}));}});}catch(e){}
+  try{window.addEventListener("pagehide",function(){send(me({closing:true}));gone=true;});}catch(e){}
 })();
 </script>
 </body>
