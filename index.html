@@ -16336,7 +16336,7 @@ function renderDemand(){
     // an in-progress render()" bug this guards against.
     if(_demandCommitInProgress)return;
     _demandCommitInProgress=true;
-    const k=e.target.dataset.dk,i=+e.target.dataset.day;DEMAND[_dk][i]=DEMAND[_dk][i]||{};const val=e.target.value.trim();
+    const k=e.target.dataset.dk,i=+e.target.dataset.day;/* A live pull can replace DEMAND while this cell is focused (render is deferred during editing), dropping this week's key; recreate it so the edit is kept instead of throwing. */if(!DEMAND[_dk]||typeof DEMAND[_dk]!=="object")DEMAND[_dk]={};DEMAND[_dk][i]=DEMAND[_dk][i]||{};const val=e.target.value.trim();
     if(!EDIT||weekLocked()){renderDemand();setTimeout(()=>{_demandCommitInProgress=false;},0);return;}
     let raw=(val||"").replace(/[^0-9.\-]/g,"");
     if(raw===""){delete DEMAND[_dk][i][k];}
@@ -22943,6 +22943,7 @@ function _cfgCompareView(depts){
 // thing, so a change from one spelling to another is not a change either.
 function _staffFieldMeansSame(field,a,b){
   if(_sameValue(a,b))return true;
+  if(field==="paycomBadgeNumber"||field==="paycomEmployeeId"){const s=v=>v==null?"":String(v).replace(/[\s\u00a0\u200b]/g,"");return s(a)===s(b);}
   if(field==="employed"){
     const on=v=>v!==false;          // exactly how the rest of this file reads it
     return on(a)===on(b);
@@ -24109,17 +24110,19 @@ function _reviewedScheduleKeysForLines(lines,assign){
   });
   return out;
 }
+/* Grouped review lines ("DB demand Thu (date): 3 fields differ\u0001line\nline") carry their member lines after \u0001; expand them so every field is matched. */
+function _expandGroupedDiffLines(lines){const out=[];(lines||[]).forEach(l=>{const s=String(l),i=s.indexOf("\u0001");if(i<0){out.push(s);return;}out.push(s.slice(0,i));s.slice(i+1).split("\n").forEach(x=>{if(x)out.push(x);});});return out;}
 function _reviewedDemandWeeksForLines(lines,demand){
   const out=new Set(),view=_demandDateView(demand||DEMAND);
-  (lines||[]).forEach(line=>{
+  _expandGroupedDiffLines(lines).forEach(line=>{
     const m=String(line).match(/^((?:DT|DB)) demand (20\d\d-\d\d-\d\d) \w{3} — /);if(!m)return;
     const property=m[1]==="DB"?"DBPROP":"DTPROP",rec=view.get(property+"\u0000"+m[2]);if(rec)rec.weeks.forEach(k=>out.add(k));
   });
   return out;
 }
 function _applyUnselectedGranularDiffs(choice,liveSnapshot){
-  if(!choice||!Array.isArray(choice.allRawLines)||!Array.isArray(choice.selectedLines))return;const selected=new Set(choice.selectedLines),liveSched={};DEPT_KEYS.forEach(d=>liveSched[d]=_assignmentDateView(liveSnapshot.assign,d));const liveDem=_demandDateView(liveSnapshot.demand);
-  choice.allRawLines.forEach(line=>{if(selected.has(line))return;let m=String(line).match(/^(.*?) — (.+?) \w{3} \((20\d\d-\d\d-\d\d)\): /);if(m){const d=DEPT_KEYS.find(x=>deptLabel(x)===m[2]);if(d){const r=liveSched[d].get(m[1]+"\u0000"+m[3]);_setScheduleDateValue(ASSIGN,d,m[1],m[3],r?r.value:null);}return;}m=String(line).match(/^((?:DT|DB)) demand (20\d\d-\d\d-\d\d) \w{3} — ([^:]+): /);if(m){const property=m[1]===propertyLabelForDept("DBHSK")?"DBPROP":"DTPROP",d=representativeDeptForProperty(property,DEPT),field=Object.keys(DEMAND_FIELD_LABELS).find(k=>DEMAND_FIELD_LABELS[k]===m[3]);if(field){const r=liveDem.get(property+"\u0000"+m[2]),v=r&&r.fields?r.fields[field]:null;_setDemandDateField(d,m[2],field,v);}}});
+  if(!choice||!Array.isArray(choice.allRawLines)||!Array.isArray(choice.selectedLines))return;const selected=new Set(_expandGroupedDiffLines(choice.selectedLines)),liveSched={};DEPT_KEYS.forEach(d=>liveSched[d]=_assignmentDateView(liveSnapshot.assign,d));const liveDem=_demandDateView(liveSnapshot.demand);
+  _expandGroupedDiffLines(choice.allRawLines).forEach(line=>{if(selected.has(line))return;let m=String(line).match(/^(.*?) — (.+?) \w{3} \((20\d\d-\d\d-\d\d)\): /);if(m){const d=DEPT_KEYS.find(x=>deptLabel(x)===m[2]);if(d){const r=liveSched[d].get(m[1]+"\u0000"+m[3]);_setScheduleDateValue(ASSIGN,d,m[1],m[3],r?r.value:null);}return;}m=String(line).match(/^((?:DT|DB)) demand (20\d\d-\d\d-\d\d) \w{3} — ([^:]+): /);if(m){const property=m[1]===propertyLabelForDept("DBHSK")?"DBPROP":"DTPROP",d=representativeDeptForProperty(property,DEPT),field=Object.keys(DEMAND_FIELD_LABELS).find(k=>DEMAND_FIELD_LABELS[k]===m[3]);if(field){const r=liveDem.get(property+"\u0000"+m[2]),v=r&&r.fields?r.fields[field]:null;_setDemandDateField(d,m[2],field,v);}}});
   const p=_syncApplying;_syncApplying=true;try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);}finally{_syncApplying=p;}
 }
 
@@ -24211,7 +24214,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _granularDirty=!!(Object.keys(_dirtyAssignRows).length||Object.keys(_dirtyDemandWeeks).length||Object.keys(_dirtyLeaveIds).length||Object.keys(_dirtyCheckinRows).length||_dirtyConfig);
   // A durable Pending/revision marker without its row registries is still evidence of local work. Compare every
   // syncable row in that case; an empty scope would hide the differences and let the following pull discard them.
-  const _diffScope=(_pendingAtReviewStart&&_granularDirty)?{scheduleKeys:new Set(Object.keys(_dirtyAssignRows)),demandKeys:new Set(Object.keys(_dirtyDemandWeeks)),leaveIds:new Set(Object.keys(_dirtyLeaveIds)),checkinKeys:new Set(Object.keys(_dirtyCheckinRows))}:undefined;
+  const _diffScope=(_pendingAtReviewStart&&_granularDirty)?{scheduleKeys:new Set(Object.keys(_dirtyAssignRows)),demandKeys:new Set([...Object.keys(_dirtyDemandWeeks),...Object.keys((localSnapshot||{}).demand||{}).filter(w=>{const lv=(localSnapshot.demand||{})[w],rv=((liveSnapshot||{}).demand||{})[w];const has=o=>!!o&&typeof o==="object"&&Object.values(o).some(d=>d&&typeof d==="object"&&Object.keys(d).length);return has(lv)&&!has(rv);})]),leaveIds:new Set(Object.keys(_dirtyLeaveIds)),checkinKeys:new Set(Object.keys(_dirtyCheckinRows))}:undefined;
   const {changes,conflicts}=analyzeUploadChanges(localSnapshot,liveSnapshot,_diffScope);
   // Merges the roster/settings diff (see analyzeCfgChanges()'s own comment for the full "generic banner instead of
   // an itemized list" gap this closes) into the SAME changes/conflicts arrays the schedule diff already populates —
