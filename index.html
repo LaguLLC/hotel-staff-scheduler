@@ -4497,7 +4497,13 @@ function fixupThursdayWorkweeksRev813(){
   try{
     if(CFG._allDeptThursdayWorkweekMigRev813)return;
     const target=4,oldDow={};DEPT_KEYS.forEach(dp=>{oldDow[dp]=dowOffset(dp);});
-    DEPT_KEYS.forEach(dp=>{CFG[dp].weekStartDow=target;CFG[dp].weekStartHistory=[{from:"0001-01-01",dow:target,changedAt:todayISO()}];});
+    DEPT_KEYS.forEach(dp=>{
+      /* A department that already starts on Thursday with a Thursday-only (or no) history is left exactly as it is: rewriting it gave every fresh
+         browser a new changedAt that differed from live's. Anything else is reset to Thursday as before. */
+      const h=CFG[dp].weekStartHistory,pure=!Array.isArray(h)||!h.length||h.every(x=>x&&Number(x.dow)===target);
+      if(oldDow[dp]===target&&Number(CFG[dp].weekStartDow)===target&&pure)return;
+      CFG[dp].weekStartDow=target;CFG[dp].weekStartHistory=[{from:"0001-01-01",dow:target,changedAt:todayISO()}];
+    });
     DEPT_KEYS.forEach(dp=>{
       if(oldDow[dp]===target)return;
       _migrateRowDayWeeks(ASSIGN,dp,oldDow[dp],target,null);
@@ -4529,7 +4535,7 @@ const DBGS_CLUB_SOURCE_SUPPLEMENT_V281={"2026-10-22":{"Neil":{"2":"R-OFF","6":"R
 const DBGS_SOURCE_PARITY_ASSIGN_V28=[{"week":"2026-06-18","name":"Julieann Ereno","day":"4","old":"06:00-14:00/TRN","new":"06:00-14:00 TRN, CM-11:00-13:00"},{"week":"2026-06-18","name":"Allen Kyle Lulu","day":"4","old":"12:30-20:30","new":"12:30-20:30, CM-11:00-13:00"},{"week":"2026-06-18","name":"Kathrina Austria","day":"4","old":"OFF, 11:00-13:00","new":"OFF, CM-11:00-13:00"},{"week":"2026-06-18","name":"Warline Sanchez","day":"2","old":"R-OFF","new":"R-OFF Stand by"},{"week":"2026-06-18","name":"Warline Sanchez","day":"4","old":"R-OFF, 11:00-13:00","new":"R-OFF, CM-11:00-13:00"},{"week":"2026-06-18","name":"Joyce Sontillanosa","day":"4","old":"12:30-20:00","new":"12:30-20:00, CM-11:00-13:00"},{"week":"2026-06-25","name":"Kathrina Austria","day":"4","old":"R-OFF","new":"R-OFF 14:00-15:30 TRAINING"},{"week":"2026-06-25","name":"Warline Sanchez","day":"4","old":"R-OFF","new":"R-OFF 09:00-10:30 TRAINING"},{"week":"2026-07-02","name":"Allen Kyle Lulu","day":"4","old":"OFF","new":"OFF NOT HERE"},{"week":"2026-07-02","name":"Joyce Sontillanosa","day":"4","old":"OFF","new":"OFF NOT HERE"},{"week":"2026-07-16","name":"Julieann Ereno","day":"4","old":"06:00-12:00","new":"06:00-12:00, 09:00-12:00 TRN"},{"week":"2026-07-16","name":"Kathrina Austria","day":"4","old":"12:30-20:30","new":"12:30-20:30, 13:00-16:00 TRN"},{"week":"2026-07-23","name":"Julieann Ereno","day":"1","old":"PTO","new":"BIRTHDAY PTO"},{"week":"2026-08-20","name":"Neil","day":"2","old":"R-OFF, 11AM-1PM","new":"R-OFF"},{"week":"2026-09-03","name":"Neil","day":"0","old":"06:30-15:00, 2:30PM TRN","new":"06:30-15:00"},{"week":"2026-09-03","name":"Juvir Mattson","day":"5","old":"12:30-20:30","new":"12:30-20:30, 14:00-16:00"},{"week":"2026-09-10","name":"Juvir Mattson","day":"1","old":"9-12 DGT 1, 12:30-03:30","new":"9-12 DGT 1, 12:30-3:30PM"},{"week":"2026-09-17","name":"Neil","day":"5","old":"06:30-15:00, 9AM-10:30 TRN","new":"06:30-15:00"},{"week":"2026-09-24","name":"Juvir Mattson","day":"0","old":null,"new":"06:00-13:30, 3-4:30PM"},{"week":"2026-09-24","name":"Juvir Mattson","day":"1","old":null,"new":"OFF"},{"week":"2026-09-24","name":"Juvir Mattson","day":"2","old":null,"new":"OFF"},{"week":"2026-09-24","name":"Juvir Mattson","day":"3","old":null,"new":"06:00-14:00"},{"week":"2026-09-24","name":"Juvir Mattson","day":"4","old":null,"new":"12:30-20:30"},{"week":"2026-09-24","name":"Juvir Mattson","day":"5","old":null,"new":"12:30-20:30"},{"week":"2026-09-24","name":"Juvir Mattson","day":"6","old":null,"new":"09:00-16:00, DGT 2"},{"week":"2026-10-01","name":"Juvir Mattson","day":"0","old":null,"new":"12:30-20:30"},{"week":"2026-10-01","name":"Juvir Mattson","day":"1","old":null,"new":"OFF"},{"week":"2026-10-01","name":"Juvir Mattson","day":"2","old":null,"new":"12:30-20:30"},{"week":"2026-10-01","name":"Juvir Mattson","day":"3","old":null,"new":"06:00-14:00"},{"week":"2026-10-01","name":"Juvir Mattson","day":"4","old":null,"new":"OFF"},{"week":"2026-10-01","name":"Juvir Mattson","day":"5","old":null,"new":"12:30-20:30"},{"week":"2026-10-01","name":"Juvir Mattson","day":"6","old":null,"new":"06:00-14:00"},{"week":"2026-11-12","name":"Allen Kyle Lulu","day":"5","old":"WORK, OFF","new":"WORK"}];
 // DB demand is one shared DBPROP row. Covers remain neutral Covers 1/2/3 in workbook order; transportation
 // preserves pickup/drop-off labels instead of summing unlike rows; dated event notes stay on their source day.
-const DBGS_SOURCE_PARITY_DEMAND_V28={"2026-06-04":{"0":{"covers1":38,"covers2":32,"covers3":43},"1":{"covers1":43,"covers2":33,"covers3":48},"2":{"covers1":48,"covers2":25,"covers3":27},"3":{"covers1":27,"covers2":10,"covers3":16},"4":{"covers1":16,"covers2":12,"covers3":21},"5":{"covers1":21,"covers2":15,"covers3":18},"6":{"covers1":18,"covers2":9,"covers3":19}},"2026-06-11":{"0":{"covers1":20,"covers2":16,"covers3":23},"1":{"covers1":23,"covers2":20,"covers3":45},"2":{"covers1":45,"covers2":29,"covers3":40},"3":{"covers1":40,"covers2":21,"covers3":32},"4":{"covers1":32,"covers2":23,"covers3":30},"5":{"covers1":30,"covers2":30,"covers3":115},"6":{"covers1":115,"covers2":106,"covers3":134}},"2026-06-18":{"0":{"covers1":132,"covers2":108,"covers3":121},"1":{"covers1":121,"covers2":58,"covers3":60},"2":{"covers1":60,"covers2":19,"covers3":24},"3":{"covers1":24,"covers2":8,"covers3":15},"4":{"covers1":15,"covers2":15,"covers3":17},"5":{"covers1":17,"covers2":17,"covers3":28},"6":{"covers1":28,"covers2":23,"covers3":25}},"2026-06-25":{"0":{"covers1":42,"covers2":27,"covers3":28},"1":{"covers1":28,"covers2":13,"covers3":31},"2":{"covers1":31,"covers2":28,"covers3":30},"3":{"covers1":30,"covers2":25,"covers3":25},"4":{"covers1":23,"covers2":8,"covers3":19},"5":{"covers1":19,"covers2":12,"covers3":20},"6":{"covers1":20,"covers2":19,"covers3":27}},"2026-07-02":{"0":{"covers1":27,"covers2":27,"covers3":38},"1":{"covers1":38,"covers2":34,"covers3":43},"2":{"covers1":43,"covers2":34,"covers3":42},"3":{"covers1":42,"covers2":26,"covers3":26},"4":{"covers1":26,"covers2":19,"covers3":23},"5":{"covers1":23,"covers2":14,"covers3":14},"6":{"covers1":14,"covers2":10,"covers3":18}},"2026-07-09":{"0":{"covers1":40,"covers2":28,"covers3":39},"1":{"covers1":39,"covers2":22,"covers3":25},"2":{"covers1":25,"covers2":15,"covers3":19},"3":{"covers1":19,"covers2":8,"covers3":19},"4":{"covers1":19,"covers2":16,"covers3":16},"5":{"covers1":16,"covers2":16,"covers3":16},"6":{"covers1":16,"covers2":7,"covers3":23}},"2026-07-16":{"0":{"covers1":24,"covers2":16,"covers3":31},"1":{"covers1":31,"covers2":26,"covers3":38},"2":{"covers1":38,"covers2":29,"covers3":35},"3":{"covers1":35,"covers2":27,"covers3":29},"4":{"covers1":29,"covers2":25,"covers3":35},"5":{"covers1":35,"covers2":19,"covers3":21},"6":{"covers1":21,"covers2":17,"covers3":21}},"2026-07-23":{"0":{"covers1":21,"covers2":14,"covers3":18},"1":{"covers1":18,"covers2":8,"covers3":11},"2":{"covers1":11,"covers2":7,"covers3":12},"3":{"covers1":12,"covers2":8,"covers3":24},"4":{"covers1":24,"covers2":24,"covers3":33},"5":{"covers1":33,"covers2":30,"covers3":33},"6":{"covers1":33,"covers2":19,"covers3":23}},"2026-07-30":{"0":{"covers1":37,"covers2":26,"covers3":35},"1":{"covers1":35,"covers2":17,"covers3":24},"2":{"covers1":24,"covers2":14,"covers3":22},"3":{"covers1":22,"covers2":22,"covers3":25},"4":{"covers1":23,"covers2":19,"covers3":27},"5":{"covers1":27,"covers2":18,"covers3":23},"6":{"covers1":23,"covers2":20,"covers3":20}},"2026-08-06":{"0":{"covers1":39,"covers2":17,"covers3":40},"1":{"covers1":40,"covers2":24,"covers3":41},"2":{"covers1":41,"covers2":38,"covers3":64},"3":{"covers1":64,"covers2":50,"covers3":50},"4":{"covers1":50,"covers2":31,"covers3":39},"5":{"covers1":39,"covers2":16,"covers3":38},"6":{"covers1":38,"covers2":34,"covers3":43}},"2026-08-13":{"0":{"covers1":35,"covers2":22,"covers3":32},"1":{"covers1":32,"covers2":28,"covers3":47},"2":{"covers1":47,"covers2":37,"covers3":48},"3":{"covers1":48,"covers2":30,"covers3":35},"4":{"covers1":35,"covers2":25,"covers3":29},"5":{"covers1":29,"covers2":14,"covers3":22},"6":{"covers1":22,"covers2":16,"covers3":21}},"2026-08-20":{"0":{"covers1":21,"covers2":15,"covers3":17},"1":{"covers1":17,"covers2":13,"covers3":28},"2":{"covers1":28,"covers2":18,"covers3":30},"3":{"covers1":30,"covers2":30,"covers3":38},"4":{"covers1":38,"covers2":31,"covers3":44},"5":{"covers1":44,"covers2":25,"covers3":25},"6":{"covers1":25,"covers2":19,"covers3":32}},"2026-08-27":{"0":{"covers1":51,"covers2":35,"covers3":46},"1":{"covers1":46,"covers2":34,"covers3":43},"2":{"covers1":43,"covers2":28,"covers3":31},"3":{"covers1":31,"covers2":12,"covers3":16},"4":{"covers1":14,"covers2":7,"covers3":9},"5":{"covers1":9,"covers2":9,"covers3":12},"6":{"covers1":12,"covers2":5,"covers3":7}},"2026-09-03":{"0":{"covers1":21,"covers2":19,"covers3":22},"1":{"covers1":22,"covers2":11,"covers3":20},"2":{"covers1":20,"covers2":15,"covers3":21},"3":{"covers1":21,"covers2":18,"covers3":18},"4":{"covers1":18,"covers2":11,"covers3":15},"5":{"covers1":15,"covers2":11,"covers3":11},"6":{"covers1":11,"covers2":7,"covers3":9}},"2026-09-10":{"0":{"covers1":22,"covers2":15,"covers3":26},"1":{"covers1":26,"covers2":15,"covers3":24},"2":{"covers1":24,"covers2":15,"covers3":28},"3":{"covers1":28,"covers2":14,"covers3":19},"4":{"covers1":19,"covers2":11,"covers3":15},"5":{"covers1":15,"covers2":11,"covers3":15},"6":{"covers1":15,"covers2":10,"covers3":18}},"2026-09-17":{"0":{"covers1":16,"covers2":13,"covers3":15},"1":{"covers1":17,"covers2":11,"covers3":19},"2":{"covers1":19,"covers2":11,"covers3":47},"3":{"covers1":47,"covers2":29,"covers3":31},"4":{"covers1":31,"covers2":29,"covers3":51},"5":{"covers1":51,"covers2":35,"covers3":46},"6":{"covers1":46,"covers2":33,"covers3":43}},"2026-09-24":{"0":{"covers1":43,"covers2":24,"covers3":29},"1":{"covers1":29,"covers2":20,"covers3":22},"2":{"covers1":22,"covers2":10,"covers3":17},"3":{"covers1":17,"covers2":15,"covers3":15},"4":{"covers1":15,"covers2":3,"covers3":8},"5":{"covers1":8,"covers2":5,"covers3":6},"6":{"covers1":6,"covers2":0,"covers3":5}},"2026-10-01":{"0":{"covers1":21,"covers2":11,"covers3":22},"1":{"covers1":22,"covers2":22,"covers3":34},"2":{"covers1":34,"covers2":29,"covers3":33},"3":{"covers1":33,"covers2":22,"covers3":22},"4":{"covers1":22,"covers2":13,"covers3":13},"5":{"covers1":13,"covers2":6,"covers3":6},"6":{"covers1":6,"covers2":6,"covers3":6}},"2026-10-08":{"0":{"covers1":36,"covers2":28,"covers3":35},"1":{"covers1":35,"covers2":32,"covers3":47,"transportation":"Pick up: 2; AP JL941 4 pax - Leo"},"2":{"covers1":47,"covers2":36,"covers3":53},"3":{"covers1":53,"covers2":28,"covers3":44,"transportation":"Pick up: 1; Drop off: 1"},"4":{"covers1":50,"covers2":40,"covers3":40},"5":{"covers1":40,"covers2":30,"covers3":30},"6":{"covers1":30,"covers2":10,"covers3":10,"transportation":"Pick up: 1"}},"2026-10-15":{"0":{"covers1":15,"covers2":9,"covers3":11,"events":"LANDSTAR HANWHA PEOPLE LIFE GRP — GOLF BAGS 07-08AM"},"1":{"covers1":11,"covers2":4,"covers3":16,"transportation":"Pick up: 1","events":"LANDSTAR HANWHA PEOPLE LIFE GRP — GRP DEP 12PM / 100 PAX"},"2":{"covers1":16,"covers2":13,"covers3":17},"3":{"covers1":17,"covers2":11,"covers3":19,"transportation":"Pick up: 1","events":"2 pax, 1 pax @ 15:30 // Kanai & Yeo"},"4":{"covers1":19,"covers2":11,"covers3":47},"5":{"covers1":47,"covers2":29,"covers3":31},"6":{"covers1":31,"covers2":29,"covers3":57,"transportation":"Pick up: 1; 5 pax H2B Spa therapis for DT"}},"2026-10-29":{"0":{"transportation":"Pick up: 11am Interns; Intern transfer to DMV & ABC @ 11am - Transfer to Agana to p/u HC and then DMV to p/u ABC"}},"2026-11-26":{"0":{"events":"Thanks Giving"},"1":{"events":"Black Friday"}}};
+const DBGS_SOURCE_PARITY_DEMAND_V28={"2026-06-04":{"0":{"covers1":38,"covers2":32,"covers3":43},"1":{"covers1":43,"covers2":33,"covers3":48},"2":{"covers1":48,"covers2":25,"covers3":27},"3":{"covers1":27,"covers2":10,"covers3":16},"4":{"covers1":16,"covers2":12,"covers3":21},"5":{"covers1":21,"covers2":15,"covers3":18},"6":{"covers1":18,"covers2":9,"covers3":19}},"2026-06-11":{"0":{"covers1":20,"covers2":16,"covers3":23},"1":{"covers1":23,"covers2":20,"covers3":45},"2":{"covers1":45,"covers2":29,"covers3":40},"3":{"covers1":40,"covers2":21,"covers3":32},"4":{"covers1":32,"covers2":23,"covers3":30},"5":{"covers1":30,"covers2":30,"covers3":115},"6":{"covers1":115,"covers2":106,"covers3":134}},"2026-06-18":{"0":{"covers1":132,"covers2":108,"covers3":121},"1":{"covers1":121,"covers2":58,"covers3":60},"2":{"covers1":60,"covers2":19,"covers3":24},"3":{"covers1":24,"covers2":8,"covers3":15},"4":{"covers1":15,"covers2":15,"covers3":17},"5":{"covers1":17,"covers2":17,"covers3":28},"6":{"covers1":28,"covers2":23,"covers3":25}},"2026-06-25":{"0":{"covers1":42,"covers2":27,"covers3":28},"1":{"covers1":28,"covers2":13,"covers3":31},"2":{"covers1":31,"covers2":28,"covers3":30},"3":{"covers1":30,"covers2":25,"covers3":25},"4":{"covers1":23,"covers2":8,"covers3":19},"5":{"covers1":19,"covers2":12,"covers3":20},"6":{"covers1":20,"covers2":19,"covers3":27}},"2026-07-02":{"0":{"covers1":27,"covers2":27,"covers3":38},"1":{"covers1":38,"covers2":34,"covers3":43},"2":{"covers1":43,"covers2":34,"covers3":42},"3":{"covers1":42,"covers2":26,"covers3":26},"4":{"covers1":26,"covers2":19,"covers3":23},"5":{"covers1":23,"covers2":14,"covers3":14},"6":{"covers1":14,"covers2":10,"covers3":18}},"2026-07-09":{"0":{"covers1":40,"covers2":28,"covers3":39},"1":{"covers1":39,"covers2":22,"covers3":25},"2":{"covers1":25,"covers2":15,"covers3":19},"3":{"covers1":19,"covers2":8,"covers3":19},"4":{"covers1":19,"covers2":16,"covers3":16},"5":{"covers1":16,"covers2":16,"covers3":16},"6":{"covers1":16,"covers2":7,"covers3":23}},"2026-07-16":{"0":{"covers1":24,"covers2":16,"covers3":31},"1":{"covers1":31,"covers2":26,"covers3":38},"2":{"covers1":38,"covers2":29,"covers3":35},"3":{"covers1":35,"covers2":27,"covers3":29},"4":{"covers1":29,"covers2":25,"covers3":35},"5":{"covers1":35,"covers2":19,"covers3":21},"6":{"covers1":21,"covers2":17,"covers3":21}},"2026-07-23":{"0":{"covers1":21,"covers2":14,"covers3":18},"1":{"covers1":18,"covers2":8,"covers3":11},"2":{"covers1":11,"covers2":7,"covers3":12},"3":{"covers1":12,"covers2":8,"covers3":24},"4":{"covers1":24,"covers2":24,"covers3":33},"5":{"covers1":33,"covers2":30,"covers3":33},"6":{"covers1":33,"covers2":19,"covers3":23}},"2026-07-30":{"0":{"covers1":37,"covers2":26,"covers3":35},"1":{"covers1":35,"covers2":17,"covers3":24},"2":{"covers1":24,"covers2":14,"covers3":22},"3":{"covers1":22,"covers2":22,"covers3":25},"4":{"covers1":23,"covers2":19,"covers3":27},"5":{"covers1":27,"covers2":18,"covers3":23},"6":{"covers1":23,"covers2":20,"covers3":20}},"2026-08-06":{"0":{"covers1":39,"covers2":17,"covers3":40},"1":{"covers1":40,"covers2":24,"covers3":41},"2":{"covers1":41,"covers2":38,"covers3":64},"3":{"covers1":64,"covers2":50,"covers3":50},"4":{"covers1":50,"covers2":31,"covers3":39},"5":{"covers1":39,"covers2":16,"covers3":38},"6":{"covers1":38,"covers2":34,"covers3":43}},"2026-08-13":{"0":{"covers1":35,"covers2":22,"covers3":32},"1":{"covers1":32,"covers2":28,"covers3":47},"2":{"covers1":47,"covers2":37,"covers3":48},"3":{"covers1":48,"covers2":30,"covers3":35},"4":{"covers1":35,"covers2":25,"covers3":29},"5":{"covers1":29,"covers2":14,"covers3":22},"6":{"covers1":22,"covers2":16,"covers3":21}},"2026-08-20":{"0":{"covers1":21,"covers2":15,"covers3":17},"1":{"covers1":17,"covers2":13,"covers3":28},"2":{"covers1":28,"covers2":18,"covers3":30},"3":{"covers1":30,"covers2":30,"covers3":38},"4":{"covers1":38,"covers2":31,"covers3":44},"5":{"covers1":44,"covers2":25,"covers3":25},"6":{"covers1":25,"covers2":19,"covers3":32}},"2026-08-27":{"0":{"covers1":51,"covers2":35,"covers3":46},"1":{"covers1":46,"covers2":34,"covers3":43},"2":{"covers1":43,"covers2":28,"covers3":31},"3":{"covers1":31,"covers2":12,"covers3":16},"4":{"covers1":14,"covers2":7,"covers3":9},"5":{"covers1":9,"covers2":9,"covers3":12},"6":{"covers1":12,"covers2":5,"covers3":7}},"2026-09-03":{"0":{"covers1":21,"covers2":19,"covers3":22},"1":{"covers1":22,"covers2":11,"covers3":20},"2":{"covers1":20,"covers2":15,"covers3":21},"3":{"covers1":21,"covers2":18,"covers3":18},"4":{"covers1":18,"covers2":11,"covers3":15},"5":{"covers1":15,"covers2":11,"covers3":11},"6":{"covers1":11,"covers2":7,"covers3":9}},"2026-09-10":{"0":{"covers1":22,"covers2":15,"covers3":26},"1":{"covers1":26,"covers2":15,"covers3":24},"2":{"covers1":24,"covers2":15,"covers3":28},"3":{"covers1":28,"covers2":14,"covers3":19},"4":{"covers1":19,"covers2":11,"covers3":15},"5":{"covers1":15,"covers2":11,"covers3":15},"6":{"covers1":15,"covers2":10,"covers3":18}},"2026-09-17":{"0":{"covers1":16,"covers2":13,"covers3":15},"1":{"covers1":17,"covers2":11,"covers3":19},"2":{"covers1":19,"covers2":11,"covers3":47},"3":{"covers1":47,"covers2":29,"covers3":31},"4":{"covers1":31,"covers2":29,"covers3":51},"5":{"covers1":51,"covers2":35,"covers3":46},"6":{"covers1":46,"covers2":33,"covers3":43}},"2026-09-24":{"0":{"covers1":43,"covers2":24,"covers3":29},"1":{"covers1":29,"covers2":20,"covers3":22},"2":{"covers1":22,"covers2":10,"covers3":17},"3":{"covers1":17,"covers2":15,"covers3":15},"4":{"covers1":15,"covers2":3,"covers3":8},"5":{"covers1":8,"covers2":5,"covers3":6},"6":{"covers1":6,"covers2":0,"covers3":5}},"2026-10-01":{"0":{"covers1":21,"covers2":11,"covers3":22,"occ":0.3697,"arr":45,"dep":33},"1":{"covers1":22,"covers2":22,"covers3":34,"occ":0.4431,"arr":64,"dep":22},"2":{"covers1":34,"covers2":29,"covers3":33,"occ":0.4196,"arr":17,"dep":31},"3":{"covers1":33,"covers2":22,"covers3":22,"occ":0.4196,"arr":35,"dep":41},"4":{"covers1":22,"covers2":13,"covers3":13,"occ":0.3966,"arr":41,"dep":60},"5":{"covers1":13,"covers2":6,"covers3":6,"occ":0.358,"arr":20,"dep":38},"6":{"covers1":6,"covers2":6,"covers3":6,"occ":0.3513,"arr":21,"dep":25}},"2026-10-08":{"0":{"covers1":36,"covers2":28,"covers3":35,"occ":0.523,"arr":88,"dep":39},"1":{"covers1":35,"covers2":32,"covers3":47,"transportation":"Pick up: 2; AP JL941 4 pax - Leo","occ":0.549,"arr":67,"dep":51},"2":{"covers1":47,"covers2":36,"covers3":53,"occ":0.555,"arr":66,"dep":63},"3":{"covers1":53,"covers2":28,"covers3":44,"transportation":"Pick up: 1; Drop off: 1","occ":0.481,"arr":41,"dep":84},"4":{"covers1":50,"covers2":40,"covers3":40,"occ":0.583,"arr":31,"dep":71},"5":{"covers1":40,"covers2":30,"covers3":30,"occ":0.519,"arr":16,"dep":55},"6":{"covers1":30,"covers2":10,"covers3":10,"transportation":"Pick up: 1","occ":0.522,"arr":33,"dep":32}},"2026-10-15":{"0":{"covers1":15,"covers2":9,"covers3":11,"events":"LANDSTAR HANWHA PEOPLE LIFE GRP — GOLF BAGS 07-08AM"},"1":{"covers1":11,"covers2":4,"covers3":16,"transportation":"Pick up: 1","events":"LANDSTAR HANWHA PEOPLE LIFE GRP — GRP DEP 12PM / 100 PAX"},"2":{"covers1":16,"covers2":13,"covers3":17},"3":{"covers1":17,"covers2":11,"covers3":19,"transportation":"Pick up: 1","events":"2 pax, 1 pax @ 15:30 // Kanai & Yeo"},"4":{"covers1":19,"covers2":11,"covers3":47},"5":{"covers1":47,"covers2":29,"covers3":31},"6":{"covers1":31,"covers2":29,"covers3":57,"transportation":"Pick up: 1; 5 pax H2B Spa therapis for DT"}},"2026-10-29":{"0":{"transportation":"Pick up: 11am Interns; Intern transfer to DMV & ABC @ 11am - Transfer to Agana to p/u HC and then DMV to p/u ABC"}},"2026-11-26":{"0":{"events":"Thanks Giving"},"1":{"events":"Black Friday"}}};
 
 function seedDBGSHistoryOnce(){
   // v2 is intentional: an earlier build could set the v1 marker before all Guest Services source weeks were available, leaving the
@@ -13482,7 +13488,7 @@ function _undoBlockedReason(entry,loc){
   if(!loc&&!hasAnyEditAccess())return "View-only mode cannot change history. Unlock a department first.";
   return "";
 }
-function undoAction(){
+function undoAction(){_wkLocalChangeUntil=Date.now()+10000;
   flushPendingUndoBatch();
   if(!UNDO_STACK.length){flashNote("Nothing to undo.");return;}
   const entry=UNDO_STACK[UNDO_STACK.length-1],loc=UNDO_LOCATIONS[UNDO_LOCATIONS.length-1]||null,blocked=_undoBlockedReason(entry,loc);if(blocked){flashNote(blocked);return;}UNDO_STACK.pop();UNDO_LOCATIONS.pop();
@@ -13497,7 +13503,7 @@ function undoAction(){
   }
   _refreshUndoRedoButtons();_blurUndoRedoButtons();
 }
-function redoAction(){
+function redoAction(){_wkLocalChangeUntil=Date.now()+10000;
   flushPendingUndoBatch();
   if(!REDO_STACK.length){flashNote("Nothing to redo.");return;}
   const entry=REDO_STACK[REDO_STACK.length-1],loc=REDO_LOCATIONS[REDO_LOCATIONS.length-1]||null,blocked=_undoBlockedReason(entry,loc);if(blocked){flashNote(blocked);return;}REDO_STACK.pop();REDO_LOCATIONS.pop();
@@ -15313,7 +15319,18 @@ function _renderUndoSoon(){
   const run=()=>{_undoRenderSoonPending=false;const prev=_undoApplying;_undoApplying=true;try{render();}finally{_undoApplying=prev;}};
   if(typeof requestAnimationFrame==="function")requestAnimationFrame(run);else setTimeout(run,0);
 }
-function render(){
+var _wkSeen=null,_wkLocalChangeUntil=0;
+function _checkWorkweekDrift(){
+  try{
+    const cur={};DEPT_KEYS.forEach(d=>{cur[d]=Number((CFG[d]||{}).weekStartDow??4);});
+    if(_wkSeen&&Date.now()>_wkLocalChangeUntil){
+      const ch=DEPT_KEYS.filter(d=>_wkSeen[d]!==cur[d]).map(d=>((CFG[d]||{}).label||d)+": "+DOW_NAMES[_wkSeen[d]]+" \u2192 "+DOW_NAMES[cur[d]]);
+      if(ch.length)setTimeout(()=>{try{flashNote("The workweek start day changed without a change made here ("+ch.join("; ")+"). Week columns now follow it. Backup menu \u2192 Workweek check shows what live holds.");}catch(e){}},300);
+    }
+    _wkSeen=cur;
+  }catch(e){}
+}
+function render(){_checkWorkweekDrift();
   // Cause: el("grid").innerHTML=... (further down) fully replaces the desktop grid table's content on EVERY
   // render() call — but the grid's own horizontally-AND-vertically-scrollable wrapper (the plain overflow:auto div
   // #grid itself lives inside — see that div's own markup) had no scroll-position preservation around this rebuild
@@ -22428,6 +22445,7 @@ function _maybeConfirmVerifiedLocalRevision(){
   if(_outstandingSyncablePushes===0&&!_pushFailureLatched&&!_reviewUploadInProgress&&!_hasPendingApartFromRevision())_confirmLocalSyncRevision();
 }
 function _pushSettled(succeeded,kind){
+  _lastPushSettledAt=Date.now();
   const k=kind||"syncable";_outstandingPushes=Math.max(0,_outstandingPushes-1);if(k!=="aux")_outstandingSyncablePushes=Math.max(0,_outstandingSyncablePushes-1);if(k==="config")_outstandingConfigPushes=Math.max(0,_outstandingConfigPushes-1);
   if(!succeeded)_scheduleFlushRetry();else if(k!=="aux")_maybeConfirmVerifiedLocalRevision();
   if(_outstandingPushes===0){
@@ -22497,7 +22515,50 @@ let _subscriptionGeneration=0;
 let _scheduleReadyWaiters=[];
 function _hasLocalSyncWork(){return !!(PENDING||_pushFailureLatched||_hasDurablePendingWork());}
 function _realtimeTransportHealthy(){if(!_realtimeScheduleReceiving)return false;try{const rt=SUPABASE_CLIENT&&SUPABASE_CLIENT.realtime;if(rt&&typeof rt.isConnected==="function"&&!rt.isConnected())return false;const st=CHAN&&String(CHAN.state||"").toLowerCase();if(st&&st!=="joined")return false;}catch(e){}return true;}
+/* What the header SHOWS. _rawSyncState() is the instantaneous truth; this adds two rules so the label only changes when the result is known:
+   1. work that is already on its way to live (a push in flight, or one that settled within 1.5 s) is not a question for the person, so it
+      never turns the header to "Review needed". A short push is invisible; a longer one reads "Syncing…" after 2.5 s; a reviewed upload reads
+      "Uploading…" and stays "Syncing…" until it has fully settled.
+   2. a momentary live-feed dip (the feed is re-opened after an upload or a pull) must last 4 s before it reads "Retry sync…".
+   Anything that needs the person (a pending review, a sync error, a failed push, offline, a mismatch) is shown at once. */
+var _uiShown=null,_uiSoftSince=0,_uiFeedSince=0,_uiAwaitSince=0,_uiTimer=null,_lastPushSettledAt=0;
+function _syncUiSchedule(ms){if(_uiTimer)return;_uiTimer=setTimeout(()=>{_uiTimer=null;try{_applySyncUiState();}catch(e){}},Math.max(60,ms));}
+function _uiConnecting(){return {status:"connecting…",color:"#c9891b",action:"connecting"};}
+function _uiSyncing(){return {status:"syncing…",color:"#c9891b",action:"syncing"};}
 function _resolvedSyncState(){
+  const raw=_rawSyncState(),now=Date.now();let out=raw;
+  try{
+    const live=!!SUPABASE_CLIENT&&_connectUiPhase!=="connecting";
+    if(!live){_uiSoftSince=0;_uiFeedSince=0;_uiAwaitSince=0;}
+    else{
+      /* "awaiting your choice" is set a moment before the app knows whether a dialog is needed at all; it only counts as a question once it has lasted 300 ms */
+      if(_awaitingSyncChoice){if(!_uiAwaitSince)_uiAwaitSince=now;}else _uiAwaitSince=0;
+      const awaitingReal=_awaitingSyncChoice&&(now-_uiAwaitSince>=300);if(_awaitingSyncChoice&&!awaitingReal)_syncUiSchedule(340-(now-_uiAwaitSince));
+      const hard=!!(awaitingReal||_comparisonMismatchCount>0||_pushFailureLatched||SYNC_ERR||!navigator.onLine),prev=_uiShown?_uiShown.status:null;
+      /* comparing this device with live before any question has been asked: not a result yet, so the label does not change */
+      const checking=(_syncReviewPending||_awaitingSyncChoice)&&!awaitingReal&&!_reviewUploadInProgress;
+      if(_reviewUploadInProgress&&!hard){_uiSoftSince=_uiSoftSince||now;out={status:"uploading…",color:"#c9891b",action:"uploading"};}
+      else if(checking&&!hard){out=(prev==="connecting…")?_uiConnecting():_uiSyncing();_syncUiSchedule(500);}
+      else if(raw.status==="connected"){_uiSoftSince=0;_uiFeedSince=0;}
+      else if(hard){_uiSoftSince=0;_uiFeedSince=0;}
+      else if(raw.action==="review"){
+        const inflight=_outstandingPushes>0||(now-_lastPushSettledAt<1500),afterBusy=(prev==="uploading…"||prev==="syncing…")&&(now-(_uiSoftSince||now))<20000;
+        if(inflight||afterBusy){
+          if(!_uiSoftSince)_uiSoftSince=now;const age=now-_uiSoftSince;
+          if((prev==="connected"||prev===null||prev==="connecting…")&&age<2500){out=(prev==="connecting…")?_uiConnecting():{status:"connected",color:"#2c9e5f",action:"disconnect"};_syncUiSchedule(2500-age+60);}
+          else{out=_uiSyncing();_syncUiSchedule(600);}
+        }else _uiSoftSince=0;
+      }
+      else if(raw.action==="retry"){
+        /* the live feed is (re)opening: still "connecting" if that is what was showing, otherwise "syncing"; it only reads Retry sync once it lasts 4 s */
+        if(!_uiFeedSince)_uiFeedSince=now;const age=now-_uiFeedSince;
+        if(age<4000&&_uiShown&&_uiShown.status!=="local"){const ps=_uiShown.status;out=(ps==="connected")?_uiShown:(ps==="connecting…")?_uiConnecting():_uiSyncing();_syncUiSchedule(4000-age+60);}
+      }
+    }
+  }catch(e){out=raw;}
+  _uiShown=out;return out;
+}
+function _rawSyncState(){
   if(_connectUiPhase==="connecting")return {status:"connecting…",color:"#c9891b",action:"connecting"};
   if(!SUPABASE_CLIENT)return {status:"local",color:"#c7d0da",action:"connect"};
   if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_hasLocalSyncWork()||_comparisonMismatchCount>0)return {status:"review needed",color:"#e0a800",action:"review"};
@@ -22505,7 +22566,7 @@ function _resolvedSyncState(){
   if(document.visibilityState==="visible"&&_lastSyncVerifiedAt&&Date.now()-_lastSyncVerifiedAt>180000)return {status:"review needed",color:"#e0a800",action:"retry"};
   return {status:"connected",color:"#2c9e5f",action:"disconnect"};
 }
-function _applyHeaderSyncAction(s){const hc=el("headerConnect");if(!hc)return;if(s.action==="connecting"){hc.textContent="Connecting…";hc.title="Connecting to and verifying the shared live copy.";hc.onclick=null;}else if(s.action==="connect"){hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="review"){hc.textContent="Review & Upload…";hc.title="This device has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}else if(s.action==="retry"){hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}else{hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}hc.style.display="inline";}
+function _applyHeaderSyncAction(s){const hc=el("headerConnect");if(!hc)return;if(s.action==="connecting"){hc.textContent="Connecting…";hc.title="Connecting to and verifying the shared live copy.";hc.onclick=null;}else if(s.action==="connect"){hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="review"){hc.textContent="Review & Upload…";hc.title="This device has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}else if(s.action==="uploading"){hc.textContent="Uploading…";hc.title="A reviewed upload is in progress. Keep this tab open until it finishes.";hc.onclick=null;}else if(s.action==="syncing"){hc.textContent="Syncing…";hc.title="Changes are being confirmed with the live copy.";hc.onclick=null;}else if(s.action==="retry"){hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}else{hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}hc.style.display="inline";}
 function _applySyncUiState(){const s=_resolvedSyncState();setStatus(s.status,s.color);_applyHeaderSyncAction(s);return s;}
 function _waitForScheduleSubscription(gen,timeoutMs){
   if(_realtimeScheduleReceiving&&gen===_subscriptionGeneration)return Promise.resolve(true);
@@ -22711,7 +22772,7 @@ async function pushPending(opts){ opts=opts||{}; if(!SUPABASE_CLIENT){uiAlert("C
   const _PR=_lastPulledRows,_only=!!opts.onlyChanged;
   const _reviewScheduleKeys=(opts.reviewedScheduleKeys instanceof Set)?new Set(opts.reviewedScheduleKeys):null;
   const _reviewDemandWeeks=(opts.reviewedDemandWeeks instanceof Set)?new Set(opts.reviewedDemandWeeks):null;
-  const _tally={schedule:0,demand:0,leave:0,checkin:0,skipped:0,failed:false};
+  const _tally={schedule:0,demand:0,leave:0,checkin:0,skipped:0,failed:false};try{_uploadProgressTally=_tally;}catch(e){}
   const _scheduleCleanup=new Set();
   const _fail=()=>{_reviewUploadInProgress=false;setPending(true);setStatus("review needed","#e0a800");_tally.failed=true;_syncDiag("review upload","all",_tally.schedule+_tally.demand+_tally.leave,"error",SYNC_ERR||"Incomplete upload");flashNote("Upload incomplete — keep this tab open. Use Review & upload in the header to inspect and retry; do not disconnect first.");syncNav();return _tally;};
   let _freshAssign=null;
@@ -22769,7 +22830,7 @@ async function pushPending(opts){ opts=opts||{}; if(!SUPABASE_CLIENT){uiAlert("C
   const _wantRoster=_ROSTER_SEC_KEYS.some(k=>_want(k))||_want("roster");
   if(_wantRoster||_want("settings")){
     const _prevDel=_deliberateRosterChange;if(opts.deliberate&&_wantRoster)_deliberateRosterChange=true;
-    let _cfgResult;try{_cfgResult=await pushConfig(Object.assign({},_secs?{sections:[..._secs]}:{},{allowedSettingsDepts:[..._access.settings],allowAppWide:_access.allowAppWide}));}finally{_deliberateRosterChange=_prevDel;}
+    let _cfgResult;try{_cfgResult=await pushConfig(Object.assign({},_secs?{sections:[..._secs]}:{},{allowedSettingsDepts:[..._access.settings],allowAppWide:_access.allowAppWide,rosterPicks:Array.isArray(opts.rosterPicks)?opts.rosterPicks:null}));}finally{_deliberateRosterChange=_prevDel;}
     if(!_cfgResult||!_cfgResult.ok){if(_cfgResult&&_cfgResult.error&&!_cfgResult.deferred)reportSyncError("reviewed settings & roster upload",_cfgResult.error);_setPushFailureLatched(true);return _fail();}
     if(_pushFailureLatched)return _fail();
   }
@@ -22874,7 +22935,7 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
   // keys shown under their own on-screen names (DEMAND_FIELD_LABELS) rather than raw "occ"/"ooo"/"arr".
   {
     const localDem=_demandDateView((localSnapshot||{}).demand),liveDem=_demandDateView((liveSnapshot||{}).demand),fields=["occ","arr","dep","credits","ooo","house","events","transportation","covers1","covers2","covers3","unassigned"];
-    new Set([...localDem.keys(),...liveDem.keys()]).forEach(mapKey=>{const l=localDem.get(mapKey),r=liveDem.get(mapKey),rec=l||r,iso=rec.date,weeks=new Set([...(l?l.weeks:[]),...(r?r.weeks:[])]);if(_demandKeys&&![...weeks].some(w=>_demandKeys.has(w)))return;if(_suppressOwnEdits&&_ownDemandMatchesLive(weeks,(liveSnapshot||{}).demand))return;const lv=(l&&l.fields)||{},rv=(r&&r.fields)||{},dt=new Date(iso+"T00:00:00"),scopeLabel=propertyLabelForDept(rec.dept);fields.forEach(f=>{const a=lv[f],b=rv[f];if((a==null?"":String(a))===(b==null?"":String(b)))return;const line=`${scopeLabel} demand ${iso} ${DOW_NAMES[dt.getDay()]} — ${DEMAND_FIELD_LABELS[f]||f}: local ${_formatDiffValue("demand",f,a)} · live ${_formatDiffValue("demand",f,b)}`;changes.push(line);if(b!=null&&b!==""&&a!==b&&!!l)conflicts.push(line);});});
+    new Set([...localDem.keys(),...liveDem.keys()]).forEach(mapKey=>{const l=localDem.get(mapKey),r=liveDem.get(mapKey),rec=l||r,iso=rec.date,weeks=new Set([...(l?l.weeks:[]),...(r?r.weeks:[])]);if(_demandKeys&&![...weeks].some(w=>_demandKeys.has(w)))return;if(_suppressOwnEdits&&_ownDemandMatchesLive(weeks,(liveSnapshot||{}).demand))return;const lv=(l&&l.fields)||{},rv=(r&&r.fields)||{},dt=new Date(iso+"T00:00:00"),scopeLabel=propertyLabelForDept(rec.dept);fields.forEach(f=>{const a=lv[f],b=rv[f];if((a==null?"":String(a))===(b==null?"":String(b)))return;const line=`${scopeLabel} demand ${iso} ${DOW_NAMES[dt.getDay()]} — ${DEMAND_FIELD_LABELS[f]||f}: local ${_formatDiffValue("demand",f,a)} · live ${_formatDiffValue("demand",f,b)}`;changes.push(line);if(b!=null&&b!==""&&a!==b&&!!l&&!_isClubSeedCorrection(rec.scope,weeks,iso,f,b,a))conflicts.push(line);});});
   }
   // Leave Requests diff — by id, since these are whole-record objects rather than per-field cells; a genuinely NEW
   // local request (no live counterpart at all) is a safe addition, never a conflict; a request that exists in BOTH
@@ -23464,6 +23525,10 @@ function analyzeCfgChanges(localDepts,liveDepts){
     if(Number(loc.weekStartDow??4)!==Number(live.weekStartDow??4)){
       const line=`${deptLabel} setting — Workweek starts on: local ${_LONG_DAYS[Number(loc.weekStartDow??4)]} · live ${_LONG_DAYS[Number(live.weekStartDow??4)]}`;
       changes.push(line);conflicts.push(line);
+    }else if(Array.isArray(loc.weekStartHistory)&&loc.weekStartHistory.length&&Array.isArray(live.weekStartHistory)&&live.weekStartHistory.length){
+      const hs=x=>x.map(e=>_LONG_DAYS[Number(e.dow)]+" from "+(e.from==="0001-01-01"?"the beginning":e.from)).join(", then ");
+      const same=JSON.stringify(loc.weekStartHistory.map(e=>[e.from,Number(e.dow)]))===JSON.stringify(live.weekStartHistory.map(e=>[e.from,Number(e.dow)]));
+      if(!same){const line=`${deptLabel} setting — Workweek history: local ${hs(loc.weekStartHistory)} · live ${hs(live.weekStartHistory)}`;changes.push(line);conflicts.push(line);}
     }
   });
   // Shared, app-wide settings (see SHARED_APP_CFG_KEYS' own comment for exactly what is/isn't included) ---
@@ -23634,7 +23699,7 @@ function _renderPlainItemsList(items,pick,W){
   // inline handler's quoted JS string (and made this an unsafe HTML/JS boundary). jsArg applies both JS-string and
   // HTML-attribute escaping while preserving the encoded payload consumed by _jumpFromReceivedDiff().
   const jumpButton=(raw,label)=>{if(!(W&&W.jump&&_diffLineTarget(raw)))return esc(strip(word(label)));return `<button type="button" class="diffJump" onclick="_jumpFromReceivedDiff('${jsArg(encodeURIComponent(String(raw)))}')" title="Jump to this changed cell">${esc(strip(word(label)))}</button>`;};
-  const cb=(ids,extra)=>{if(!pick||!ids||!ids.length)return "";return `<input type="checkbox" class="cbx diffItemPick" data-ids="${esc(ids.join(","))}" ${pick.checked(ids)?"checked":""}${extra||""}>`;};
+  const cb=(ids,extra)=>{if(!pick||!ids||!ids.length)return "";return `<input type="checkbox" class="cbx diffItemPick" data-ids="${esc(ids.join(","))}" ${pick.checked(ids)?"checked":""}${pick.disabled?" disabled":""}${extra||""}>`;};
   const li=x=>{
     const t=String(x);let head=null,body=null;const m=t.indexOf("\u0001");if(m>=0){head=t.slice(0,m);body=t.slice(m+1);}else if(t.split("\n").length>4){head=t.split("\n")[0];body=t;}
     const ids=pick?pick.idsOf(x):[];
@@ -23644,7 +23709,8 @@ function _renderPlainItemsList(items,pick,W){
     if(pick)return `<li style="list-style:none;margin:0 0 4px -20px;line-height:1.5"><div class="checkboxLabel">${cb(ids)}<details style="flex:1;min-width:0"><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></div></li>`;
     return `<li style="list-style:none;margin:0 0 4px -14px;line-height:1.5"><details><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></li>`;
   };
-  return `<ul class="diffReviewList" style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(li).join("")}</ul>`;
+  // data-dl holds the item's raw engine line so a window can filter its own display (see _applyUploadReviewFilter).
+  return `<ul class="diffReviewList" style="margin:2px 0 2px 16px;padding:0;list-style:disc">${items.map(x=>li(x).replace(/^<li /,'<li data-dl="'+esc(String(x))+'" ')).join("")}</ul>`;
 }
 // Renders the small, dismissible "N changes since you last had this open" badge — see _awayChanges' own comment
 // (near pullAll()) for the full feature this supports. Reuses the SAME per-category grouping/ collapsible
@@ -23835,6 +23901,299 @@ function _diffLineDepts(line,leaves){
   if(m){const r=(leaves||[]).find(x=>x&&x.name===m[1]&&(x.from===m[3]||m[3]==="date not recorded"));if(r)return [deptKeyFromAny(r.dept)];}
   return [];
 }
+/* Display-only filter for the upload review, using the same rules as the comparison/restore windows (_diffFilterLines):
+   hide items whose this-device side is blank, whose live side is blank, or that belong to another department. Section
+   checkboxes are unaffected, so a ticked section still uploads every item, shown or not; each section says how many are hidden. */
+function _applyUploadReviewFilter(root){
+  const f={hideCur:!!(root.querySelector("#ucFiltCur")||{}).checked,hideOth:!!(root.querySelector("#ucFiltOth")||{}).checked,dept:(root.querySelector("#ucFiltDept")||{}).value||""};
+  const leaves=Object.values(LEAVE_REQUESTS||{});let shown=0,total=0;
+  root.querySelectorAll("li[data-dl]").forEach(li=>{
+    const line=li.getAttribute("data-dl");total++;
+    const keep=_diffFilterLines([line],[],f,l=>_diffLineDepts(l,leaves)).changes.length>0;
+    li.style.display=keep?"":"none";if(keep)shown++;
+  });
+  root.querySelectorAll("ul.diffReviewList").forEach(ul=>{const items=[...ul.children].filter(x=>x.hasAttribute&&x.hasAttribute("data-dl"));if(!items.length)return;const any=items.some(x=>x.style.display!=="none");ul.style.display=any?"":"none";const h=ul.previousElementSibling;if(h&&h.classList&&h.classList.contains("small"))h.style.display=any?"":"none";});
+  root.querySelectorAll(".ucSec details").forEach(d=>{const items=d.querySelectorAll("li[data-dl]");if(!items.length)return;d.style.display=[...items].some(x=>x.style.display!=="none")?"":"none";});
+  root.querySelectorAll(".ucSec").forEach(sec=>{
+    const all=sec.querySelectorAll("li[data-dl]"),hid=[...all].filter(x=>x.style.display==="none").length;
+    let n=sec.querySelector(".ucFiltNote");
+    if(hid){if(!n){n=document.createElement("div");n.className="small muted ucFiltNote";n.style.margin="4px 0 2px";const head=sec.firstElementChild;if(head&&head.nextSibling)sec.insertBefore(n,head.nextSibling);else sec.appendChild(n);}
+      n.textContent=nfmt(hid)+" of "+nfmt(all.length)+" item"+(all.length===1?"":"s")+" hidden by the filter"+(sec.querySelector(".ucSecChk")?" (still uploaded if this section is ticked).":".");}
+    else if(n)n.remove();
+  });
+  const c=root.querySelector("#ucFiltCount");if(c)c.textContent=(f.hideCur||f.hideOth||f.dept)?("Showing "+nfmt(shown)+" of "+nfmt(total)):"";
+}
+/* Progress panel for a reviewed upload. It is a fixed panel, not a modal, so it never blocks undo, navigation or the
+   app's own dialogs; the counts come from pushPending's own tally (rows started) against the rows selected in the review. */
+var _uploadProgressTally=null,_uploadProgressTimer=null,_uploadProgressT0=0,_uploadProgressExpect=null,_uploadProgressPhaseTxt="";
+function _showUploadProgress(expect){
+  _hideUploadProgress();_uploadProgressExpect=expect||{};_uploadProgressT0=Date.now();_uploadProgressPhaseTxt="Uploading to live\u2026";_uploadProgressTally=null;
+  const p=document.createElement("div");p.id="uploadProgressPanel";p.setAttribute("role","status");p.setAttribute("aria-live","polite");
+  p.style.cssText="position:fixed;left:50%;top:70px;transform:translateX(-50%);z-index:9998;background:#fff;border:1px solid var(--line);border-radius:10px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:10px 14px;min-width:280px;max-width:92vw;font-size:13px";
+  p.innerHTML='<div style="display:flex;align-items:center;gap:8px"><span class="upSpin" style="width:14px;height:14px;border:2px solid #c9d3de;border-top-color:#1b4b8a;border-radius:50%;display:inline-block;animation:upSpin 0.8s linear infinite"></span><b id="upPhase"></b><span id="upTime" class="muted" style="margin-left:auto"></span></div><div id="upDetail" class="small" style="margin-top:6px"></div><div class="small muted" style="margin-top:4px">Keep this tab open until this panel closes.</div>';
+  if(!document.getElementById("upSpinStyle")){const s=document.createElement("style");s.id="upSpinStyle";s.textContent="@keyframes upSpin{to{transform:rotate(360deg)}}";document.head.appendChild(s);}
+  document.body.appendChild(p);_renderUploadProgress();_uploadProgressTimer=setInterval(_renderUploadProgress,500);
+}
+function _uploadProgressPhase(txt){_uploadProgressPhaseTxt=txt;_renderUploadProgress();}
+function _renderUploadProgress(){
+  const p=document.getElementById("uploadProgressPanel");if(!p)return;if(Date.now()-_uploadProgressT0>30*60000){_hideUploadProgress();return;}const T=_uploadProgressTally||{},E=_uploadProgressExpect||{};
+  const ph=p.querySelector("#upPhase"),tm=p.querySelector("#upTime"),dt=p.querySelector("#upDetail");
+  if(ph)ph.textContent=_uploadProgressPhaseTxt;if(tm)tm.textContent=Math.floor((Date.now()-_uploadProgressT0)/1000)+" s";
+  const part=(label,done,of)=>of?label+" "+nfmt(Math.min(done||0,of))+" of "+nfmt(of):(done?label+" "+nfmt(done):"");
+  const bits=[part("Schedule rows",T.schedule,E.schedule),part("Demand weeks",T.demand,E.demand),T.leave?("Leave requests "+nfmt(T.leave)):"",T.checkin?("Check-ins "+nfmt(T.checkin)):"",E.roster?"Roster & settings: "+((T.schedule>=(E.schedule||0)&&T.demand>=(E.demand||0))?"sending\u2026":"waiting"):"",T.skipped?(nfmt(T.skipped)+" unchanged, skipped"):""].filter(Boolean);
+  if(dt)dt.textContent=bits.join(" \u00b7 ")||"Preparing\u2026";
+}
+function _hideUploadProgress(){if(_uploadProgressTimer){clearInterval(_uploadProgressTimer);_uploadProgressTimer=null;}const p=document.getElementById("uploadProgressPanel");if(p)p.remove();_uploadProgressTally=null;}
+/* Seed provenance. A cell counts as "seeded and missing on live" only when (a) it is part of the data embedded in this app
+   (HISTORICAL_ASSIGN / HISTORICAL_DEMAND, which include the Excel R1 corrections and Covers), (b) this device still holds exactly the
+   embedded value, and (c) live has nothing there. A cell somebody changed on this device, or a value live holds, is never a seed add, so
+   a stale copy of data that was edited or cleared elsewhere is not mistaken for a seed. */
+function _seedBlank(v){return v===undefined||v===null||v==="";}
+function _seedAddKeys(localSnap,liveSnap,access){
+  const sched=new Set(),dem=new Set();
+  try{
+    DEPT_KEYS.forEach(dp=>{
+      if(access&&access.schedule&&!access.schedule.has(dp))return;
+      const hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{},lw=((localSnap.assign||{})[dp])||{},vw=((liveSnap.assign||{})[dp])||{};
+      Object.keys(hist).forEach(wk=>{
+        const lrows=lw[wk]||{},vrows=vw[wk]||{},lower=new Map(Object.keys(lrows).map(n=>[String(n).trim().toLowerCase(),n])),vlower=new Map(Object.keys(vrows).map(n=>[String(n).trim().toLowerCase(),n]));
+        Object.keys(hist[wk]||{}).forEach(nm=>{
+          const sd=hist[wk][nm]||{},ln=lower.get(String(nm).trim().toLowerCase());if(ln===undefined)return;
+          const lr=lrows[ln]||{},vn=vlower.get(String(nm).trim().toLowerCase()),vr=(vn!==undefined?vrows[vn]:null)||{};
+          for(const day of Object.keys(sd)){if(!_seedBlank(sd[day])&&_sameValue(lr[day],sd[day])&&_seedBlank(vr[day])){sched.add(_assignRowKey(dp,wk,ln));break;}}
+        });
+      });
+    });
+    DEPT_KEYS.forEach(dp=>{
+      const hist=(typeof HISTORICAL_DEMAND!=="undefined"&&HISTORICAL_DEMAND[dp])||{};
+      Object.keys(hist).forEach(wk=>{
+        const dk=demandKeyFor(dp,wk);if(access&&access.demand&&!access.demand.has(_demandPropertyOfKey(dk)))return;
+        const lw=(localSnap.demand||{})[dk]||{},vw=(liveSnap.demand||{})[dk]||{};
+        Object.keys(hist[wk]||{}).forEach(di=>{const sd=hist[wk][di]||{};Object.keys(sd).forEach(f=>{if(_seedBlank(sd[f])||!_sameValue((lw[di]||{})[f],sd[f]))return;const lv=(vw[di]||{})[f],prevSeed=((DBGS_PREVIOUS_BV_DEMAND_SEED_V28[wk]||{})[di]||{})[f];if(_seedBlank(lv)||(dp===DEPT_IDS.DB_GUEST_SERVICES&&prevSeed!==undefined&&_sameValue(lv,prevSeed)))dem.add(dk);});});
+      });
+    });
+  }catch(e){console.warn("seed comparison skipped (non-fatal):",e);}
+  return {sched,dem};
+}
+/* Person-level roster selections: "dept|name|class|kind" where class is add / fill / replace / status and kind is p (person),
+   f (fields) or a (availability and dates off). Live-only lines never produce a key because nothing in them is ever sent. */
+function _rosterPickKeys(lines){
+  const out=new Set();
+  (lines||[]).forEach(raw=>{
+    const head=String(raw).split("\u0001")[0],m=head.match(/^(.+?) (roster|availability|status): ([\s\S]+?) \u2014(?:\s|$)/);if(!m)return;
+    const dept=DEPT_KEYS.find(d=>deptLabel(d)===m[1]);if(!dept)return;const name=m[3].trim();
+    if(m[2]==="status"){out.add(dept+"|"+name+"|status|s");return;}
+    if(m[2]==="roster"&&/ \u2014 local only$/.test(head)){out.add(dept+"|"+name+"|add|p");return;}
+    if(m[2]==="roster"&&/ \u2014 (?:live only|deleted here, live has them)$/.test(head))return;
+    out.add(dept+"|"+name+"|"+(_cfgLineClass.get(raw)||"replace")+"|"+(m[2]==="availability"?"a":"f"));
+  });
+  return [...out];
+}
+/* ===== Workweek & stray-week check (read-only report plus two narrowly scoped repairs) ===== */
+function _weekIsBoundary(dept,wk){const d=new Date(wk+"T00:00:00");if(isNaN(d.getTime()))return true;return weekKey(mondayOfWeekStartThu(d,dept))===wk;}
+function _scanStrayWeeks(rows){
+  const out=[];
+  DEPT_KEYS.forEach(d=>{
+    [["schedule",rows.assign],["check-ins",rows.checkin]].forEach(([store,src])=>{
+      const byWeek=(src&&src[d])||{};
+      Object.keys(byWeek).forEach(wk=>{
+        if(!/^\d{4}-\d{2}-\d{2}$/.test(wk)||_weekIsBoundary(d,wk))return;
+        const ppl=byWeek[wk]||{};let cells=0;const names=Object.keys(ppl);names.forEach(n=>{cells+=Object.keys(ppl[n]||{}).length;});
+        out.push({store,dept:d,wk,people:names.length,cells,names,empty:cells===0});
+      });
+    });
+  });
+  Object.keys(rows.demand||{}).forEach(k=>{
+    const m=String(k).match(/^(DBPROP\|)?(\d{4}-\d{2}-\d{2})$/);if(!m)return;
+    const peers=deptsForProperty(m[1]?"DBHSK":"DTFO");if(peers.some(d=>_weekIsBoundary(d,m[2])))return;
+    let cells=0;Object.values(rows.demand[k]||{}).forEach(x=>{cells+=Object.keys(x||{}).length;});
+    out.push({store:"demand",dept:m[1]?"DB property":"DT property",wk:k,people:0,cells,names:[],empty:cells===0});
+  });
+  return out.sort((a,b)=>a.store<b.store?-1:a.store>b.store?1:a.dept<b.dept?-1:a.dept>b.dept?1:a.wk<b.wk?-1:1);
+}
+/* Moving stray values into their proper weeks. A value under a key that is no longer a week start is moved to the week and day it belongs to
+   ONLY when that cell is blank. A value equal to what the proper week already holds is dropped as a duplicate. A value that differs from the
+   proper week's is a conflict: it is left exactly where it is and listed, never overwritten. */
+function _planStrayMoves(){
+  const plan={move:[],dup:[],conflict:[]};
+  [["schedule",ASSIGN],["check-ins",CHECKINS]].forEach(([store,src])=>DEPT_KEYS.forEach(d=>{
+    const byWeek=src[d]||{};
+    Object.keys(byWeek).forEach(wk=>{
+      if(!/^\d{4}-\d{2}-\d{2}$/.test(wk)||_weekIsBoundary(d,wk))return;
+      const start=new Date(wk+"T00:00:00");
+      Object.keys(byWeek[wk]||{}).forEach(name=>{
+        Object.keys(byWeek[wk][name]||{}).forEach(ds=>{
+          const di=Number(ds);if(!Number.isInteger(di)||di<0||di>6)return;
+          const v=byWeek[wk][name][ds];if(v===undefined||v===null||v==="")return;
+          const dt=new Date(start);dt.setDate(dt.getDate()+di);
+          const ws=mondayOfWeekStartThu(dt,d),twk=weekKey(ws),tdi=Math.round((dt-ws)/86400000);
+          const cur=((((src[d]||{})[twk])||{})[name]||{})[tdi];
+          const item={store,dept:d,fromWk:wk,name,day:ds,toWk:twk,toDay:tdi,val:v,cur,date:weekKey(dt)};
+          if(cur===undefined||cur===null||cur==="")plan.move.push(item);else if(_sameValue(cur,v))plan.dup.push(item);else plan.conflict.push(item);
+        });
+      });
+    });
+  }));
+  return plan;
+}
+async function _applyStrayMoves(plan){
+  const sched=new Map(),chk=new Map(),touch=(m,d,wk,n)=>{const k=d+"|"+wk;if(!m.has(k))m.set(k,{d,wk,names:new Set()});m.get(k).names.add(n);};
+  const _p=_syncApplying;let moved=0,dropped=0;
+  try{localStorage.setItem("hotel_stray_move_backup_v1",JSON.stringify({at:new Date().toISOString(),moved:plan.move,duplicates:plan.dup,conflictsLeft:plan.conflict}).slice(0,4000000));}catch(e){}
+  [["schedule",ASSIGN,sched,_markAssignDirty],["check-ins",CHECKINS,chk,_markCheckinDirty]].forEach(([store,src,m,mark])=>{
+    plan.move.filter(x=>x.store===store).forEach(x=>{
+      const w=(src[x.dept]=src[x.dept]||{});w[x.toWk]=w[x.toWk]||{};w[x.toWk][x.name]=w[x.toWk][x.name]||{};w[x.toWk][x.name][x.toDay]=x.val;
+      touch(m,x.dept,x.toWk,x.name);mark(x.dept,x.toWk,x.name);moved++;
+    });
+    plan.move.concat(plan.dup).filter(x=>x.store===store).forEach(x=>{
+      const row=(((src[x.dept]||{})[x.fromWk])||{})[x.name];if(!row)return;delete row[x.day];if(plan.dup.indexOf(x)>=0)dropped++;
+      touch(m,x.dept,x.fromWk,x.name);mark(x.dept,x.fromWk,x.name);
+      if(!Object.keys(row).length)delete src[x.dept][x.fromWk][x.name];
+      if(!Object.keys(src[x.dept][x.fromWk]).length)delete src[x.dept][x.fromWk];
+    });
+  });
+  _syncApplying=true;try{save("hotel_assign",ASSIGN);save("hotel_checkins",CHECKINS);}finally{_syncApplying=_p;}
+  let failed=0;
+  if(SUPABASE_CLIENT){
+    for(const g of sched.values()){const r=await pushWeekAll(g.d,g.wk,g.names,{});if(!r||!r.ok){if(!(r&&r.localOnly))failed++;}}
+    for(const g of chk.values())for(const n of g.names){const r=await pushCheckin(g.d,g.wk,n);if(!r||!r.ok){if(!(r&&r.localOnly))failed++;}}
+  }
+  render();
+  return {moved,dropped,failed};
+}
+function _workweekText(d,cfg){const x=(cfg&&cfg[d])||{};const dow=x.weekStartDow==null?"not set":(DOW_NAMES[Number(x.weekStartDow)]||String(x.weekStartDow));const h=Array.isArray(x.weekStartHistory)&&x.weekStartHistory.length?x.weekStartHistory.map(e=>(DOW_NAMES[Number(e.dow)]||e.dow)+" from "+(e.from==="0001-01-01"?"start":e.from)+(e.changedAt?" (set "+e.changedAt+")":"")).join(" \u2192 "):"no history";return {dow,h};}
+async function showWorkweekCheck(){
+  const connected=!!SUPABASE_CLIENT;let liveNote="";
+  if(connected){try{const r=await _readLiveForReview();if(!r.ok)liveNote="Part of the live read failed, so the live columns may be incomplete.";}catch(e){liveNote="The live copy could not be read: "+(e&&e.message||e);}}
+  else liveNote="Not connected: only this device is shown.";
+  const liveRows=connected?_lastPulledRows:{assign:{},checkin:{},demand:{}},liveCfg=connected?(_lastPulledAppConfig||{}):{};
+  const localStray=_scanStrayWeeks({assign:ASSIGN,checkin:CHECKINS,demand:DEMAND}),liveStray=connected?_scanStrayWeeks(liveRows):[];
+  const rowsTbl=DEPT_KEYS.map(d=>{const a=_workweekText(d,CFG),b=connected?_workweekText(d,liveCfg):{dow:"\u2014",h:"\u2014"};const same=!connected||(a.dow===b.dow&&a.h.replace(/ \(set [^)]*\)/g,"")===b.h.replace(/ \(set [^)]*\)/g,""));
+    return `<tr style="${same?"":"background:#fff6d6"}"><td><b>${esc(deptLabel(d))}</b></td><td>${esc(a.dow)}<div class="small muted">${esc(a.h)}</div></td><td>${esc(b.dow)}<div class="small muted">${esc(b.h)}</div></td><td>${same?"\u2714":"differs"+(connected&&_reviewAccessScope().settings.has(d)?` <button type="button" class="mini wwSync" data-d="${d}">Make live match this device</button>`:"")}</td></tr>`;}).join("");
+  const strayTbl=(list,label)=>list.length?`<div style="margin-top:8px"><b>${label}</b> <span class="small muted">(${list.length} week key${list.length===1?"":"s"} that is not the first day of a week for that department)</span><table style="width:100%;font-size:12px;border-collapse:collapse;margin-top:4px"><tr><th align="left">Store</th><th align="left">Dept</th><th align="left">Week key</th><th align="left">People</th><th align="left">Values</th></tr>${list.slice(0,80).map(x=>`<tr><td>${esc(x.store)}</td><td>${esc(x.dept)}</td><td>${esc(x.wk)} ${x.wk.length>=10?esc(DOW_NAMES[new Date(x.wk.slice(-10)+"T00:00:00").getDay()]):""}</td><td>${x.people}</td><td>${x.cells?x.cells:"<b>empty</b>"}</td></tr>`).join("")}</table>${list.length>80?`<div class="small muted">${list.length-80} more not shown.</div>`:""}</div>`:`<div style="margin-top:8px" class="small muted">${label}: none.</div>`;
+  const emptyLive=liveStray.filter(x=>x.empty&&x.store!=="demand"&&x.people>0).length,emptyLocal=localStray.filter(x=>x.empty&&x.store!=="demand").length;
+  const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";bg.id="wwCheckModal";
+  bg.innerHTML=`<div class="modal" style="max-width:760px;width:96%"><div style="font-weight:600;margin-bottom:4px">Workweek check</div>
+    <div class="small muted" style="margin-bottom:8px">${esc(liveNote)} A week key is the date a week starts. When a department's start day changes, rows can be left under a key that is no longer a week start; they are invisible in the grid and are re-read from live every time.</div>
+    <div style="max-height:62vh;overflow:auto"><table style="width:100%;font-size:12px;border-collapse:collapse"><tr><th align="left">Department</th><th align="left">This device</th><th align="left">Live</th><th align="left"></th></tr>${rowsTbl}</table>
+    ${strayTbl(localStray,"Stray weeks on this device")}${connected?strayTbl(liveStray,"Stray weeks on live"):""}
+    <div id="wwResult" class="small" style="margin-top:8px"></div></div>
+    <div class="mrow" style="justify-content:flex-end;margin-top:10px;gap:6px"><button type="button" id="wwMove" ${(_planStrayMoves().move.length||_planStrayMoves().dup.length||liveStray.some(x=>!x.empty&&x.store!=="demand"))?"":"disabled"} title="Moves values that sit under a week key that is not a week start into the week and day they belong to, only into blank cells. Values that differ from the proper week are left and listed.">Move stray values into proper weeks\u2026</button><button type="button" id="wwEmpty" ${(emptyLive||emptyLocal)?"":"disabled"} title="Deletes person rows that hold no values under a non-week-start key, on this device and on live. Rows with values are never touched.">Remove empty stray rows (${emptyLive} live, ${emptyLocal} here)</button><button type="button" id="wwClose" class="brand">Close</button></div></div>`;
+  document.body.appendChild(bg);bg.dataset.ownKeys="1";
+  const close=()=>bg.remove(),res=bg.querySelector("#wwResult");
+  bg.querySelector("#wwClose").onclick=close;
+  const _mv=bg.querySelector("#wwMove");
+  if(_mv)_mv.onclick=async()=>{
+    _mv.disabled=true;res.textContent="Reading live\u2026";
+    try{if(SUPABASE_CLIENT){await pullAll(false,false);}}catch(e){}
+    const plan=_planStrayMoves(),by=a=>{const o={};a.forEach(x=>{const k=x.store+" "+deptLabel(x.dept)+" "+x.fromWk;o[k]=(o[k]||0)+1;});return Object.entries(o).map(([k,n])=>k+": "+n).join("\n");};
+    if(!plan.move.length&&!plan.dup.length){res.textContent=plan.conflict.length?(nfmt(plan.conflict.length)+" stray value"+(plan.conflict.length===1?"":"s")+" differ from the proper week, so nothing can be moved without overwriting."):"No stray values to move.";_mv.disabled=false;return;}
+    const msg="Move "+nfmt(plan.move.length)+" value"+(plan.move.length===1?"":"s")+" into blank cells of their proper weeks"+(plan.dup.length?", and drop "+nfmt(plan.dup.length)+" that the proper week already holds":"")+".\n\n"+(by(plan.move.concat(plan.dup))||"")+(plan.conflict.length?"\n\n"+nfmt(plan.conflict.length)+" value"+(plan.conflict.length===1?"":"s")+" differ from the proper week and stay where they are:\n"+by(plan.conflict):"")+"\n\nNothing already in a proper week is changed. A copy of what moved is kept on this device.";
+    if(!(await uiConfirm(msg,"Move"))){res.textContent="Nothing moved.";_mv.disabled=false;return;}
+    res.textContent="Moving\u2026";
+    try{const r=await _applyStrayMoves(plan);res.textContent="Moved "+nfmt(r.moved)+", dropped "+nfmt(r.dropped)+" duplicate"+(r.dropped===1?"":"s")+(plan.conflict.length?"; "+nfmt(plan.conflict.length)+" conflicting value"+(plan.conflict.length===1?"":"s")+" left in place":"")+(r.failed?"; "+r.failed+" live write"+(r.failed===1?"":"s")+" did not complete, so they stay on this device for the next upload":".");}
+    catch(e){res.textContent="Stopped: "+(e&&e.message||e);}
+  };bg.addEventListener("mousedown",e=>{if(e.target===bg)close();});
+  bg.querySelectorAll(".wwSync").forEach(b=>b.onclick=async()=>{
+    const d=b.dataset.d;b.disabled=true;res.textContent="Writing "+deptLabel(d)+" workweek to live\u2026";
+    try{
+      const sel=await SUPABASE_CLIENT.from("app_config").select("data,updated_at").eq("id","depts");if(sel.error)throw sel.error;const row=(sel.data||[])[0];if(!row)throw new Error("The live settings row was not found.");
+      const next=JSON.parse(JSON.stringify(row.data||{}));next[d]=next[d]||{};next[d].weekStartDow=CFG[d].weekStartDow;next[d].weekStartHistory=JSON.parse(JSON.stringify(CFG[d].weekStartHistory||[]));
+      let q=SUPABASE_CLIENT.from("app_config").update({data:next}).eq("id","depts");q=row.updated_at?q.eq("updated_at",row.updated_at):q.eq("data",JSON.stringify(row.data));
+      const w=await q.select("id");if(w.error)throw w.error;if(!w.data||w.data.length!==1)throw new Error("Live settings changed while saving. Close and reopen this check, then try again.");
+      try{_lastPulledAppConfig=_lastPulledAppConfig||{};_lastPulledAppConfig[d]=Object.assign({},_lastPulledAppConfig[d]||{},{weekStartDow:next[d].weekStartDow,weekStartHistory:next[d].weekStartHistory});}catch(e){}
+      res.textContent=deptLabel(d)+": live now starts weeks on "+DOW_NAMES[Number(next[d].weekStartDow)]+".";
+    }catch(e){b.disabled=false;res.textContent="Not changed: "+(e&&e.message||e);}
+  });
+  bg.querySelector("#wwEmpty").onclick=async()=>{
+    const btn=bg.querySelector("#wwEmpty");btn.disabled=true;let live=0,local=0,skipped=0;res.textContent="Removing\u2026";
+    try{
+      if(connected)for(const x of liveStray.filter(y=>y.empty&&y.store!=="demand"&&y.people>0)){
+        if(!_scheduleWriteAllowed(x.dept)){skipped+=x.people;continue;}
+        const tbl=x.store==="schedule"?"assignments":"checkins";
+        for(const nm of x.names){const r=await SUPABASE_CLIENT.from(tbl).delete().eq("dept",x.dept).eq("week",x.wk).eq("staff",nm).eq("days",JSON.stringify({})).select("staff");if(r.error)throw r.error;if(r.data&&r.data.length)live++;else skipped++;}
+      }
+      const _p=_syncApplying;_syncApplying=true;
+      try{
+        localStray.filter(y=>y.empty&&y.store!=="demand").forEach(x=>{const st=x.store==="schedule"?ASSIGN:CHECKINS,wkRows=(st[x.dept]||{})[x.wk];if(!wkRows)return;x.names.forEach(n=>{if(!Object.keys(wkRows[n]||{}).length){delete wkRows[n];local++;}});if(!Object.keys(wkRows).length)delete st[x.dept][x.wk];});
+        save("hotel_assign",ASSIGN);save("hotel_checkins",CHECKINS);
+      }finally{_syncApplying=_p;}
+      if(connected){try{await pullAll(false,false);}catch(e){}}
+      res.textContent="Removed "+live+" empty row"+(live===1?"":"s")+" from live and "+local+" from this device"+(skipped?("; "+skipped+" left because it changed or you lack access."):".");
+    }catch(e){res.textContent="Stopped: "+(e&&e.message||e);}
+  };
+}
+const DBGS_CLUB_DEMAND_CORRECTIONS_V28={"2026-10-01":{"0":{"occ":0.3697,"arr":45,"dep":33},"1":{"occ":0.4431,"arr":64,"dep":22},"2":{"occ":0.4196,"arr":17,"dep":31},"3":{"occ":0.4196,"arr":35,"dep":41},"4":{"occ":0.3966,"arr":41,"dep":60},"5":{"occ":0.358,"arr":20,"dep":38},"6":{"occ":0.3513,"arr":21,"dep":25}},"2026-10-08":{"0":{"occ":0.523,"arr":88,"dep":39},"1":{"occ":0.549,"arr":67,"dep":51},"2":{"occ":0.555,"arr":66,"dep":63},"3":{"occ":0.481,"arr":41,"dep":84},"4":{"occ":0.583,"arr":31,"dep":71},"5":{"occ":0.519,"arr":16,"dep":55},"6":{"occ":0.522,"arr":33,"dep":32}}};
+const DBGS_PREVIOUS_BV_DEMAND_SEED_V28={"2026-10-01":{"0":{"occ":0.58,"arr":44,"dep":35},"1":{"occ":0.66,"arr":69,"dep":26},"2":{"occ":0.65,"arr":17,"dep":32},"3":{"occ":0.63,"arr":35,"dep":54},"4":{"occ":0.45,"arr":42,"dep":157},"5":{"occ":0.41,"arr":21,"dep":42},"6":{"occ":0.4,"arr":21,"dep":33}},"2026-10-08":{"0":{"occ":0.59,"arr":81,"dep":76},"1":{"occ":0.56,"arr":75,"dep":92},"2":{"occ":0.63,"arr":89,"dep":51},"3":{"occ":0.52,"arr":43,"dep":101},"4":{"occ":0.62,"arr":31,"dep":76},"5":{"occ":0.54,"arr":19,"dep":55},"6":{"occ":0.55,"arr":44,"dep":35}}};
+/* A returning browser keeps its saved demand and its one-time "historical load" flags, so seed data added after that first load (Covers,
+   transportation, events, and the Club-governed occupancy/arrivals/departures for 10/01 and 10/08) never reached it. This runs once per
+   device and only ever adds: a blank seeded field is filled; a field is replaced only when it still holds exactly the previous seed value
+   for the two corrected weeks (so nothing a person typed is changed). */
+function fixupDBGSDemandSeedFill(force){
+  try{
+    if(CFG._dbgsDemandSeedFillV28&&!force)return {filled:0,corrected:0};
+    const dp=DEPT_IDS.DB_GUEST_SERVICES,hist=(typeof HISTORICAL_DEMAND!=="undefined"&&HISTORICAL_DEMAND[dp])||{},blank=v=>v===undefined||v===null||v==="";
+    let filled=0,corrected=0;
+    Object.keys(hist).forEach(wk=>{
+      const dk=demandKeyFor(dp,wk);
+      Object.keys(hist[wk]||{}).forEach(di=>{
+        const sd=hist[wk][di]||{},old=((DBGS_PREVIOUS_BV_DEMAND_SEED_V28[wk]||{})[di])||{};
+        Object.keys(sd).forEach(f=>{
+          if(blank(sd[f]))return;
+          const cur=(((DEMAND[dk]||{})[di])||{})[f];
+          let write=false;
+          if(blank(cur)){write=true;filled++;}
+          else if(old[f]!==undefined&&_sameValue(cur,old[f])&&!_sameValue(cur,sd[f])){write=true;corrected++;}
+          if(write){DEMAND[dk]=DEMAND[dk]||{};DEMAND[dk][di]=DEMAND[dk][di]||{};DEMAND[dk][di][f]=JSON.parse(JSON.stringify(sd[f]));}
+        });
+      });
+    });
+    CFG._dbgsDemandSeedFillV28=true;
+    const _p=_syncApplying;_syncApplying=true;
+    try{if(filled||corrected)save("hotel_demand",DEMAND);save("hotel_cfg",CFG);}finally{_syncApplying=_p;}
+    if(filled||corrected)console.info("Dusit Beach demand seed: filled "+filled+" blank value(s), corrected "+corrected+" previous-seed value(s).");
+    return {filled,corrected};
+  }catch(e){console.warn("Dusit Beach demand seed fill skipped (non-fatal):",e);return {filled:0,corrected:0};}
+}
+/* Manual, fill-blank-only version for the Backup menu: a browser that later takes a live copy which lacks seeded weeks is blank again and its
+   once-only markers are already spent. Schedule cells are filled only for people on this roster who are not marked deleted. */
+function _fillBlankDBGSSchedule(){
+  const dp=DEPT_IDS.DB_GUEST_SERVICES,hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{};let n=0;
+  Object.keys(hist).forEach(wk=>Object.keys(hist[wk]||{}).forEach(nm=>{
+    const roster=((CFG[dp]||{}).staff||[]).find(st=>st&&String(st.n).trim().toLowerCase()===String(nm).trim().toLowerCase());
+    if(!roster||(typeof isStaffTombstoned==="function"&&isStaffTombstoned(dp,roster.n)))return;
+    const src=hist[wk][nm]||{};
+    Object.keys(src).forEach(di=>{
+      const cur=((((ASSIGN[dp]||{})[wk])||{})[roster.n]||{})[di];if(!(cur===undefined||cur===null||cur===""))return;if(src[di]===undefined||src[di]===null||src[di]==="")return;
+      ASSIGN[dp]=ASSIGN[dp]||{};ASSIGN[dp][wk]=ASSIGN[dp][wk]||{};ASSIGN[dp][wk][roster.n]=ASSIGN[dp][wk][roster.n]||{};ASSIGN[dp][wk][roster.n][di]=src[di];n++;
+    });
+  }));
+  return n;
+}
+function _fillMissingSeedData(){
+  const d=fixupDBGSDemandSeedFill(true),c=_fillBlankDBGSSchedule(),_p=_syncApplying;_syncApplying=true;
+  try{if(c)save("hotel_assign",ASSIGN);}finally{_syncApplying=_p;}
+  return {demand:d.filled,corrected:d.corrected,schedule:c};
+}
+async function fillMissingSeedDataMenu(){
+  if(!(await uiConfirm("Fill blank Dusit Beach demand (occupancy, arrivals, departures, Covers, transportation, events) and blank DB GS schedule cells from the data built into this app?\n\nOnly blank cells are filled. Anything that already has a value is left exactly as it is.","Fill blanks")))return;
+  const r=_fillMissingSeedData();
+  render();
+  await uiAlert("Filled "+nfmt(r.demand)+" blank demand value"+(r.demand===1?"":"s")+(r.corrected?", corrected "+nfmt(r.corrected)+" earlier seeded value"+(r.corrected===1?"":"s"):"")+" and "+nfmt(r.schedule)+" blank schedule cell"+(r.schedule===1?"":"s")+"."+((r.demand||r.schedule)?(SUPABASE_CLIENT?"\n\nUse Review & upload to send them to live; they are listed as additions.":"\n\nThey will be offered for upload the next time this device connects."):"\n\nNothing was missing."));
+}
+/* True when live still holds exactly the previous seed value and this device holds exactly the corrected one: nobody has typed anything
+   there, so the difference is the known correction and not a conflict. */
+function _isClubSeedCorrection(scope,weeks,iso,f,live,local){
+  try{
+    if(scope!=="DBPROP"||!(f==="occ"||f==="arr"||f==="dep"))return false;
+    for(const sk of weeks){
+      const wk=String(sk).replace(/^DBPROP\|/,""),c=DBGS_CLUB_DEMAND_CORRECTIONS_V28[wk];if(!c)continue;
+      const di=Math.round((new Date(iso+"T00:00:00")-new Date(wk+"T00:00:00"))/86400000),nw=(c[di]||{})[f],old=((DBGS_PREVIOUS_BV_DEMAND_SEED_V28[wk]||{})[di]||{})[f];
+      if(nw!==undefined&&old!==undefined&&Number(local)===nw&&Number(live)===old)return true;
+    }
+  }catch(e){}
+  return false;
+}
 function _reviewSectionForLine(line){const c=_categorizeConflictLine(line);return _DIFF_SECTIONS.find(S=>S.cats.indexOf(c)>=0)||null;}
 function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(_isCfgSecKey(S.k))return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
 /* Why nothing could be offered, in terms the person can act on. Server-recognised rights come from the live sign-in or live
@@ -24007,7 +24366,8 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
   const _rawChanges=changes.slice(),_rawConflicts=conflicts.slice(),_lineIds=new Map(),_lineById={};_rawChanges.forEach((x,i)=>{const id="u"+i;_lineIds.set(x,id);_lineById[id]=x;});
   const _selectedDiffLines=new Set(noPending?[]:_rawChanges.filter(x=>_rawConflicts.indexOf(x)<0).map(x=>_lineIds.get(x)));
   {const _c=_collapseScheduleLines(changes,conflicts);changes=_c.changes;conflicts=_c.conflicts;}
-  const _pick={idsOf:x=>{const t=String(x),m=t.indexOf("\u0001"),lines=m>=0?t.slice(m+1).split("\n"):[t];return lines.map(l=>_lineIds.get(l)).filter(Boolean);},checked:ids=>ids.length>0&&ids.every(x=>_selectedDiffLines.has(x))};
+  const _pick={disabled:false,idsOf:x=>{const t=String(x);if(/ — live only$/.test(t.split("")[0]))return [];const whole=_lineIds.get(t);if(whole)return [whole];const m=t.indexOf("\u0001"),lines=m>=0?t.slice(m+1).split("\n"):[t];return lines.map(l=>_lineIds.get(l)).filter(Boolean);},checked:ids=>ids.length>0&&ids.every(x=>_selectedDiffLines.has(x))};
+  const _PICK_SECS=new Set(["schedule","demand","people","details","detailsReplace","status"]);
   return new Promise(res=>{
     // A short, one-time clarifying note for the specific case where this project's shared app-wide settings have
     // genuinely never been synced before (see _lastPulledAppConfig's own comment) — several familiar- looking
@@ -24040,6 +24400,8 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     // anyone on live, or the reverse.
     const SECS=_DIFF_SECTIONS.map(S=>Object.assign({},S));
     const unsafe=!!(safety&&!safety.safe);
+    /* Roster lines start unselected while the roster-safety lock is on; "Allow roster upload" then selects only the ones that replace nothing. */
+    if(unsafe){_rawChanges.forEach(x=>{const S=_reviewSectionForLine(x);if(S&&_ROSTER_SEC_KEYS.indexOf(S.k)>=0)_selectedDiffLines.delete(_lineIds.get(x));});}
     SECS.forEach(S=>{
       S.items=changes.filter(x=>S.cats.indexOf(_categorizeConflictLine(x))>=0);
       S.conf=S.items.filter(x=>conflicts.indexOf(x)>=0);
@@ -24075,7 +24437,8 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
         status:"Uploading replaces live\'s active/inactive status and inactive-since date with this device\'s. Left unticked, live\'s status is kept.",
         liveOnly:"Live has these and this device does not. Nothing here is sent; a blank on this device never overwrites live, and this device takes live\'s value after the review."}[S.k];
       const note=(_noteTxt&&S.items.length)?`<div class="small muted" style="margin:4px 0 2px">${_noteTxt}</div>`:"";
-      return _diffSectionCardHtml(S,{W:_DIFF_WORDING_UPLOAD,pick:(S.k==="schedule"||S.k==="demand")?_pick:null,tick,disabled:(_isRoster&&unsafe),mt:_mt,note,noCheck:!!S.info});
+      const _rp=_isRoster?Object.assign({},_pick,{disabled:unsafe}):_pick;
+      return _diffSectionCardHtml(S,{W:_DIFF_WORDING_UPLOAD,pick:_PICK_SECS.has(S.k)?_rp:null,tick,disabled:(_isRoster&&unsafe),mt:_mt,note,noCheck:!!S.info});
     }).join("");
     // Personal, device-only settings (own notification choices, expanded panels) are never part of any section.
     const cfgBlock=(cfgChanged&&SECS.some(S=>S.shown))?`<div class="small muted" style="margin-top:4px">\u2139\ufe0f Personal, device-only settings (e.g. your own notification choices, or which panels are expanded) are never uploaded and are not listed.</div>`:"";
@@ -24099,6 +24462,14 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       ${accessNote?`<div style="border:1px solid #e0c060;background:#fff6d6;border-radius:6px;padding:7px 9px;margin-bottom:8px" class="small">${esc(accessNote)}</div>`:""}
       ${firstSyncNote}
       <div class="small muted" style="margin-bottom:6px">Select the sections to send to live. Unselected sections are not sent; this device will use the live values for them after the review. Sections with conflicts start unselected.</div>
+      <div class="small" style="display:flex;flex-wrap:wrap;gap:4px 12px;align-items:center;margin:0 0 6px" title="Filters change only what is listed. A ticked section still uploads every item in it, including items hidden here.">
+        <b>Show:</b>
+        <label style="cursor:pointer"><input type="checkbox" class="cbx" id="ucFiltCur"> hide blank on this device</label>
+        <label style="cursor:pointer"><input type="checkbox" class="cbx" id="ucFiltOth"> hide blank on live</label>
+        <label>Department <select id="ucFiltDept" style="font:inherit"><option value="">All departments</option>${DEPT_KEYS.map(d=>`<option value="${d}">${esc(deptLabel(d))}</option>`).join("")}</select></label>
+        <span id="ucFiltCount" class="muted"></span>
+        <span style="margin-left:auto;display:inline-flex;gap:6px"><button type="button" class="mini" id="ucSelShown" title="Tick every listed item that is not hidden by the filter. With no filter on, this ticks everything.">Select shown</button><button type="button" class="mini" id="ucDeselShown" title="Untick every listed item that is not hidden by the filter. With no filter on, this unticks everything.">Deselect shown</button></span>
+      </div>
       <div style="max-height:46vh;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:0 6px 6px">${secHtml}</div>
       ${cfgBlock}
       <div class="small muted" style="margin-top:6px">An upload replaces the live version of each item in a ticked section with the local version. Anything that exists only on live is left in place, except a person deleted here.</div>
@@ -24121,10 +24492,34 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     const ticked=()=>chk().filter(c=>c.checked&&!c.disabled).map(c=>c.dataset.sec);
     const goBtn=bg.querySelector("#ucGo");
     const refresh=()=>{goBtn.disabled=!ticked().length;};
-    chk().forEach(c=>c.onchange=()=>{const S=SECS.find(x=>x.k===c.dataset.sec);if(S&&(S.k==="schedule"||S.k==="demand")){S.items.reduce((a,x)=>a.concat(_pick.idsOf(x)),[]).forEach(id=>c.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));bg.querySelectorAll('.diffItemPick').forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.checked=ids.length&&ids.every(id=>_selectedDiffLines.has(id));});}refresh();});
+    chk().forEach(c=>c.onchange=()=>{const S=SECS.find(x=>x.k===c.dataset.sec);if(S&&_PICK_SECS.has(S.k)){S.items.reduce((a,x)=>a.concat(_pick.idsOf(x)),[]).forEach(id=>c.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));bg.querySelectorAll('.diffItemPick').forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.checked=ids.length&&ids.every(id=>_selectedDiffLines.has(id));});}refresh();});
     bg.querySelectorAll('.diffItemPick').forEach(x=>x.onchange=()=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);ids.forEach(id=>x.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));const sec=x.closest('.ucSec'),sc=sec&&sec.querySelector('.ucSecChk');if(sc){const all=[...sec.querySelectorAll('.diffItemPick')],n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}refresh();});bg.querySelectorAll('.ucSec').forEach(sec=>{const all=[...sec.querySelectorAll('.diffItemPick')],sc=sec.querySelector('.ucSecChk');if(sc&&all.length){const n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}});refresh();
+    ["#ucFiltCur","#ucFiltOth","#ucFiltDept"].forEach(sel=>{const x=bg.querySelector(sel);if(x)x.onchange=()=>_applyUploadReviewFilter(bg);});
+    /* Select / Deselect shown: act only on what the filter currently lists, so "select all > filter > deselect shown > clear filter"
+       uploads everything except what was filtered. Items with their own checkbox are toggled individually; a section that can only be
+       ticked as a whole (settings, leave requests) is toggled only when the filter hides none of it. */
+    const _bulk=on=>{
+      bg.querySelectorAll("li[data-dl]").forEach(li=>{
+        if(li.style.display==="none")return;
+        li.querySelectorAll(".diffItemPick").forEach(x=>{if(x.disabled||x.checked===on)return;x.checked=on;(x.dataset.ids||"").split(",").filter(Boolean).forEach(id=>on?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));});
+      });
+      bg.querySelectorAll(".ucSec").forEach(sec=>{
+        const sc=sec.querySelector(".ucSecChk");if(!sc||sc.disabled)return;
+        const picks=sec.querySelectorAll(".diffItemPick");
+        if(picks.length){const n=[...picks].filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<picks.length;}
+        else{const hidden=[...sec.querySelectorAll("li[data-dl]")].some(li=>li.style.display==="none");if(!hidden){sc.checked=on;sc.indeterminate=false;}}
+      });
+      refresh();
+    };
+    const _sb=bg.querySelector("#ucSelShown"),_db=bg.querySelector("#ucDeselShown");if(_sb)_sb.onclick=()=>_bulk(true);if(_db)_db.onclick=()=>_bulk(false);
     const _ack=bg.querySelector("#ucAckRemove");
-    if(_ack)_ack.onchange=()=>{_ROSTER_SEC_KEYS.forEach(k=>{const r=bg.querySelector('.ucSecChk[data-sec="'+k+'"]'),S=SECS.find(x=>x.k===k);if(r){r.disabled=!_ack.checked;/* allowing the roster upload enables the sections; it only ticks the ones that replace nothing on live */r.checked=_ack.checked&&!(S&&S.conf.length);}});refresh();};
+    if(_ack)_ack.onchange=()=>{
+      /* Allowing the roster upload enables the roster sections and items, and ticks only the items that replace nothing on live. */
+      _rawChanges.forEach(x=>{const S=_reviewSectionForLine(x);if(!S||_ROSTER_SEC_KEYS.indexOf(S.k)<0)return;const id=_lineIds.get(x);if(_ack.checked&&_rawConflicts.indexOf(x)<0)_selectedDiffLines.add(id);else _selectedDiffLines.delete(id);});
+      _ROSTER_SEC_KEYS.forEach(k=>{const r=bg.querySelector('.ucSecChk[data-sec="'+k+'"]');if(r)r.disabled=!_ack.checked;});
+      bg.querySelectorAll(".ucSec").forEach(sec=>{const r=sec.querySelector(".ucSecChk");if(!r||_ROSTER_SEC_KEYS.indexOf(r.dataset.sec)<0)return;sec.querySelectorAll(".diffItemPick").forEach(x=>{x.disabled=!_ack.checked;const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.checked=ids.length>0&&ids.every(id=>_selectedDiffLines.has(id));});const all=[...sec.querySelectorAll(".diffItemPick")],n=all.filter(y=>y.checked).length;r.checked=n>0;r.indeterminate=n>0&&n<all.length;});
+      refresh();
+    };
     const names=keys=>SECS.filter(S=>keys.indexOf(S.k)>=0).map(S=>S.t).join(", ");
     const countedSections=list=>list.map(S=>`<li><b>${nfmt(S.items.length)} in ${esc(S.t)}</b>${S.conf.length?` (${nfmt(S.conf.length)} ${S.conf.length===1?"value will":"values will"} overwrite existing live data)`:""}</li>`).join("");
     const send=()=>{
@@ -24133,7 +24528,8 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       // an unchanged or unlisted roster/settings section has no payload and must not open the config-write gate.
       const shown=SECS.filter(S=>S.shown).map(S=>S.k);
       const sections=t.slice();
-      done({c:"upload",sections,dropped:shown.filter(k=>t.indexOf(k)<0),selectedChanged:t.slice(),selectedLines:[..._selectedDiffLines].map(id=>_lineById[id]).filter(Boolean),allRawLines:_rawChanges.slice(),deliberate:!!(_ack&&_ack.checked&&_ROSTER_SEC_KEYS.some(k=>t.indexOf(k)>=0)),accessScope:_serialReviewScope(accessScope)});
+      const _selLines=[..._selectedDiffLines].map(id=>_lineById[id]).filter(Boolean);
+      done({c:"upload",sections,dropped:shown.filter(k=>t.indexOf(k)<0),selectedChanged:t.slice(),rosterPicks:_rosterPickKeys(_selLines),selectedLines:_selLines,allRawLines:_rawChanges.slice(),deliberate:!!(_ack&&_ack.checked&&_ROSTER_SEC_KEYS.some(k=>t.indexOf(k)>=0)),accessScope:_serialReviewScope(accessScope)});
     };
     // The second question. It replaces the lists instead of sitting under them, with its own title, so it reads as a new
     // question and not as the same dialog repeating. Back returns to the lists.
@@ -24359,7 +24755,10 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _granularDirty=!!(Object.keys(_dirtyAssignRows).length||Object.keys(_dirtyDemandWeeks).length||Object.keys(_dirtyLeaveIds).length||Object.keys(_dirtyCheckinRows).length||_dirtyConfig);
   // A durable Pending/revision marker without its row registries is still evidence of local work. Compare every
   // syncable row in that case; an empty scope would hide the differences and let the following pull discard them.
-  const _diffScope=(_pendingAtReviewStart&&_granularDirty)?{scheduleKeys:new Set(Object.keys(_dirtyAssignRows)),demandKeys:new Set([...Object.keys(_dirtyDemandWeeks),...Object.keys((localSnapshot||{}).demand||{}).filter(w=>{const lv=(localSnapshot.demand||{})[w],rv=((liveSnapshot||{}).demand||{})[w];const has=o=>!!o&&typeof o==="object"&&Object.values(o).some(d=>d&&typeof d==="object"&&Object.keys(d).length);return has(lv)&&!has(rv);})]),leaveIds:new Set(Object.keys(_dirtyLeaveIds)),checkinKeys:new Set(Object.keys(_dirtyCheckinRows))}:undefined;
+  /* Seeded values live lacks are offered once per device (and on every manual Review & upload). */
+  const _seedKeys=(!CFG._seedFillOfferedV28b||_stay)?_seedAddKeys(localSnapshot,liveSnapshot,_reviewAccessScope()):{sched:new Set(),dem:new Set()};
+  const _seedAdds=_seedKeys.sched.size+_seedKeys.dem.size;
+  const _diffScope=(_pendingAtReviewStart&&_granularDirty)?{scheduleKeys:new Set([...Object.keys(_dirtyAssignRows),..._seedKeys.sched]),demandKeys:new Set([..._seedKeys.dem,...Object.keys(_dirtyDemandWeeks),...Object.keys((localSnapshot||{}).demand||{}).filter(w=>{const lv=(localSnapshot.demand||{})[w],rv=((liveSnapshot||{}).demand||{})[w];const has=o=>!!o&&typeof o==="object"&&Object.values(o).some(d=>d&&typeof d==="object"&&Object.keys(d).length);return has(lv)&&!has(rv);})]),leaveIds:new Set(Object.keys(_dirtyLeaveIds)),checkinKeys:new Set(Object.keys(_dirtyCheckinRows))}:undefined;
   let {changes,conflicts}=analyzeUploadChanges(localSnapshot,liveSnapshot,_diffScope);
   // Merges the roster/settings diff (see analyzeCfgChanges()'s own comment for the full "generic banner instead of
   // an itemized list" gap this closes) into the SAME changes/conflicts arrays the schedule diff already populates —
@@ -24408,6 +24807,16 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     const _isFirstAppWideSync=!(_lastPulledAppConfig&&_lastPulledAppConfig.appWide&&Object.keys(_lastPulledAppConfig.appWide).length);
     _awaitingSyncChoice=true;
     try{_connectUiPhase=null;_applySyncUiState();syncNav();}catch(e){}
+    /* A device with no pending edits that holds seeded data live lacks (typically a downloaded copy on its first connect) goes
+       straight to the upload review instead of silently taking live and discarding its seeds. Only the seeded rows are marked,
+       so live values and other devices' newer edits are never offered for overwrite by default. */
+    if(_noPending&&_seedAdds>0&&!_stay){
+      try{CFG._seedFillOfferedV28b=true;localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
+      _seedKeys.sched.forEach(k=>{const p=_parseAssignRowKey(k);if(p)_markAssignDirty(p.dept,p.wk,p.name);});
+      _seedKeys.dem.forEach(w=>_markDemandDirty(w));
+      _awaitingSyncChoice=false;_syncReviewPending=true;
+      return await _maybeUploadOnConnect(fromOnlineEvent,true,opt);
+    }
     let choice;
     // A device with no unsynced edits and nothing itemized to show has nothing of its own to protect and nothing the
     // dialog could list (the remaining difference is internal bookkeeping), so it takes the live copy without asking.
@@ -24443,8 +24852,9 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     [..._allDemandWeeks].filter(k=>!_reviewDemandWeeks.has(k)).forEach(_clearDirtyDemandWeek);
     Object.keys(_dirtyAssignRows).forEach(k=>{const p=_parseAssignRowKey(k);if(!p)return;const local=(((ASSIGN[p.dept]||{})[p.wk]||{})[p.name]),live=((((liveSnapshot.assign||{})[p.dept]||{})[p.wk]||{})[p.name]);if(_sameValue(_normalizedAssignRow(local),_normalizedAssignRow(live)))_clearProtectedAssignKeys([k]);});
     Object.keys(_dirtyDemandWeeks).forEach(k=>{if(_sameValue(_nullIfEmpty(DEMAND[k]),_nullIfEmpty((liveSnapshot.demand||{})[k])))_clearDirtyDemandWeek(k);});
-    const _uploadResult=await pushPending({sections:choice.sections,deliberate:choice.deliberate,onlyChanged:true,reviewedScheduleKeys:_reviewScheduleKeys,reviewedDemandWeeks:_reviewDemandWeeks,fromReview:true,accessScope:_serialReviewScope(_access),discardScheduleAfterSuccess:(choice.dropped||[]).indexOf("schedule")>=0,suppressSuccessNote:true});
-    if(!_uploadResult||_uploadResult.failed||_uploadResult.reviewRemaining){
+    _showUploadProgress({schedule:_reviewScheduleKeys.size,demand:_reviewDemandWeeks.size,roster:(choice.sections||[]).some(k=>_isCfgSecKey(k))});
+    let _uploadResult;try{_uploadResult=await pushPending({sections:choice.sections,deliberate:choice.deliberate,onlyChanged:true,reviewedScheduleKeys:_reviewScheduleKeys,reviewedDemandWeeks:_reviewDemandWeeks,rosterPicks:choice.rosterPicks,fromReview:true,accessScope:_serialReviewScope(_access),discardScheduleAfterSuccess:(choice.dropped||[]).indexOf("schedule")>=0,suppressSuccessNote:true});}catch(eUp){_hideUploadProgress();throw eUp;}_uploadProgressPhase("Checking the live copy\u2026");
+    if(!_uploadResult||_uploadResult.failed||_uploadResult.reviewRemaining){_hideUploadProgress();
       // Nothing after a partial reviewed upload is allowed to pull, overwrite local data, clear Pending, or turn
       // the header green. The local snapshots remain on screen and Review & upload remains available.
       setPending(true);setStatus("review needed","#e0a800");render();return;
@@ -24460,7 +24870,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
       if(_drop.indexOf("leave")>=0){_replaceLeaveScope(LEAVE_REQUESTS,liveSnapshot.leaveRequests,_access.schedule);_any=true;}
       if(_any){const _p=_syncApplying;_syncApplying=true;try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);}finally{_syncApplying=_p;}}
     }
-    try{await _readLiveForReview();}catch(e){reportSyncError("post-upload verification read",e);}
+    try{await _readLiveForReview();}catch(e){reportSyncError("post-upload verification read",e);}finally{_hideUploadProgress();}
     {const _handled=[...(choice.sections||[]),...(choice.dropped||[])];_clearDirtyWithinReviewScope(_access,localSnapshot,liveSnapshot,_handled);}
     _reviewUploadInProgress=false;_comparisonMismatchCount=0;_confirmLocalSyncRevision();_reconcilePendingFlag();_applySyncUiState();render();
     {const _nm={people:"Roster people",details:"Roster details (adds)",detailsReplace:"Roster details (replaces)",status:"Roster status",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
@@ -26212,17 +26622,18 @@ function _mergeStaffForConnect(local,live){
    always kept, and a blank on this device never changes live. opts.fill adds values live lacks; opts.replace replaces values live has;
    opts.status applies this device's active/inactive status (otherwise live's status is kept). */
 function _mergeStaffForUpload(local,live,opts){
-  opts=opts||{};const fill=!!opts.fill,replace=!!opts.replace,status=!!opts.status;
+  opts=opts||{};
+  const fillF=opts.fillF!==undefined?!!opts.fillF:!!opts.fill,fillA=opts.fillA!==undefined?!!opts.fillA:!!opts.fill,repF=opts.replaceF!==undefined?!!opts.replaceF:!!opts.replace,repA=opts.replaceA!==undefined?!!opts.replaceA:!!opts.replace,status=!!opts.status;
   const out=Object.assign({},live),stat=new Set(_STAFF_STATUS_FIELDS);
-  const mergeMap=(mine,theirs)=>{const u=Object.assign({},theirs);Object.keys(mine).forEach(key=>{if(!Object.prototype.hasOwnProperty.call(theirs,key)){if(fill)u[key]=mine[key];}else if(replace&&JSON.stringify(mine[key])!==JSON.stringify(theirs[key]))u[key]=mine[key];});return u;};
+  const mergeMap=(mine,theirs,fill,replace)=>{const u=Object.assign({},theirs);Object.keys(mine).forEach(key=>{if(!Object.prototype.hasOwnProperty.call(theirs,key)){if(fill)u[key]=mine[key];}else if(replace&&JSON.stringify(mine[key])!==JSON.stringify(theirs[key]))u[key]=mine[key];});return u;};
   Object.keys(local||{}).forEach(k=>{
     if(stat.has(k)||k==="n")return;
     const v=local[k];
-    if(k==="availDates"){const u=mergeMap(_withoutAutoAvail(v)||{},_withoutAutoAvail(live.availDates)||{});if(Object.keys(u).length)out.availDates=u;else delete out.availDates;return;}
-    if(k==="avail"){const u=mergeMap(_isPlainObj(v)?v:{},_isPlainObj(live.avail)?live.avail:{});if(Object.keys(u).length)out.avail=u;else delete out.avail;return;}
+    if(k==="availDates"){const u=mergeMap(_withoutAutoAvail(v)||{},_withoutAutoAvail(live.availDates)||{},fillA,repA);if(Object.keys(u).length)out.availDates=u;else delete out.availDates;return;}
+    if(k==="avail"){const u=mergeMap(_isPlainObj(v)?v:{},_isPlainObj(live.avail)?live.avail:{},fillA,repA);if(Object.keys(u).length)out.avail=u;else delete out.avail;return;}
     if(_nullIfEmpty(v)===null)return;
-    if(_nullIfEmpty(live[k])===null){if(fill)out[k]=v;}
-    else if(replace&&!_staffFieldMeansSame(k,v,live[k]))out[k]=v;
+    if(_nullIfEmpty(live[k])===null){if(fillF)out[k]=v;}
+    else if(repF&&!_staffFieldMeansSame(k,v,live[k]))out[k]=v;
   });
   if(out.availDates){const r=_withoutAutoAvail(out.availDates);if(r)out.availDates=r;else delete out.availDates;}
   return status?_withStatusFrom(out,local):out;
@@ -26335,6 +26746,7 @@ async function pushConfig(opts){
   if(_syncReviewPending||_restoreHoldActive())return _deferredConfigPush("Settings and roster stayed on this device while live review/restore protection is active.");
   if(Date.now()<_cfgBlockedUntil)return _deferredConfigPush("Settings and roster stayed on this device while the live access-policy retry delay is active.");/* Live access policy B: refused recently, retry later instead of every few seconds */
   const _secs=(opts&&opts.sections)?new Set(opts.sections):null;
+  const _picks=(opts&&Array.isArray(opts.rosterPicks))?new Set(opts.rosterPicks):null;
   const _want=k=>{if(!_secs)return true;if(_ROSTER_SEC_KEYS.indexOf(k)>=0)return _secs.has(k)||_secs.has("roster");return _secs.has(k);};
   const _perm=_reviewAccessScope(),_allowedSettings=new Set((opts&&opts.allowedSettingsDepts)||[..._perm.settings]),_allowAppWide=(opts&&Object.prototype.hasOwnProperty.call(opts,"allowAppWide"))?!!opts.allowAppWide:!!_perm.allowAppWide;
   if(!_perm.loaded||(!_allowedSettings.size&&!_allowAppWide))return _localOnlyWriteResult("Roster/settings changes");
@@ -26446,7 +26858,8 @@ async function pushConfig(opts){
         const _staffOut=()=>{
           if(!_ppl&&!_det&&!_rep&&!_stat)return liveStaff;
           const base=_ppl?_mm.staff:liveStaff.filter(st=>st&&st.n&&!tomb[st.n]);
-          return base.map(st=>{const L=liveBy.get(st.n),M=mineBy.get(st.n);if(!L)return st;if(!M)return L;return (_det||_rep||_stat)?_mergeStaffForUpload(M,L,{fill:_det,replace:_rep,status:_stat}):L;});
+          const pk=(n,c,k)=>!_picks||_picks.has(d+"|"+n+"|"+c+"|"+k);
+          return base.map(st=>{const L=liveBy.get(st.n),M=mineBy.get(st.n);if(!L)return pk(st.n,"add","p")?st:null;if(!M)return L;return (_det||_rep||_stat)?_mergeStaffForUpload(M,L,{fillF:_det&&pk(st.n,"fill","f"),fillA:_det&&pk(st.n,"fill","a"),replaceF:_rep&&pk(st.n,"replace","f"),replaceA:_rep&&pk(st.n,"replace","a"),status:_stat&&pk(st.n,"status","s")}):L;}).filter(Boolean);
         };
         if(_ppl&&_det&&_rep&&_stat&&_set){
           payload[d]=_secs?Object.assign({},_mm,{staff:_staffOut()}):_mm;
@@ -35782,7 +36195,7 @@ truncate table public.snapshots;
 </ul></details>
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Version log</b></summary>
 <ul class="small">
-<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; split the roster review into separate sections (adds what live is missing, replaces live values, active/inactive status, and live-only values that are kept and never sent) with an upload that applies exactly the ticked ones; padded Paycom badge numbers to six digits on load, edit, import and live read; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
+<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; offered seeded values live lacks on a device's first connect (fill only, never over a live value) and added per-person roster selection with Select shown / Deselect shown in the upload review; added a Workweek check (live vs this device, stray week keys, empty stray rows, and a move of stray values into blank cells of their proper weeks) and fixed workweek changes leaving empty rows on live; stopped the header from flickering between Connected and Review needed while a push is in flight or the live feed is re-opened (it now reads Uploading… / Syncing… until settled); applied the Club-governs occupancy/arrivals/departures for 10/01 and 10/08 and filled blank seeded demand (Covers, transportation, events) on browsers that had loaded an earlier seed; showed upload progress (rows sent, elapsed time) after the review closes; added review filters for blank-on-this-device, blank-on-live and department (display only); split the roster review into separate sections (adds what live is missing, replaces live values, active/inactive status, and live-only values that are kept and never sent) with an upload that applies exactly the ticked ones; padded Paycom badge numbers to six digits on load, edit, import and live read; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
 }
@@ -38516,7 +38929,7 @@ function _mirrorDemandCalendarValue(sourceDept,sourceWeek,sourceDay,field){
 }
 let _weekStartMutationGeneration=0,_workweekSyncPending=0,_workweekSyncQueue=Promise.resolve();
 function _workweekSyncSnapshot(dept){return {assign:{[dept]:JSON.parse(JSON.stringify((ASSIGN||{})[dept]||{}))},demand:JSON.parse(JSON.stringify(DEMAND||{})),checkins:{[dept]:JSON.parse(JSON.stringify((CHECKINS||{})[dept]||{}))}};}
-function _changedWeekRows(before,after,dept){const up=[],del=new Map(),keys=[];const b=((before.assign||{})[dept])||{},a=((after.assign||{})[dept])||{};new Set([...Object.keys(b),...Object.keys(a)]).forEach(wk=>{const bw=b[wk]||{},aw=a[wk]||{};new Set([...Object.keys(bw),...Object.keys(aw)]).forEach(name=>{if(_sameValue(_normalizedAssignRow(bw[name]),_normalizedAssignRow(aw[name])))return;keys.push(_assignRowKey(dept,wk,name));if(aw[name]&&Object.keys(aw[name]).length)up.push({dept,week:wk,staff:name,days:aw[name]});else{if(!del.has(wk))del.set(wk,[]);del.get(wk).push(name);}});});return{up,del,keys};}
+function _changedWeekRows(before,after,dept){const up=[],del=new Map(),keys=[];const b=((before.assign||{})[dept])||{},a=((after.assign||{})[dept])||{};new Set([...Object.keys(b),...Object.keys(a)]).forEach(wk=>{const bw=b[wk]||{},aw=a[wk]||{};new Set([...Object.keys(bw),...Object.keys(aw)]).forEach(name=>{/* a row that existed (even empty) and no longer exists must still be deleted on live; empty and absent only look equal after normalising */if(_sameValue(_normalizedAssignRow(bw[name]),_normalizedAssignRow(aw[name]))&&!(bw[name]!==undefined&&aw[name]===undefined))return;keys.push(_assignRowKey(dept,wk,name));if(aw[name]&&Object.keys(aw[name]).length)up.push({dept,week:wk,staff:name,days:aw[name]});else{if(!del.has(wk))del.set(wk,[]);del.get(wk).push(name);}});});return{up,del,keys};}
 function _queueWorkweekSync(dept,before,token){
   _workweekSyncPending++;_applySyncUiState();try{syncNav();}catch(e){}const job=async()=>{for(let i=0;i<1200&&(_syncReviewPending||_awaitingSyncChoice||_reviewUploadInProgress);i++)await new Promise(r=>setTimeout(r,250));if(_syncReviewPending||_awaitingSyncChoice||_reviewUploadInProgress)throw new Error("The live review did not finish, so the workweek change remains local for review.");if(token!==_weekStartMutationGeneration)return{ok:false,cancelled:true};const after=_workweekSyncSnapshot(dept),rows=_changedWeekRows(before,after,dept);_pushStarted();try{
     if(rows.up.length){const {error}=await SUPABASE_CLIENT.from("assignments").upsert(rows.up,{onConflict:"dept,week,staff"});if(error)throw error;}
@@ -38527,7 +38940,7 @@ function _queueWorkweekSync(dept,before,token){
   }catch(e){reportSyncError("Workweek change",e);setPending(true);_pushSettled(false);return{ok:false,error:e};}};
   const run=_workweekSyncQueue.then(job,job);_workweekSyncQueue=run.catch(()=>{});return run.finally(()=>{_workweekSyncPending=Math.max(0,_workweekSyncPending-1);_applySyncUiState();try{syncNav();}catch(e){}});
 }
-async function setWeekStart(v){
+async function setWeekStart(v){_wkLocalChangeUntil=Date.now()+10000;
   if(!_requireDeptSettingsAccess(SETDEPT))return;const idx=parseInt(v,10);if(isNaN(idx)||idx<0||idx>6)return;const dept=SETDEPT||DEPT,old=dowOffset(dept);if(old===idx)return;
   const token=++_weekStartMutationGeneration,before=_workweekSyncSnapshot(dept),today=new Date(),effective=_weekStartForDow(today,idx),cutoff=weekKey(effective),changedAt=weekKey(today),anchor=new Date(WEEK_START);anchor.setDate(anchor.getDate()+3);_workweekSyncPending++;_applySyncUiState();_workweekSyncPending--;
   _setPendingUndoLocation({kind:"settings",dept,key:"weekStartDow",label:"Workweek starts on",control:"wkStartSel",anchorDate:weekKey(anchor)});
@@ -40556,8 +40969,8 @@ async function backupMenu(){
   // rare, one-off maintenance actions that made this list feel dense — their underlying functions
   // (cleanupFormerStaffSchedules(), resortRosterByRoleWithConfirm(), both further below) are deliberately LEFT IN
   // PLACE, just no longer reachable from this specific menu.
-  const pick=await uiDialog("Backup & versions:",["Cancel","Restore selected backup items (JSON)","Save version now","View version history","View change log","Compare with other copy"]);
-  if(pick==="Restore selected backup items (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare with other copy")showCompareModal();
+  const pick=await uiDialog("Backup & versions:",["Cancel","Restore selected backup items (JSON)","Save version now","View version history","View change log","Compare with other copy","Workweek check","Fill missing seeded data"]);
+  if(pick==="Restore selected backup items (JSON)")document.getElementById("imp").click();else if(pick==="Save version now")saveSnapshotWithPrompt();else if(pick==="View version history")showHistory(SETDEPT);else if(pick==="View change log")showAudit();else if(pick==="Compare with other copy")showCompareModal();else if(pick==="Workweek check")showWorkweekCheck();else if(pick==="Fill missing seeded data")fillMissingSeedDataMenu();
 }
 // See backupMenu()'s own comment for the full "older bug left stale data behind" cause this closes. Scans BOTH
 // departments' ASSIGN data for any staff currently marked employed:false and clears (removes the key entirely, not
@@ -47906,6 +48319,7 @@ function seedRoster(){try{
   _padLocalBadges();
   fixupDBGSOperationalDefaults();
   fixupDBGSSeedMigration();
+  fixupDBGSDemandSeedFill();
   fixupDBGSNameCapitalization();
   fixupDBGSAnsweredDesignationsRev819();
   seedRoster();
