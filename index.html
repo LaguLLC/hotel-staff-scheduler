@@ -2906,6 +2906,7 @@
     .carryoverNotice{font-size:12px}
     .exportStaffToggleText{display:block}.exportStaffToggleText>*{display:block;margin-left:0!important}
   }
+input.covin::-webkit-outer-spin-button,input.covin::-webkit-inner-spin-button{-webkit-appearance:none;margin:0;}input.covin{-moz-appearance:textfield;appearance:textfield;}
 </style>
 </head>
 <body>
@@ -4599,8 +4600,15 @@ function _storeLivePinSession(rec,keepOthers){
 function _supabaseClientOptions(){const l=_livePinSessionList(),headers={"X-Hotel-Client-Version":APP_VERSION};if(l.length)headers["X-Hotel-Session"]=l.map(r=>r.token).join(",");return{global:{headers}};}
 let _livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};
 function _setLiveClientRequestHeaders(client){try{if(!client)return;const tokens=_livePinSessionList().map(r=>r.token).join(","),sets=[client.headers,client.rest&&client.rest.headers,client.functions&&client.functions.headers].filter(Boolean);sets.forEach(h=>{h["X-Hotel-Client-Version"]=APP_VERSION;if(tokens)h["X-Hotel-Session"]=tokens;else delete h["X-Hotel-Session"];});}catch(e){console.warn("Could not refresh live request headers",e);}}
-async function _refreshLivePermissions(){const empty=()=>{_livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};};if(!SUPABASE_CLIENT){empty();return _livePermissions;}try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);const r=await SUPABASE_CLIENT.rpc("hotel_my_permissions");if(r.error)throw r.error;const d=r.data||{};_livePermissions={schedule:new Set((d.schedule||[]).filter(x=>DEPT_KEYS.includes(x))),settings:new Set((d.settings||[]).filter(x=>DEPT_KEYS.includes(x))),allSettings:d.all_settings===true,manager:d.manager===true,loaded:true,error:null};}catch(error){empty();_livePermissions.error=error;console.warn("Live permissions could not be read; automatic and reviewed uploads default to no write access.",error);}return _livePermissions;}
-function _reviewAccessScope(){const p=_livePermissions||{},schedule=new Set(p.schedule||[]),settings=new Set(p.settings||[]),demand=new Set();if(schedule.has("DTFO")||schedule.has("DTHSK"))demand.add("DTPROP");if(schedule.has("DBGS")||schedule.has("DBHSK"))demand.add("DBPROP");return{schedule,settings,demand,allowAppWide:!!p.allSettings,loaded:!!p.loaded,error:p.error||null};}
+async function _refreshLivePermissions(){const empty=()=>{_livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};};if(!SUPABASE_CLIENT){empty();return _livePermissions;}try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);const r=await SUPABASE_CLIENT.rpc("hotel_my_permissions");if(r.error)throw r.error;const d=r.data||{};_livePermissions={schedule:new Set((d.schedule||[]).filter(x=>DEPT_KEYS.includes(x))),settings:new Set((d.settings||[]).filter(x=>DEPT_KEYS.includes(x))),allSettings:d.all_settings===true,manager:d.manager===true,loaded:true,error:null};}catch(error){empty();_livePermissions.error=error;
+    /* The permission lookup function is installed by the v2.8 SQL. When the server does not have it yet (SQL not run), the
+       server's own row rules are still the ones from before, so this tab's unlocked departments are used, exactly as v2.8
+       did; the server still accepts or refuses each write. Any other failure (network, server error) stays closed. */
+    const _missing=error&&(error.code==="PGRST202"||error.code==="42883"||error.status===404||/could not find the function|does not exist|schema cache/i.test(String(error.message||"")));
+    if(_missing){_livePermissions.loaded=true;_livePermissions.fallback="local";console.warn("Live permission lookup is not installed on this server (run the v2.8 SQL); using this tab's unlocked departments. Server rules still decide each write.",error);}
+    else console.warn("Live permissions could not be read; automatic and reviewed uploads default to no write access.",error);}return _livePermissions;}
+function _localUnlockedDepts(){try{return DEPT_KEYS.filter(d=>!!(EDITMEM&&EDITMEM[d])||(EDIT&&EDIT_DEPT===d));}catch(e){return [];}}
+function _reviewAccessScope(){const p=_livePermissions||{},_loc=p.fallback==="local"?_localUnlockedDepts():null,schedule=new Set(_loc||p.schedule||[]),settings=new Set(_loc||p.settings||[]),demand=new Set();if(_loc&&_loc.length===DEPT_KEYS.length)p.allSettings=true;else if(_loc)p.allSettings=false;if(schedule.has("DTFO")||schedule.has("DTHSK"))demand.add("DTPROP");if(schedule.has("DBGS")||schedule.has("DBHSK"))demand.add("DBPROP");return{schedule,settings,demand,allowAppWide:!!p.allSettings,loaded:!!p.loaded,error:p.error||null};}
 function _serialReviewScope(sc){sc=sc||_reviewAccessScope();return{schedule:[...sc.schedule],settings:[...sc.settings],demand:[...sc.demand],allowAppWide:!!sc.allowAppWide,localOnlyConfig:!!sc.localOnlyConfig,excludedCount:Number(sc.excludedCount)||0,excludedLabels:(sc.excludedLabels||[]).slice()};}
 function _deserialReviewScope(sc){sc=sc||{};return{schedule:new Set(sc.schedule||[]),settings:new Set(sc.settings||[]),demand:new Set(sc.demand||[]),allowAppWide:!!sc.allowAppWide,localOnlyConfig:!!sc.localOnlyConfig,excludedCount:Number(sc.excludedCount)||0,excludedLabels:(sc.excludedLabels||[]).slice()};}
 function _localOnlyWriteResult(kind){return{ok:true,localOnly:true,skipped:true,outsideScope:true,reason:(kind||"Change")+" stays on this device because its live write permission is not available."};}
@@ -16242,10 +16250,13 @@ function renderDemand(){
       const day=(DEMAND[_dk]&&DEMAND[_dk][i])||{},dro=(!EDIT||weekLocked());
       if(dro){
         const shown=keys.map(k=>day[k]!=null?Math.round(day[k]):"–").join(" / ");
-        h+=`<td><span class="cell" onclick="lockedClick()" style="cursor:pointer;display:inline-block;width:100%;text-align:center" title="Three Club Lounge cover counts in the workbook's original order">${shown}</span></td>`;
+        h+=`<td><span class="cell" onclick="lockedClick()" style="cursor:pointer;display:inline-block;width:100%;text-align:center;white-space:nowrap;overflow:hidden;text-overflow:clip;font-size:12px" title="Three Club Lounge cover counts in the workbook's original order">${shown}</span></td>`;
       }else{
-        const fields=keys.map((k,j)=>`<input class="cell" type="number" min="0" max="99999" step="1" style="width:24px;text-align:center;padding:0" value="${day[k]!=null?Math.round(day[k]):""}" title="Cover count ${j+1} — source workbook position ${j+1}" data-dk="${k}" data-day="${i}">`);
-        h+=`<td><span style="display:inline-flex;align-items:center;justify-content:center;white-space:nowrap">${fields[0]}<span style="margin:0 1px">/</span>${fields[1]}<span style="margin:0 1px">/</span>${fields[2]}</span></td>`;
+        // The three boxes share the cell's own width (flex:1 1 0, min-width:0) up to 34 px each, so the group stays centred in
+        // a wide column and shrinks with a narrow one instead of spilling into the next day. Spinner arrows are hidden
+        // (input.covin) because they took most of each box's width; the value is still a whole number typed directly.
+        const fields=keys.map((k,j)=>`<input class="cell covin" type="number" inputmode="numeric" min="0" max="99999" step="1" style="flex:1 1 0;min-width:0;width:0;max-width:34px;text-align:center;padding:0;font-size:clamp(10px,1.3vw,12px)" value="${day[k]!=null?Math.round(day[k]):""}" title="Cover count ${j+1} — source workbook position ${j+1}" data-dk="${k}" data-day="${i}">`);
+        h+=`<td><span style="display:flex;width:100%;align-items:center;justify-content:center;flex-wrap:nowrap;white-space:nowrap;overflow:hidden">${fields[0]}<span style="flex:0 0 auto;margin:0">/</span>${fields[1]}<span style="flex:0 0 auto;margin:0">/</span>${fields[2]}</span></td>`;
       }
     }
     h+=`</tr>`;
@@ -23809,6 +23820,16 @@ function _diffLineDepts(line,leaves){
 }
 function _reviewSectionForLine(line){const c=_categorizeConflictLine(line);return _DIFF_SECTIONS.find(S=>S.cats.indexOf(c)>=0)||null;}
 function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(S.k==="people"||S.k==="details"||S.k==="settings")return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
+/* Why nothing could be offered, in terms the person can act on. Server-recognised rights come from the live sign-in or live
+   PIN sessions; a PIN that only unlocked this device (no live session issued) grants nothing on the server. */
+function _noUploadAccessMessage(scope,note){
+  const p=_livePermissions||{},live=_livePinSessionList().length,loc=_localUnlockedDepts().map(deptLabel);
+  let why;
+  if(p.error&&!p.loaded)why="The live permission check could not be completed ("+String((p.error&&(p.error.message||p.error.code))||"unknown error")+"). Nothing was uploaded. Reconnect and try Review & upload again.";
+  else if(!live&&!(typeof SUPA_USER!=="undefined"&&SUPA_USER))why="This tab is unlocked for "+(loc.length?loc.join(", "):"no department")+" on this device only. No live PIN session was issued and no live account is signed in, so the live server treats this tab as view-only and would refuse the upload. Lock and re-enter the PIN while connected (the live PIN service must be available), or sign in with a live account.";
+  else why="The live server recognises "+live+" live PIN session"+(live===1?"":"s")+(typeof SUPA_USER!=="undefined"&&SUPA_USER?" and a signed-in account":"")+", but none of them grants edit rights for the departments that changed. Check the PIN's department or the account's permissions in Supabase.";
+  return note+"\n\n"+why+"\n\nYour changes stay on this device.";
+}
 function _reviewAccessLabel(scope){const s=[...scope.schedule].map(deptLabel),t=[...scope.settings].map(deptLabel),parts=[];if(s.length)parts.push("schedule: "+s.join(", "));if(t.length)parts.push("roster/settings: "+t.join(", "));if(scope.allowAppWide)parts.push("app-wide settings");return parts.join("; ")||"no live write access";}
 function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[];(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&(S.k==="people"||S.k==="details"||S.k==="settings"))eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>labels.add(deptLabel(d)));else labels.add(_categorizeConflictLine(line));}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&(S.k==="people"||S.k==="details"||S.k==="settings");});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
 function _demandPropertyOfKey(k){return String(k||"").indexOf(DEMAND_DB_PREFIX)===0?"DBPROP":"DTPROP";}
@@ -24186,6 +24207,7 @@ async function maybeUploadOnConnect(fromOnlineEvent,review,opt){
 async function reviewAndUpload(){
   if(!SUPABASE_CLIENT){uiAlert("Connect to the shared copy first (Sync & data).");return;}
   if(_awaitingSyncChoice||_syncReviewPending)return;
+  try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);await _refreshLivePermissions();}catch(e){}
   await maybeUploadOnConnect(false,true,{stayConnected:true});
   render();
 }
@@ -24351,7 +24373,10 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   // Compared without the dates-off records the schedule editor creates itself (see _withoutAutoAvail).
   const _cfgChanged=_access.eligibleCfgCount>0;
   if(!changes.length&&_access.excludedCount){
-    _connectUiPhase=null;setPending(true);_applySyncUiState();try{syncNav();}catch(e){}render();flashNote(_accessNote);return {localOnly:true,accessScope:_serialReviewScope(_access)};
+    _connectUiPhase=null;setPending(true);_applySyncUiState();try{syncNav();}catch(e){}render();
+    _awaitingSyncChoice=false;_syncReviewPending=false;
+    try{await uiAlert(_noUploadAccessMessage(_access,_accessNote));}catch(e){}
+    return {localOnly:true,accessScope:_serialReviewScope(_access)};
   }
   if(!changes.length&&!_cfgChanged){
     _setCfgSyncBase(_lastPulledAppConfig);_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);_confirmLocalSyncRevision();_comparisonMismatchCount=0;setPending(false);_applySyncUiState();try{syncNav();}catch(e){}render();
