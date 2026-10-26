@@ -10548,12 +10548,12 @@ function _applyExcelImportPlan(dept,plan){
         badgeConflicts.push(b.fileBadge+" \u2014 claimed in the file by "+[...claimants[b.fileBadge]].join(" and "));
         return;
       }
-      const heldBy=(CFG[dept].staff||[]).find(x=>x.n!==b.rosterName&&x.paycomBadgeNumber===b.fileBadge);
+      const heldBy=(CFG[dept].staff||[]).find(x=>x.n!==b.rosterName&&_padBadge(x.paycomBadgeNumber)===_padBadge(b.fileBadge));
       if(heldBy){
         badgeConflicts.push(b.fileBadge+" \u2014 already on the roster for "+heldBy.n+", so not given to "+b.rosterName);
         return;
       }
-      st.paycomBadgeNumber=b.fileBadge;badgesFilled++;
+      st.paycomBadgeNumber=_padBadge(b.fileBadge);badgesFilled++;
     });
     if(badgesFilled)save("hotel_cfg",CFG);
   }catch(e){console.warn("badge fill-in skipped (non-fatal)",e);}
@@ -10996,7 +10996,7 @@ function _xlSetNameOverride(fileName,rosterName){
       if(_fileBadgeRow){
         const _mappedStaff=((CFG[_mapDept]||{}).staff||[]).find(st=>st&&st.n===_mapName);
         if(_mappedStaff&&!_mappedStaff.paycomBadgeNumber){
-          _mappedStaff.paycomBadgeNumber=_fileBadgeRow.fileBadge;
+          _mappedStaff.paycomBadgeNumber=_padBadge(_fileBadgeRow.fileBadge);
           save("hotel_cfg",CFG);
         }else if(_mappedStaff&&_mappedStaff.paycomBadgeNumber&&String(_mappedStaff.paycomBadgeNumber).replace(/^0+/,"")!==String(_fileBadgeRow.fileBadge).replace(/^0+/,"")){
           flashNote("Note: "+_mapName+" already has employee number "+_mappedStaff.paycomBadgeNumber+" on the roster \u2014 this file's own value ("+_fileBadgeRow.fileBadge+") differs and was NOT used. Update the roster by hand (Settings \u2192 Staff roster) if the file is actually correct.");
@@ -22766,7 +22766,7 @@ async function pushPending(opts){ opts=opts||{}; if(!SUPABASE_CLIENT){uiAlert("C
     if(_only&&_PR.ok.checkins&&_sameValue(_normalizedAssignRow(wks[wk][nm]),_normalizedAssignRow((((_PR.checkin[dept]||{})[wk])||{})[nm]))){_tally.skipped++;_clearDirtyCheckinRow(dept,wk,nm);continue;}
     _tally.checkin++;const _cr=await pushCheckin(dept,wk,nm);if(!_cr||!_cr.ok||_pushFailureLatched)return _fail();
   }}}}
-  const _wantRoster=_want("people")||_want("details")||_want("roster");
+  const _wantRoster=_ROSTER_SEC_KEYS.some(k=>_want(k))||_want("roster");
   if(_wantRoster||_want("settings")){
     const _prevDel=_deliberateRosterChange;if(opts.deliberate&&_wantRoster)_deliberateRosterChange=true;
     let _cfgResult;try{_cfgResult=await pushConfig(Object.assign({},_secs?{sections:[..._secs]}:{},{allowedSettingsDepts:[..._access.settings],allowAppWide:_access.allowAppWide}));}finally{_deliberateRosterChange=_prevDel;}
@@ -23043,9 +23043,18 @@ function _cfgCompareView(depts){
 //
 // For every other field, "no value" is spelled three ways (undefined, null, "") and they all mean the same
 // thing, so a change from one spelling to another is not a change either.
+/* Paycom badge numbers are six digits. A purely numeric badge of 1-5 digits is padded on the left with zeros ("858" -> "000858");
+   anything else (blank, letters, already six or more digits) is left exactly as typed apart from surrounding spaces. */
+function _padBadge(v){
+  if(v===undefined||v===null)return v;
+  const s=String(v).replace(/[\s\u00a0\u200b]/g,"");
+  return /^\d{1,5}$/.test(s)?s.padStart(6,"0"):String(v).trim();
+}
+function _padLocalBadges(){let n=0;try{DEPT_KEYS.forEach(d=>(((CFG[d]||{}).staff)||[]).forEach(st=>{if(st&&st.paycomBadgeNumber!==undefined&&st.paycomBadgeNumber!==null&&st.paycomBadgeNumber!==""){const p=_padBadge(st.paycomBadgeNumber);if(p!==st.paycomBadgeNumber){st.paycomBadgeNumber=p;n++;}}}));if(n){try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}}}catch(e){console.warn("badge padding skipped (non-fatal):",e);}return n;}
 function _staffFieldMeansSame(field,a,b){
   if(_sameValue(a,b))return true;
-  if(field==="paycomBadgeNumber"||field==="paycomEmployeeId"){const s=v=>v==null?"":String(v).replace(/[\s\u00a0\u200b]/g,"");return s(a)===s(b);}
+  if(field==="paycomBadgeNumber"){const s=v=>v==null?"":String(_padBadge(v));return s(a)===s(b);}
+  if(field==="paycomEmployeeId"){const s=v=>v==null?"":String(v).replace(/[\s\u00a0\u200b]/g,"");return s(a)===s(b);}
   if(field==="employed"){
     const on=v=>v!==false;          // exactly how the rest of this file reads it
     return on(a)===on(b);
@@ -23287,7 +23296,9 @@ function humanizeWeeklyAvail(obj){
 // into ONE bullet showing both values together — never two separate, redundant lines. Chronologically sorted (by
 // the entry's own `from` date for availDates; by actual weekday order, not object key order, for avail) per the
 // same "sort by ... date" request.
-function _diffAvailDatesEntries(localObj,liveObj){
+/* cls: undefined = every difference; "fill" = this device has it, live does not; "liveOnly" = live has it, this device does not; "replace" = both have it and differ. */
+function _diffRowClass(l,r){return l&&!r?"fill":(!l&&r?"liveOnly":"replace");}
+function _diffAvailDatesEntries(localObj,liveObj,cls){
   localObj=_syncRelevantAvailDates(localObj)||{};liveObj=_syncRelevantAvailDates(liveObj)||{};
   const allKeys=new Set([...Object.keys(localObj),...Object.keys(liveObj)]);
   const rows=[];
@@ -23295,6 +23306,7 @@ function _diffAvailDatesEntries(localObj,liveObj){
     const l=localObj[k],r=liveObj[k];
     if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical on both sides — not a real difference, skip entirely
     const sortDate=(l&&l.from)||(r&&r.from)||"";
+    if(cls&&_diffRowClass(l,r)!==cls)return;
     const pl=l?_availEntryParts(l):null,pr=r?_availEntryParts(r):null;
     // Every line reads "date: local X · live Y", with "none" for a side that has no record, like every other line.
     if(!pr)rows.push({sortDate,text:"• "+pl.date+": local "+pl.detail+" · live none"});
@@ -23306,7 +23318,7 @@ function _diffAvailDatesEntries(localObj,liveObj){
   rows.sort((a,b)=>a.sortDate<b.sortDate?-1:a.sortDate>b.sortDate?1:0);
   return rows.map(x=>x.text).join("\n");
 }
-function _diffWeeklyAvailEntries(localObj,liveObj){
+function _diffWeeklyAvailEntries(localObj,liveObj,cls){
   localObj=localObj||{};liveObj=liveObj||{};
   const allKeys=new Set([...Object.keys(localObj),...Object.keys(liveObj)]);
   const _what=a=>{if(!a)return "none";let detail=a.off?"Off all day":("Unavailable "+(a.from||"?")+"–"+(a.to||"?"));if(a.reason)detail+=" — "+a.reason;return detail;};
@@ -23314,6 +23326,7 @@ function _diffWeeklyAvailEntries(localObj,liveObj){
   allKeys.forEach(d=>{
     const l=localObj[d],r=liveObj[d];
     if(JSON.stringify(l??null)===JSON.stringify(r??null))return; // identical — skip
+    if(cls&&_diffRowClass(l,r)!==cls)return;
     rows.push({d,text:"• "+d+": local "+_what(l)+" · live "+_what(r)});
   });
   if(!rows.length)return null;
@@ -23386,43 +23399,34 @@ function analyzeCfgChanges(localDepts,liveDepts){
           ?!_staffFieldMeansSame(f,_syncRelevantAvailDates(l[f]),_syncRelevantAvailDates(r[f]))
           :!_staffFieldMeansSame(f,l[f],r[f]));
         if(diffFields.length){
-          // Friendly field label (STAFF_FIELD_LABELS, falling back to the raw key itself only if a future field
-          // is ever added here without a matching label) for every ordinary field; availDates/avail instead go
-          // through the entry-level diffs below (see _diffAvailDatesEntries()/_diffWeeklyAvailEntries()'s own
-          // comment for the full "redundant Sept 13/Sept 13" explanation this closes) — a field-level
-          // JSON.stringify difference doesn't necessarily mean every individual entry inside it differs, so those
-          // two fields are diffed and rendered entry-by-entry instead of as one wholesale before/after dump.
-          const _simpleClauses=[],_availLines=[];
+          // Each person's differences are split by what an upload would actually do, so the review can offer them separately:
+          //   fill     - this device has a value and live has none: uploading ADDS it, nothing on live is replaced
+          //   replace  - both have a value and they differ: uploading REPLACES the live value with this device's
+          //   liveOnly - live has a value and this device has none: NOT sent (blank never overwrites); the device takes live's value
+          const _cl={fill:[],replace:[],liveOnly:[]};
+          const _shown=(f,v)=>f==="paycomBadgeNumber"?_padBadge(v):v;
           diffFields.forEach(f=>{
-            if(f==="availDates"){
-              const d=_diffAvailDatesEntries(l[f],r[f]);
-              if(d)_availLines.push("\n"+d);
-            }else if(f==="avail"){
-              const d=_diffWeeklyAvailEntries(l[f],r[f]);
-              if(d)_availLines.push("\n"+d);
-            }else{
-              _simpleClauses.push(`${STAFF_FIELD_LABELS[f]||f}: local ${humanizeDiffValue(l[f]??null)} · live ${humanizeDiffValue(r[f]??null)}`);
-            }
+            if(f==="availDates"||f==="avail")return;
+            const lb=_nullIfEmpty(_shown(f,l[f]))===null,rb=_nullIfEmpty(_shown(f,r[f]))===null,c=lb&&!rb?"liveOnly":(!lb&&rb?"fill":"replace");
+            _cl[c].push(`${STAFF_FIELD_LABELS[f]||f}: local ${humanizeDiffValue(_shown(f,l[f])??null)} · live ${humanizeDiffValue(_shown(f,r[f])??null)}`);
           });
-          // Both entry-level diffs can legitimately return null (STAFF_FIELDS' own JSON.stringify check can flag
-          // the field as "different" purely due to key-insertion-order differences in an otherwise IDENTICAL set
-          // of entries — JSON.stringify is order-sensitive, this app's own actual data is not) — in that
-          // case there's genuinely nothing left to report for this person once the non-availability fields (if
-          // any) are also empty, so this whole entry is correctly skipped rather than pushing an empty line.
-          // Dates off are stored on the person's roster record, so they upload with the roster details, but most are
-          // created by the schedule editor from OFF cells. They get their own line and category so they read as
-          // availability rather than as a schedule or a roster-field conflict.
-          if(_simpleClauses.length){
-            const line=`${deptLabel} roster: ${name} — `+_simpleClauses.join("; ");
-            changes.push(line);conflicts.push(line);
-          }
-          if(_availLines.length){
-            const _ad=_availLines.join("").replace(/^\n/,"");
-            const _an=_ad.split("\n").length;
+          ["fill","replace","liveOnly"].forEach(c=>{
+            if(!_cl[c].length)return;
+            const line=`${deptLabel} roster: ${name} — `+_cl[c].join("; ");
+            _setCfgLineClass(line,c);changes.push(line);if(c==="replace")conflicts.push(line);
+          });
+          // Dates off and weekly availability are stored on the roster record but read as availability, so they have their own lines.
+          // Entry-level diffs can return null when only key order differs, so an empty result adds nothing.
+          ["fill","replace","liveOnly"].forEach(c=>{
+            const parts=[];
+            if(diffFields.indexOf("availDates")>=0){const d=_diffAvailDatesEntries(l.availDates,r.availDates,c);if(d)parts.push(d);}
+            if(diffFields.indexOf("avail")>=0){const d=_diffWeeklyAvailEntries(l.avail,r.avail,c);if(d)parts.push(d);}
+            if(!parts.length)return;
+            const _ad=parts.join("\n"),_an=_ad.split("\n").length;
             // More than three dates fold under one summary line so a long list does not push everything else off screen.
             const line=_an>3?`${deptLabel} availability: ${name} \u2014 ${_an} dates differ\u0001${_ad}`:`${deptLabel} availability: ${name} \u2014\n${_ad}`;
-            changes.push(line);conflicts.push(line);
-          }
+            _setCfgLineClass(line,c);changes.push(line);if(c==="replace")conflicts.push(line);
+          });
         }
       }
     });
@@ -23527,6 +23531,12 @@ function analyzeCfgChanges(localDepts,liveDepts){
 // each line into one of 7 real categories purely from that existing text, with no change needed to how the lines
 // themselves are built, so the two functions producing them never need to also track a separate category label
 // alongside each string.
+/* What an upload would do with a roster line (see analyzeCfgChanges). Keyed by the exact line text, which is deterministic, so the
+   category is the same wherever the line is read. A line not in the registry is treated as a replacement, the cautious reading. */
+var _cfgLineClass=new Map();
+function _setCfgLineClass(line,c){if(_cfgLineClass.size>20000)_cfgLineClass.clear();_cfgLineClass.set(line,c);}
+const _CAT_ROSTER={fill:"Roster fields live lacks",replace:"Roster fields that differ",liveOnly:"Roster fields only live has"};
+const _CAT_AVAIL={fill:"Availability live lacks",replace:"Availability that differs",liveOnly:"Availability only live has"};
 function _categorizeConflictLine(line){
   if(/^(?:DT|DB) demand /.test(line))return "Demand";
   if(line.indexOf("Leave request ")===0)return "Leave requests";
@@ -23539,14 +23549,14 @@ function _categorizeConflictLine(line){
   // or an addition made elsewhere), and a changed field on somebody both copies already agree exists. Reading
   // fifty near-identical lines to find which is which is exactly the problem being reported, and splitting them
   // costs nothing because the wording already distinguishes them.
-  if(line.indexOf(" availability: ")!==-1&&line.indexOf("App-wide setting")!==0)return "Staff availability";
+  if(line.indexOf(" availability: ")!==-1&&line.indexOf("App-wide setting")!==0){const c=_cfgLineClass.get(line);return c?_CAT_AVAIL[c]:"Staff availability";}
   if(/^.+? status: .+ \u2014 local (active|inactive)/.test(line)&&line.indexOf("App-wide setting")!==0)return "Staff status";
   if(line.indexOf(" roster: ")!==-1){
     // Anchored to the roster line's own "name — presence" shape, so a per-entry availability bullet further
     // down the same line (which can itself say "(local only)") can never re-categorise the whole line.
     if(/roster: .* \u2014 local only$/i.test(line))return "Staff added locally, not on live";
     if(/roster: .* \u2014 (live only|deleted here, live has them)$/i.test(line))return "Staff on live, not local";
-    return "Staff roster";
+    {const c=_cfgLineClass.get(line);return c?_CAT_ROSTER[c]:"Staff roster";}
   }
   if(line.indexOf(" coverage minimum — ")!==-1)return "Coverage minimums";
   if(line.indexOf(" rule — ")!==-1)return "Rules & thresholds";
@@ -23557,7 +23567,7 @@ function _categorizeConflictLine(line){
 }
 // Roster sections lead, because after a roster loss they are what somebody is actually here to look at, and the
 // schedule block is long enough to bury them otherwise.
-const _CONFLICT_CATEGORY_ORDER=["Staff added locally, not on live","Staff on live, not local","Staff status","Staff roster","Staff availability","Schedule","Demand","Leave requests","Check-ins","Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings","Additional app data"];
+const _CONFLICT_CATEGORY_ORDER=["Staff added locally, not on live","Staff on live, not local","Roster fields live lacks","Availability live lacks","Roster fields that differ","Availability that differs","Staff roster","Staff availability","Staff status","Roster fields only live has","Availability only live has","Schedule","Demand","Leave requests","Check-ins","Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings","Additional app data"];
 // The per-category grouping/collapsible split above already exists (see this section's own comment further up),
 // but INSIDE each category, every individual change line was still just string-joined with a bare "\n" into one
 // plain, undifferentiated white-space:pre-wrap block — visually a single dense paragraph, with nothing but a
@@ -23745,9 +23755,16 @@ function _collapseScheduleLines(changes,conflicts){
    order, conflicts are shown apart from other changes, long lists are grouped by week, and each section is the same card. A window chooses only its
    own wording (W) and whether items carry checkboxes (pick). Lines are always written in the engine's own words ("local" and "live") and
    re-worded only when shown, so a line's category never depends on the window. */
+/* Roster/settings-type section keys. "liveOnly" is informational: nothing in it is ever sent. */
+const _CFG_SEC_KEYS=["people","details","detailsReplace","status","liveOnly","settings"];
+const _ROSTER_SEC_KEYS=["people","details","detailsReplace","status"];
+function _isCfgSecKey(k){return _CFG_SEC_KEYS.indexOf(k)>=0;}
 const _DIFF_SECTIONS=[
-  {k:"people",t:"Roster people",tip:"Who is on each roster: people added here, people deleted here, and who is active or inactive. People who exist only on live are kept unless deleted here.",cats:["Staff added locally, not on live","Staff on live, not local","Staff status"]},
-  {k:"details",t:"Roster details",tip:"What is recorded about people who are on both rosters: role, rate, hire date, notes, and dates off you entered. Active or inactive is under Roster people.",cats:["Staff roster","Staff availability"]},
+  {k:"people",t:"Roster people",tip:"Who is on each roster: people added here and people deleted here. It does not change anyone's active or inactive status.",cats:["Staff added locally, not on live","Staff on live, not local"]},
+  {k:"details",t:"Roster details \u2014 adds what live is missing",tip:"Values this device has and live does not (the live field is blank). Uploading adds them; nothing that is already on live is replaced.",cats:["Roster fields live lacks","Availability live lacks"]},
+  {k:"detailsReplace",t:"Roster details \u2014 replaces live values",tip:"Fields where both copies have a value and the values differ. Uploading replaces the live value with this device's.",cats:["Roster fields that differ","Availability that differs","Staff roster","Staff availability"]},
+  {k:"status",t:"Roster active / inactive status",tip:"A person active here and inactive on live, or the reverse. Uploading replaces live's status and inactive-since date with this device's.",cats:["Staff status"]},
+  {k:"liveOnly",t:"Live has values this device lacks (kept, not sent)",info:true,tip:"Live holds a value and this device has none. Nothing here is sent or replaced: a blank on this device never overwrites live, and this device takes live's value after the review.",cats:["Roster fields only live has","Availability only live has"]},
   {k:"settings",t:"Settings",cats:["Coverage minimums","Rules & thresholds","Default shifts","Role list","Per-department settings","App-wide settings"]},
   {k:"schedule",t:"Schedule",cats:["Schedule","Check-ins"]},
   {k:"demand",t:"Demand",cats:["Demand"]},
@@ -23819,7 +23836,7 @@ function _diffLineDepts(line,leaves){
   return [];
 }
 function _reviewSectionForLine(line){const c=_categorizeConflictLine(line);return _DIFF_SECTIONS.find(S=>S.cats.indexOf(c)>=0)||null;}
-function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(S.k==="people"||S.k==="details"||S.k==="settings")return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
+function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(_isCfgSecKey(S.k))return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
 /* Why nothing could be offered, in terms the person can act on. Server-recognised rights come from the live sign-in or live
    PIN sessions; a PIN that only unlocked this device (no live session issued) grants nothing on the server. */
 function _noUploadAccessMessage(scope,note){
@@ -23831,12 +23848,12 @@ function _noUploadAccessMessage(scope,note){
   return note+"\n\n"+why+"\n\nYour changes stay on this device.";
 }
 function _reviewAccessLabel(scope){const s=[...scope.schedule].map(deptLabel),t=[...scope.settings].map(deptLabel),parts=[];if(s.length)parts.push("schedule: "+s.join(", "));if(t.length)parts.push("roster/settings: "+t.join(", "));if(scope.allowAppWide)parts.push("app-wide settings");return parts.join("; ")||"no live write access";}
-function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[];(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&(S.k==="people"||S.k==="details"||S.k==="settings"))eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>labels.add(deptLabel(d)));else labels.add(_categorizeConflictLine(line));}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&(S.k==="people"||S.k==="details"||S.k==="settings");});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
+function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[];(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly")eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>labels.add(deptLabel(d)));else labels.add(_categorizeConflictLine(line));}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly";});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
 function _demandPropertyOfKey(k){return String(k||"").indexOf(DEMAND_DB_PREFIX)===0?"DBPROP":"DTPROP";}
 function _markUneditableReviewWork(local,live,scope,cfgDiff){DEPT_KEYS.filter(d=>!scope.schedule.has(d)).forEach(d=>{const a=(local.assign||{})[d]||{},b=(live.assign||{})[d]||{};new Set([...Object.keys(a),...Object.keys(b)]).forEach(w=>{const aw=a[w]||{},bw=b[w]||{};new Set([...Object.keys(aw),...Object.keys(bw)]).forEach(n=>{if(!_sameValue(_normalizedAssignRow(aw[n]),_normalizedAssignRow(bw[n])))_markAssignDirty(d,w,n);});});const ac=(local.checkins||{})[d]||{},bc=(live.checkins||{})[d]||{};new Set([...Object.keys(ac),...Object.keys(bc)]).forEach(w=>{const aw=ac[w]||{},bw=bc[w]||{};new Set([...Object.keys(aw),...Object.keys(bw)]).forEach(n=>{if(!_sameValue(_normalizedAssignRow(aw[n]),_normalizedAssignRow(bw[n])))_markCheckinDirty(d,w,n);});});});new Set([...Object.keys(local.demand||{}),...Object.keys(live.demand||{})]).forEach(k=>{if(!scope.demand.has(_demandPropertyOfKey(k))&&!_sameValue(_nullIfEmpty((local.demand||{})[k]),_nullIfEmpty((live.demand||{})[k])))_markDemandDirty(k);});new Set([...Object.keys(local.leaveRequests||{}),...Object.keys(live.leaveRequests||{})]).forEach(id=>{const r=(local.leaveRequests||{})[id]||(live.leaveRequests||{})[id],d=deptKeyFromAny(r&&r.dept);if(!scope.schedule.has(d)&&!_sameValue((local.leaveRequests||{})[id],(live.leaveRequests||{})[id]))_protectLeaveId(id);});if(scope.localOnlyConfig&&cfgDiff&&cfgDiff.changes&&cfgDiff.changes.length)_markConfigDirty();}
 function _replaceDemandScope(target,source,properties){Object.keys(target||{}).forEach(k=>{if(properties.has(_demandPropertyOfKey(k)))delete target[k];});Object.keys(source||{}).forEach(k=>{if(properties.has(_demandPropertyOfKey(k)))target[k]=JSON.parse(JSON.stringify(source[k]));});}
 function _replaceLeaveScope(target,source,schedule){new Set([...Object.keys(target||{}),...Object.keys(source||{})]).forEach(id=>{const r=(target||{})[id]||(source||{})[id],d=deptKeyFromAny(r&&r.dept);if(!schedule.has(d))return;if(Object.prototype.hasOwnProperty.call(source||{},id))target[id]=JSON.parse(JSON.stringify(source[id]));else delete target[id];});}
-function _clearDirtyWithinReviewScope(scope,local,live,sections){sections=new Set(sections||[]);if(sections.has("schedule")){_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows).filter(k=>{const p=_parseAssignRowKey(k);return p&&scope.schedule.has(p.dept);}));Object.keys(_dirtyCheckinRows).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&scope.schedule.has(p.dept))_clearDirtyCheckinRow(p.dept,p.wk,p.name);});}if(sections.has("demand"))Object.keys(_dirtyDemandWeeks).filter(k=>scope.demand.has(_demandPropertyOfKey(k))).forEach(_clearDirtyDemandWeek);if(sections.has("leave"))Object.keys(_dirtyLeaveIds).forEach(id=>{const r=(local.leaveRequests||{})[id]||(live.leaveRequests||{})[id],d=deptKeyFromAny(r&&r.dept);if(scope.schedule.has(d))_clearDirtyLeaveId(id);});if(!scope.localOnlyConfig&&[...sections].some(k=>k==="people"||k==="details"||k==="settings"||k==="roster"))_clearDirtyConfig();}
+function _clearDirtyWithinReviewScope(scope,local,live,sections){sections=new Set(sections||[]);if(sections.has("schedule")){_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows).filter(k=>{const p=_parseAssignRowKey(k);return p&&scope.schedule.has(p.dept);}));Object.keys(_dirtyCheckinRows).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&scope.schedule.has(p.dept))_clearDirtyCheckinRow(p.dept,p.wk,p.name);});}if(sections.has("demand"))Object.keys(_dirtyDemandWeeks).filter(k=>scope.demand.has(_demandPropertyOfKey(k))).forEach(_clearDirtyDemandWeek);if(sections.has("leave"))Object.keys(_dirtyLeaveIds).forEach(id=>{const r=(local.leaveRequests||{})[id]||(live.leaveRequests||{})[id],d=deptKeyFromAny(r&&r.dept);if(scope.schedule.has(d))_clearDirtyLeaveId(id);});if(!scope.localOnlyConfig&&[...sections].some(k=>_isCfgSecKey(k)||k==="roster"))_clearDirtyConfig();}
 function _diffFilterLines(changes,conflicts,f,tagOf){
   const keep=[];
   (changes||[]).forEach(l=>{
@@ -24048,12 +24065,17 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     let _firstSec=true;
     const secHtml=SECS.filter(S=>S.shown).map(S=>{
       const _mt=_firstSec?"6px":"0";_firstSec=false;
-      const _isRoster=S.k==="people"||S.k==="details";
+      const _isRoster=_ROSTER_SEC_KEYS.indexOf(S.k)>=0;
       const risky=S.conf.length>0||(_isRoster&&unsafe);
       // With no unsynced edits nothing is a known local change, so nothing starts ticked.
       const tick=!risky&&!noPending;
-      const note=S.k==="people"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">Uploading adds people who are missing from the live copy and applies local active/inactive status. People found only on live are kept unless they were deleted on this device.</div>`:S.k==="details"&&S.items.length?`<div class="small muted" style="margin:4px 0 2px">For people on both rosters, uploading replaces live roster details with this device\'s values, except when a field is blank on this device.</div>`:"";
-      return _diffSectionCardHtml(S,{W:_DIFF_WORDING_UPLOAD,pick:(S.k==="schedule"||S.k==="demand")?_pick:null,tick,disabled:(_isRoster&&unsafe),mt:_mt,note});
+      const _noteTxt={people:"Uploading adds people who are missing from the live copy. People found only on live are kept unless they were deleted on this device. Active/inactive status is a separate section.",
+        details:"Adds values this device has and live is missing. Nothing already on live is replaced.",
+        detailsReplace:"Both copies have a value and they differ. Uploading replaces the live value with this device\'s. Left unticked, live\'s value is kept.",
+        status:"Uploading replaces live\'s active/inactive status and inactive-since date with this device\'s. Left unticked, live\'s status is kept.",
+        liveOnly:"Live has these and this device does not. Nothing here is sent; a blank on this device never overwrites live, and this device takes live\'s value after the review."}[S.k];
+      const note=(_noteTxt&&S.items.length)?`<div class="small muted" style="margin:4px 0 2px">${_noteTxt}</div>`:"";
+      return _diffSectionCardHtml(S,{W:_DIFF_WORDING_UPLOAD,pick:(S.k==="schedule"||S.k==="demand")?_pick:null,tick,disabled:(_isRoster&&unsafe),mt:_mt,note,noCheck:!!S.info});
     }).join("");
     // Personal, device-only settings (own notification choices, expanded panels) are never part of any section.
     const cfgBlock=(cfgChanged&&SECS.some(S=>S.shown))?`<div class="small muted" style="margin-top:4px">\u2139\ufe0f Personal, device-only settings (e.g. your own notification choices, or which panels are expanded) are never uploaded and are not listed.</div>`:"";
@@ -24066,7 +24088,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     const safetyBlock=unsafe?`<div style="border:1px solid #e0a8a8;background:#fdecec;border-radius:6px;padding:8px 10px;margin-bottom:8px;font-size:12px">
         <b style="color:#b30000">\u26a0 Local roster lacks people that live has</b>
         <div style="white-space:pre-wrap;margin-top:4px">${esc(rosterUploadSafetyMessage(safety))}</div>
-        <div class="muted" style="margin-top:4px">Uploading adds people who are missing from the live copy. For people on both rosters, local values replace live's, except when blank. Other sections can go up without it.</div>
+        <div class="muted" style="margin-top:4px">Uploading adds people who are missing from the live copy. Roster details are split into what is added, what is replaced and active/inactive status, so each can be chosen on its own. A blank on this device never overwrites live. Other sections can go up without this.</div>
         <label style="display:flex;align-items:center;margin-top:6px;cursor:pointer"><input type="checkbox" class="cbx" id="ucAckRemove"><span style="margin-left:6px">Allow roster upload</span></label>
       </div>`:"";
     const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";
@@ -24102,7 +24124,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     chk().forEach(c=>c.onchange=()=>{const S=SECS.find(x=>x.k===c.dataset.sec);if(S&&(S.k==="schedule"||S.k==="demand")){S.items.reduce((a,x)=>a.concat(_pick.idsOf(x)),[]).forEach(id=>c.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));bg.querySelectorAll('.diffItemPick').forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.checked=ids.length&&ids.every(id=>_selectedDiffLines.has(id));});}refresh();});
     bg.querySelectorAll('.diffItemPick').forEach(x=>x.onchange=()=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);ids.forEach(id=>x.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));const sec=x.closest('.ucSec'),sc=sec&&sec.querySelector('.ucSecChk');if(sc){const all=[...sec.querySelectorAll('.diffItemPick')],n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}refresh();});bg.querySelectorAll('.ucSec').forEach(sec=>{const all=[...sec.querySelectorAll('.diffItemPick')],sc=sec.querySelector('.ucSecChk');if(sc&&all.length){const n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}});refresh();
     const _ack=bg.querySelector("#ucAckRemove");
-    if(_ack)_ack.onchange=()=>{["people","details"].forEach(k=>{const r=bg.querySelector('.ucSecChk[data-sec="'+k+'"]');if(r){r.disabled=!_ack.checked;r.checked=_ack.checked;}});refresh();};
+    if(_ack)_ack.onchange=()=>{_ROSTER_SEC_KEYS.forEach(k=>{const r=bg.querySelector('.ucSecChk[data-sec="'+k+'"]'),S=SECS.find(x=>x.k===k);if(r){r.disabled=!_ack.checked;/* allowing the roster upload enables the sections; it only ticks the ones that replace nothing on live */r.checked=_ack.checked&&!(S&&S.conf.length);}});refresh();};
     const names=keys=>SECS.filter(S=>keys.indexOf(S.k)>=0).map(S=>S.t).join(", ");
     const countedSections=list=>list.map(S=>`<li><b>${nfmt(S.items.length)} in ${esc(S.t)}</b>${S.conf.length?` (${nfmt(S.conf.length)} ${S.conf.length===1?"value will":"values will"} overwrite existing live data)`:""}</li>`).join("");
     const send=()=>{
@@ -24111,7 +24133,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       // an unchanged or unlisted roster/settings section has no payload and must not open the config-write gate.
       const shown=SECS.filter(S=>S.shown).map(S=>S.k);
       const sections=t.slice();
-      done({c:"upload",sections,dropped:shown.filter(k=>t.indexOf(k)<0),selectedChanged:t.slice(),selectedLines:[..._selectedDiffLines].map(id=>_lineById[id]).filter(Boolean),allRawLines:_rawChanges.slice(),deliberate:!!(_ack&&_ack.checked&&(t.indexOf("people")>=0||t.indexOf("details")>=0)),accessScope:_serialReviewScope(accessScope)});
+      done({c:"upload",sections,dropped:shown.filter(k=>t.indexOf(k)<0),selectedChanged:t.slice(),selectedLines:[..._selectedDiffLines].map(id=>_lineById[id]).filter(Boolean),allRawLines:_rawChanges.slice(),deliberate:!!(_ack&&_ack.checked&&_ROSTER_SEC_KEYS.some(k=>t.indexOf(k)>=0)),accessScope:_serialReviewScope(accessScope)});
     };
     // The second question. It replaces the lists instead of sitting under them, with its own title, so it reads as a new
     // question and not as the same dialog repeating. Back returns to the lists.
@@ -24372,13 +24394,14 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   // difference there was never meaningful to surface here.
   // Compared without the dates-off records the schedule editor creates itself (see _withoutAutoAvail).
   const _cfgChanged=_access.eligibleCfgCount>0;
-  if(!changes.length&&_access.excludedCount){
+  const _nUpload=changes.filter(x=>{const S=_reviewSectionForLine(x);return !(S&&S.info);}).length;
+  if(!_nUpload&&_access.excludedCount){
     _connectUiPhase=null;setPending(true);_applySyncUiState();try{syncNav();}catch(e){}render();
     _awaitingSyncChoice=false;_syncReviewPending=false;
     try{await uiAlert(_noUploadAccessMessage(_access,_accessNote));}catch(e){}
     return {localOnly:true,accessScope:_serialReviewScope(_access)};
   }
-  if(!changes.length&&!_cfgChanged){
+  if(!_nUpload&&!_cfgChanged){
     _setCfgSyncBase(_lastPulledAppConfig);_clearProtectedAssignKeys(Object.keys(_dirtyAssignRows));_clearAllDirtyDemandWeeks();_clearAllDirtyLeaveIds();_clearAllDirtyCheckinRows();_clearDirtyConfig();_setV23ReviewRequired(false);_setPushFailureLatched(false);_confirmLocalSyncRevision();_comparisonMismatchCount=0;setPending(false);_applySyncUiState();try{syncNav();}catch(e){}render();
     if(_stay||_restoreHold){const _m="Review finished: this device already matches the live copy, so there is nothing to upload."+(_restoreHold?" The restored items are already on live.":"");if(_stay)uiAlert(_m);else flashNote(_m);try{_setRestoreHold(false);}catch(e){}}return;
   } // nothing itemized, but protected rows are still freshly verified before their registry entries are cleared
@@ -24440,7 +24463,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     try{await _readLiveForReview();}catch(e){reportSyncError("post-upload verification read",e);}
     {const _handled=[...(choice.sections||[]),...(choice.dropped||[])];_clearDirtyWithinReviewScope(_access,localSnapshot,liveSnapshot,_handled);}
     _reviewUploadInProgress=false;_comparisonMismatchCount=0;_confirmLocalSyncRevision();_reconcilePendingFlag();_applySyncUiState();render();
-    {const _nm={people:"Roster people",details:"Roster details",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
+    {const _nm={people:"Roster people",details:"Roster details (adds)",detailsReplace:"Roster details (replaces)",status:"Roster status",settings:"Settings",schedule:"Schedule",demand:"Demand",leave:"Leave requests"};const _sent=(choice.selectedChanged||[]).map(k=>_nm[k]).filter(Boolean);const _not=(choice.dropped||[]).map(k=>_nm[k]).filter(Boolean);const _msg="Uploaded: "+(_sent.join(", ")||"No changed section")+"."+(_not.length?" Not uploaded: "+_not.join(", ")+".":"");flashNote(_msg);}
   }
   else if(choice==="live"){
     try{
@@ -24452,7 +24475,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
       if(_access.allowAppWide)SHARED_APP_CFG_KEYS.forEach(k=>{if(Object.prototype.hasOwnProperty.call(_rawAW,k))nextCfg[k]=JSON.parse(JSON.stringify(_rawAW[k]));else delete nextCfg[k];});
       ASSIGN=nextAssign;DEMAND=nextDemand;LEAVE_REQUESTS=nextLeave;CHECKINS=nextCheckins;CFG=nextCfg;_setCfgSyncBase(_lastPulledAppConfig);
       _pullingConfigNow=true;const _prevSyncApplying1=_syncApplying;_syncApplying=true;try{save("hotel_assign",ASSIGN);save("hotel_demand",DEMAND);save("hotel_leaverequests",LEAVE_REQUESTS);save("hotel_checkins",CHECKINS);save("hotel_cfg",CFG);}finally{_syncApplying=_prevSyncApplying1;_pullingConfigNow=false;}
-      _clearDirtyWithinReviewScope(_access,localSnapshot,liveSnapshot,["schedule","demand","leave","people","details","settings"]);_setV23ReviewRequired(false);_setPushFailureLatched(false);_confirmLocalSyncRevision();_releaseLocalDeletions();rebuildWeekStart();_resetSnapshotUndoHistory();_comparisonMismatchCount=0;_reconcilePendingFlag();_applySyncUiState();render();if(_access.excludedCount)flashNote(_accessNote);
+      _clearDirtyWithinReviewScope(_access,localSnapshot,liveSnapshot,["schedule","demand","leave"].concat(_CFG_SEC_KEYS));_setV23ReviewRequired(false);_setPushFailureLatched(false);_confirmLocalSyncRevision();_releaseLocalDeletions();rebuildWeekStart();_resetSnapshotUndoHistory();_comparisonMismatchCount=0;_reconcilePendingFlag();_applySyncUiState();render();if(_access.excludedCount)flashNote(_accessNote);
     }catch(e){_pullingConfigNow=false;reportSyncError("discard local and take live copy",e);setPending(true);_applySyncUiState();render();}
   }
   else { // Cancel / dismissed — do NOT go live; keep local data and tear the connection back down
@@ -26185,6 +26208,25 @@ function _mergeStaffForConnect(local,live){
   if(out.availDates){const r=_withoutAutoAvail(out.availDates);if(r)out.availDates=r;else delete out.availDates;}
   return out;
 }
+/* Merge one person's local record into live's for an upload, field by field. Everything starts from live's record, so live-only values are
+   always kept, and a blank on this device never changes live. opts.fill adds values live lacks; opts.replace replaces values live has;
+   opts.status applies this device's active/inactive status (otherwise live's status is kept). */
+function _mergeStaffForUpload(local,live,opts){
+  opts=opts||{};const fill=!!opts.fill,replace=!!opts.replace,status=!!opts.status;
+  const out=Object.assign({},live),stat=new Set(_STAFF_STATUS_FIELDS);
+  const mergeMap=(mine,theirs)=>{const u=Object.assign({},theirs);Object.keys(mine).forEach(key=>{if(!Object.prototype.hasOwnProperty.call(theirs,key)){if(fill)u[key]=mine[key];}else if(replace&&JSON.stringify(mine[key])!==JSON.stringify(theirs[key]))u[key]=mine[key];});return u;};
+  Object.keys(local||{}).forEach(k=>{
+    if(stat.has(k)||k==="n")return;
+    const v=local[k];
+    if(k==="availDates"){const u=mergeMap(_withoutAutoAvail(v)||{},_withoutAutoAvail(live.availDates)||{});if(Object.keys(u).length)out.availDates=u;else delete out.availDates;return;}
+    if(k==="avail"){const u=mergeMap(_isPlainObj(v)?v:{},_isPlainObj(live.avail)?live.avail:{});if(Object.keys(u).length)out.avail=u;else delete out.avail;return;}
+    if(_nullIfEmpty(v)===null)return;
+    if(_nullIfEmpty(live[k])===null){if(fill)out[k]=v;}
+    else if(replace&&!_staffFieldMeansSame(k,v,live[k]))out[k]=v;
+  });
+  if(out.availDates){const r=_withoutAutoAvail(out.availDates);if(r)out.availDates=r;else delete out.availDates;}
+  return status?_withStatusFrom(out,local):out;
+}
 function mergeRosterForPush(localDept,remoteDept,tombstones){
   const local=(localDept&&localDept.staff)||[];
   const remote=(remoteDept&&remoteDept.staff)||[];
@@ -26293,7 +26335,7 @@ async function pushConfig(opts){
   if(_syncReviewPending||_restoreHoldActive())return _deferredConfigPush("Settings and roster stayed on this device while live review/restore protection is active.");
   if(Date.now()<_cfgBlockedUntil)return _deferredConfigPush("Settings and roster stayed on this device while the live access-policy retry delay is active.");/* Live access policy B: refused recently, retry later instead of every few seconds */
   const _secs=(opts&&opts.sections)?new Set(opts.sections):null;
-  const _want=k=>{if(!_secs)return true;if(k==="people"||k==="details")return _secs.has(k)||_secs.has("roster");return _secs.has(k);};
+  const _want=k=>{if(!_secs)return true;if(_ROSTER_SEC_KEYS.indexOf(k)>=0)return _secs.has(k)||_secs.has("roster");return _secs.has(k);};
   const _perm=_reviewAccessScope(),_allowedSettings=new Set((opts&&opts.allowedSettingsDepts)||[..._perm.settings]),_allowAppWide=(opts&&Object.prototype.hasOwnProperty.call(opts,"allowAppWide"))?!!opts.allowAppWide:!!_perm.allowAppWide;
   if(!_perm.loaded||(!_allowedSettings.size&&!_allowAppWide))return _localOnlyWriteResult("Roster/settings changes");
   // Re-traced past the earlier fix (which correctly gated the ONE path a wizard edit itself uses,
@@ -26314,7 +26356,7 @@ async function pushConfig(opts){
   let blockedDepts=[];
   try{
     // The shrink guard concerns the roster only, so a push that leaves the roster out is not held by it.
-    if(!_deliberateRosterChange&&(_want("people")||_want("details"))){
+    if(!_deliberateRosterChange&&(_want("people")||_want("details")||_want("detailsReplace")||_want("status"))){
       const rep=rosterUploadSafety(_lastPulledAppConfig);
       if(!rep.safe)blockedDepts=(rep.blocked||[]).slice();
     }
@@ -26397,32 +26439,21 @@ async function pushConfig(opts){
       const theirs=(remote||{})[d]||null;
       if(contribute.indexOf(d)>=0){
         const _mm=mergeRosterForPush(CFG[d],theirs,mergedTomb[d]);
-        const _ppl=_want("people"),_det=_want("details"),_set=_want("settings");
+        const _ppl=_want("people"),_det=_want("details"),_rep=_want("detailsReplace"),_stat=_want("status"),_set=_want("settings");
         const liveStaff=(theirs&&theirs.staff)||[],liveBy=new Map(liveStaff.map(st=>[st&&st.n,st])),tomb=mergedTomb[d]||{};
-        // A push chosen in the connect dialog (opts.sections) is made from a copy that may be stale, so for people on
-        // both lists it merges each record (_mergeStaffForConnect) instead of letting this device's record replace
-        // live's. Pushes made while already live (no opts) keep this device's record as the winner, as before.
-        const _joined=st=>{const L=liveBy.get(st.n);return (_secs&&L)?_mergeStaffForConnect(st,L):st;};
-        if(_ppl&&_det&&_set){
-          payload[d]=_secs?Object.assign({},_mm,{staff:_mm.staff.map(_joined)}):_mm;
-        }else if(!theirs&&(_ppl||_det||_set)){
-          // A department with no live baseline cannot receive a structurally partial object. The selected section
-          // still controls what the review reports; the first write carries one complete department object so the
-          // shared row is valid and later devices can connect.
+        const mineBy=new Map((((CFG[d]||{}).staff)||[]).map(st=>[st&&st.n,st]));
+        /* People who are on both lists keep live's record unless a ticked section says otherwise; who is listed follows "people". */
+        const _staffOut=()=>{
+          if(!_ppl&&!_det&&!_rep&&!_stat)return liveStaff;
+          const base=_ppl?_mm.staff:liveStaff.filter(st=>st&&st.n&&!tomb[st.n]);
+          return base.map(st=>{const L=liveBy.get(st.n),M=mineBy.get(st.n);if(!L)return st;if(!M)return L;return (_det||_rep||_stat)?_mergeStaffForUpload(M,L,{fill:_det,replace:_rep,status:_stat}):L;});
+        };
+        if(_ppl&&_det&&_rep&&_stat&&_set){
+          payload[d]=_secs?Object.assign({},_mm,{staff:_staffOut()}):_mm;
+        }else if(!theirs&&(_ppl||_det||_rep||_stat||_set)){
           payload[d]=_mm;
         }else if(theirs){
-          // Partial push. Status (employed, inactiveSince) belongs to Roster people and every other field to Roster
-          // details, so each section carries only its own half.
-          //  People: the merged list (live-only people kept, local-only people added, local deletions applied), with
-          //  this device's status and live's details for people on both lists.
-          //  Details: live's list minus people deleted on live, with this device's details and live's status for
-          //  people on both lists, and no additions or deletions from here.
-          let staff;
-          if(_ppl&&_det)staff=_mm.staff.map(_joined);
-          else if(_ppl)staff=_mm.staff.map(st=>{const L=liveBy.get(st.n);return L?_withStatusFrom(L,st):st;});
-          else if(_det){const mine=new Map(((CFG[d]||{}).staff||[]).map(st=>[st.n,st]));staff=liveStaff.filter(st=>st&&st.n&&!tomb[st.n]).map(st=>{const m=mine.get(st.n);return m?_withStatusFrom(_mergeStaffForConnect(m,st),st):st;});}
-          else staff=liveStaff;
-          payload[d]=Object.assign({},_set?_mm:theirs,{staff});
+          payload[d]=Object.assign({},_set?_mm:theirs,{staff:_staffOut()});
         }
         // With nothing on live for this department there is nothing to carry over; a full push is how it gets one.
       }else if(theirs){
@@ -27216,7 +27247,7 @@ function _backupRemoteRosterRepair(entry){try{let box=JSON.parse(localStorage.ge
 function _mergeRosterRecordFields(prior,rec){Object.keys(rec||{}).forEach(f=>{const v=rec[f];if(f==="n")return;if(f==="availDates"||f==="avail"||f==="prefer"){prior[f]=Object.assign({},prior[f]||{},v||{});return;}if(f==="qualifications"){prior[f]=_normaliseQualifications([prior[f],v].filter(Boolean).join(", "));return;}if((prior[f]===undefined||prior[f]===null||prior[f]==="")&&v!==undefined&&v!==null&&v!=="")prior[f]=v;});if(rec&&rec.employed!==false)prior.employed=true;return prior;}
 let _remoteRosterAliasMergeLog=[];
 function _rosterAliasBase(name){return _qualificationNameParts(String(name||"").replace(/\s+\[\d+\]\s*$/,"").trim()).name.toLowerCase();}
-function _repairRemoteStaffRows(dept,rows){const clean=[],used=new Set(),byBase=new Map();_remoteStaffNameAliases[dept]=Object.create(null);(rows||[]).forEach((st,index)=>{if(!_isPlainRemoteObject(st)){const q={dept,index,reason:"staff row is not an object",row:st};_remoteRosterRepairLog.push(q);_backupRemoteRosterRepair(q);return;}const original=String(st.n==null?"":st.n),parts=_qualificationNameParts(original);let name=_wellFormed(parts.name).replace(/[\u0000-\u001F\u007F]/g," ").replace(/</g,"‹").replace(/>/g,"›").replace(/\s+/g," ").trim();if(_unsafeKey(name))name=name+" staff";if([...name].length>STAFF_NAME_MAX_LENGTH)name=[...name].slice(0,STAFF_NAME_MAX_LENGTH).join("").trim();if(!name)name="Recovered staff "+(index+1);const rec=Object.assign({},st,{n:name});if(parts.code)rec.qualifications=_normaliseQualifications([rec.qualifications,parts.code].filter(Boolean).join(", "));const base=_rosterAliasBase(name),prior=byBase.get(base),b1=String((prior||{}).paycomBadgeNumber||"").trim(),b2=String(rec.paycomBadgeNumber||"").trim(),samePerson=!!prior&&((b1&&b2&&b1===b2)||(_stableStringify(Object.assign({},prior,{n:""}))===_stableStringify(Object.assign({},rec,{n:""}))));if(samePerson){_mergeRosterRecordFields(prior,rec);_remoteStaffNameAliases[dept][original.trim().toLowerCase()]=prior.n;_remoteRosterAliasMergeLog.push({dept,index,from:original,to:prior.n,badge:b1||b2});return;}let unique=name,n=2;while(used.has(unique.toLowerCase()))unique=name+" ["+(n++)+"]";name=unique;rec.n=name;used.add(name.toLowerCase());if(!byBase.has(base))byBase.set(base,rec);const invalidReason=original===name?"":("invalid or ambiguous staff name repaired from "+JSON.stringify(original)+" to "+JSON.stringify(name));if(invalidReason){const q={dept,index,reason:invalidReason,row:st};_remoteRosterRepairLog.push(q);_backupRemoteRosterRepair(q);_remoteStaffNameAliases[dept][original.trim().toLowerCase()]=name;}clean.push(rec);});return clean;}
+function _repairRemoteStaffRows(dept,rows){const clean=[],used=new Set(),byBase=new Map();_remoteStaffNameAliases[dept]=Object.create(null);(rows||[]).forEach((st,index)=>{if(!_isPlainRemoteObject(st)){const q={dept,index,reason:"staff row is not an object",row:st};_remoteRosterRepairLog.push(q);_backupRemoteRosterRepair(q);return;}const original=String(st.n==null?"":st.n),parts=_qualificationNameParts(original);let name=_wellFormed(parts.name).replace(/[\u0000-\u001F\u007F]/g," ").replace(/</g,"‹").replace(/>/g,"›").replace(/\s+/g," ").trim();if(_unsafeKey(name))name=name+" staff";if([...name].length>STAFF_NAME_MAX_LENGTH)name=[...name].slice(0,STAFF_NAME_MAX_LENGTH).join("").trim();if(!name)name="Recovered staff "+(index+1);const rec=Object.assign({},st,{n:name});if(rec.paycomBadgeNumber!==undefined&&rec.paycomBadgeNumber!==null)rec.paycomBadgeNumber=_padBadge(rec.paycomBadgeNumber);if(parts.code)rec.qualifications=_normaliseQualifications([rec.qualifications,parts.code].filter(Boolean).join(", "));const base=_rosterAliasBase(name),prior=byBase.get(base),b1=String((prior||{}).paycomBadgeNumber||"").trim(),b2=String(rec.paycomBadgeNumber||"").trim(),samePerson=!!prior&&((b1&&b2&&b1===b2)||(_stableStringify(Object.assign({},prior,{n:""}))===_stableStringify(Object.assign({},rec,{n:""}))));if(samePerson){_mergeRosterRecordFields(prior,rec);_remoteStaffNameAliases[dept][original.trim().toLowerCase()]=prior.n;_remoteRosterAliasMergeLog.push({dept,index,from:original,to:prior.n,badge:b1||b2});return;}let unique=name,n=2;while(used.has(unique.toLowerCase()))unique=name+" ["+(n++)+"]";name=unique;rec.n=name;used.add(name.toLowerCase());if(!byBase.has(base))byBase.set(base,rec);const invalidReason=original===name?"":("invalid or ambiguous staff name repaired from "+JSON.stringify(original)+" to "+JSON.stringify(name));if(invalidReason){const q={dept,index,reason:invalidReason,row:st};_remoteRosterRepairLog.push(q);_backupRemoteRosterRepair(q);_remoteStaffNameAliases[dept][original.trim().toLowerCase()]=name;}clean.push(rec);});return clean;}
 
 function _notifyRemoteRosterRepairs(){const bad=_remoteRosterRepairLog.length,aliases=_remoteRosterAliasMergeLog.length;if(_remoteRosterRepairNoticeShown||(!bad&&!aliases))return;_remoteRosterRepairNoticeShown=true;setTimeout(()=>{try{const parts=[];if(aliases)parts.push(aliases+" duplicate live-roster alias"+(aliases===1?" was":"es were")+" merged");if(bad)parts.push(bad+" genuinely invalid live-roster "+(bad===1?"record was":"records were")+" repaired or quarantined (original backed up locally)");flashNote("Connected. "+parts.join("; ")+".");}catch(e){}},350);}
 function _validateRemoteConfigBlob(raw){
@@ -35751,7 +35782,7 @@ truncate table public.snapshots;
 </ul></details>
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Version log</b></summary>
 <ul class="small">
-<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
+<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; split the roster review into separate sections (adds what live is missing, replaces live values, active/inactive status, and live-only values that are kept and never sent) with an upload that applies exactly the ticked ones; padded Paycom badge numbers to six digits on load, edit, import and live read; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
 }
@@ -37642,6 +37673,7 @@ function _renderSettingsInner(){
     // value is stored exactly as the browser's own date input already validates it (a real, complete "YYYY-MM-DD"),
     // with no separate recombination logic needed at all.
     else if(k==="birthday"){st.birthday=v||undefined;}
+    else if(k==="paycomBadgeNumber"){const _pb=_padBadge(v);st.paycomBadgeNumber=_pb;e.target.value=_pb==null?"":_pb;}
     else if(k==="qualifications"){const q=_normaliseQualifications(v);st.qualifications=q||undefined;e.target.value=qualificationRosterText(st);}
     else st[k]=v;
     try{if(!_sameValue(_wasVal,st[k]))logRosterEdit(SETDEPT,_wasName||st.n,k,_wasVal,st[k]);}catch(_e){}
@@ -47871,6 +47903,7 @@ function seedRoster(){try{
     try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
   }}catch(e){console.warn("Dusit Beach floor seed skipped",e);}
   migrateAvail();
+  _padLocalBadges();
   fixupDBGSOperationalDefaults();
   fixupDBGSSeedMigration();
   fixupDBGSNameCapitalization();
