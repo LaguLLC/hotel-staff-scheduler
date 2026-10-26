@@ -4414,7 +4414,7 @@ function seed(){
  // role order, current and historical roster, employment types, and employee numbers come from the three attached Guest Services workbooks.
  // Coverage floors are the lowest completed-day headcounts observed in the attached Guest Services workbooks, not confirmed
  // policy minimums; shared front-office demand formulas still use DBPROP and remain independent of DTPROP.
- cfg[DEPT_IDS.DB_GUEST_SERVICES]={label:DEPARTMENT_DEFS[DEPT_IDS.DB_GUEST_SERVICES].label,roles:["Front Desk Supervisor","Front Desk Officer","Guest Service Center Supervisor","Guest Relation Officer","Interns","Concierge","Bell Captain","Bell Attendants","Valet","Dusit Club Officer"],coverage:{"Front Desk Supervisor":{"min":1,"per":"day"},"Front Desk Officer":{"min":4,"per":"day"},"Guest Service Center Supervisor":{"min":0,"per":"day"},"Guest Relation Officer":{"min":0,"per":"day"},"Interns":{"min":3,"per":"day"},"Concierge":{"min":2,"per":"day"},"Bell Captain":{"min":0,"per":"day"},"Bell Attendants":{"min":3,"per":"day"},"Valet":{"min":0,"per":"day"},"Dusit Club Officer":{"min":3,"per":"day","note":"at least 1 always at podium"}},rules:JSON.parse(JSON.stringify(cfg.DTFO.rules||{})),shifts:["06:00-14:00","07:00-15:30","07:30-15:30","08:30-17:00","09:00-16:00","10:00-19:00","12:00-20:30","12:30-20:30","14:30-23:00","15:00-23:00","17:00-23:00","22:30-06:00","23:00-07:00"],staff:[{"n":"Vinecia Pangelinan","role":"Front Desk Supervisor","type":"FT","paycomBadgeNumber":"991241"},{"n":"Jedelyn Taguiam","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992406"},{"n":"Paulo Gera","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"991119"},{"n":"Cynthia Chugrad","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992555"},{"n":"Claire Bedia","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992554"},{"n":"Sharina Tabilas","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992604"},{"n":"Kayla Salonga","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992477"},{"n":"Mekerny Kaman","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992636"},{"n":"Ellisa Witter","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992651"},{"n":"Maia Joy","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992733"},{"n":"Lycah Figura","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992734"},{"n":"Byron Gadong","role":"Guest Service Center Supervisor","type":"FT","paycomBadgeNumber":"992741"},{"n":"Joeann Namelo","role":"Guest Relation Officer","type":"FT","paycomBadgeNumber":"992724"},{"n":"Sophia Monte","role":"Guest Relation Officer","type":"FT","paycomBadgeNumber":"992747"},{"n":"Finon Philip","role":"Guest Relation Officer","type":"PT","paycomBadgeNumber":"992731"},{"n":"Ryan William","role":"Guest Relation Officer","type":"PT","paycomBadgeNumber":"992612"},{"n":"Joel Joaquin","role":"Guest Relation Officer","type":"OC","paycomBadgeNumber":"991145"},{"n":"Yudeok Seo","role":"Interns","type":"INT","paycomBadgeNumber":"992687"},{"n":"Jeongmin Lee","role":"Interns","type":"INT","paycomBadgeNumber":"002523"},{"n":"Joshiel Gastador","role":"Interns","type":"INT","paycomBadgeNumber":"002615"},{"n":"Junyong Jeong","role":"Interns","type":"INT","paycomBadgeNumber":"002611"},{"n":"Minji Kim","role":"Interns","type":"INT","paycomBadgeNumber":"002607"},{"n":"Seyeon Park","role":"Interns","type":"INT","paycomBadgeNumber":"992705"},{"n":"Hyo Jung Kang","role":"Concierge","type":"FT","paycomBadgeNumber":"991153"},{"n":"Robert Teria","role":"Concierge","type":"FT","paycomBadgeNumber":"992389"},{"n":"Yua Eclavea","role":"Concierge","type":"FT","paycomBadgeNumber":"992600"},{"n":"Julieann Ereno","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992468"},{"n":"Allen Kyle Lulu","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992489"},{"n":"Kathrina Austria","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992562"},{"n":"Warline Sanchez","role":"Dusit Club Officer","type":"PT","paycomBadgeNumber":"992589","note":"Keep the established school schedule; Saturday off when business is slow."},{"n":"Joyce Sontillanosa","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992678","note":"Morning shift every Friday.","prefer":{"Fri":"06:00-"}},{"n":"Juvir Mattson","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992732"},{"n":"Neil","role":"Dusit Club Officer","type":"FT","employed":false,"note":"Historical Club Lounge staff member; inactive. No further identifying details are required."},{"n":"Kai","role":"Dusit Club Officer","type":"INT","employed":false,"inactiveSince":"2026-06-18","note":"Historical Club Lounge intern; inactive. No further identifying details are required."},{"n":"Julie","role":"Dusit Club Officer","type":"INT","employed":false,"inactiveSince":"2026-08-13","note":"Historical Club Lounge intern (also spelled Julee); inactive. No further identifying details are required."},{"n":"Edgar Nonesa","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"991225","note":"10/22-11/04 source note: wife off island for training; caring for special-needs son."},{"n":"Bien Nuque","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"800432"},{"n":"Romeo Nuque","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"991228"},{"n":"R Ben Gamit","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"000169","note":"14:30-23:00 only.","prefer":{"Thu":"14:30-23:00","Fri":"14:30-23:00","Sat":"14:30-23:00","Sun":"14:30-23:00","Mon":"14:30-23:00","Tue":"14:30-23:00","Wed":"14:30-23:00"}},{"n":"Craig Maurer","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"992738"},{"n":"John Navarro","qualifications":"C","role":"Bell Attendants","type":"PT","paycomBadgeNumber":"992623","note":"Mon-Fri after 17:00; Sat-Sun A or B shift; no graveyard.","noGY":true,"avail":{"Mon":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Tue":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Wed":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Thu":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Fri":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"}}}]};
+ cfg[DEPT_IDS.DB_GUEST_SERVICES]={label:DEPARTMENT_DEFS[DEPT_IDS.DB_GUEST_SERVICES].label,roles:["Front Desk Supervisor","Front Desk Officer","Guest Service Center Supervisor","Guest Relation Officer","Interns","Concierge","Bell Captain","Bell Attendants","Valet","Dusit Club Officer"],coverage:{"Front Desk Supervisor":{"min":1,"per":"day"},"Front Desk Officer":{"min":4,"per":"day"},"Guest Service Center Supervisor":{"min":0,"per":"day"},"Guest Relation Officer":{"min":0,"per":"day"},"Interns":{"min":3,"per":"day"},"Concierge":{"min":2,"per":"day"},"Bell Captain":{"min":0,"per":"day"},"Bell Attendants":{"min":3,"per":"day"},"Valet":{"min":0,"per":"day"},"Dusit Club Officer":{"min":3,"per":"day","note":"at least 1 always at podium"}},rules:JSON.parse(JSON.stringify(cfg.DTFO.rules||{})),shifts:["06:00-14:00","07:00-15:30","07:30-15:30","08:30-17:00","09:00-16:00","10:00-19:00","12:00-20:30","12:30-20:30","14:30-23:00","15:00-23:00","17:00-23:00","22:30-06:00","23:00-07:00"],staff:[{"n":"Vinecia Pangelinan","role":"Front Desk Supervisor","type":"FT","paycomBadgeNumber":"991241","availDates":{"D2026-10-31_2026-10-31":{"from":"2026-10-31","to":"2026-10-31","part":false,"startTime":null,"endTime":null,"code":"OFF","reason":"Requested off (BV sheet 10/29-11/04 note: REQ. 10/31 off)"}}},{"n":"Jedelyn Taguiam","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992406"},{"n":"Paulo Gera","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"991119"},{"n":"Cynthia Chugrad","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992555"},{"n":"Claire Bedia","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992554"},{"n":"Sharina Tabilas","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992604"},{"n":"Kayla Salonga","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992477"},{"n":"Mekerny Kaman","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992636"},{"n":"Ellisa Witter","role":"Front Desk Officer","type":"FT","paycomBadgeNumber":"992651"},{"n":"Maia Joy","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992733"},{"n":"Lycah Figura","role":"Front Desk Officer","type":"PT","paycomBadgeNumber":"992734"},{"n":"Byron Gadong","role":"Guest Service Center Supervisor","type":"FT","paycomBadgeNumber":"992741"},{"n":"Joeann Namelo","role":"Guest Relation Officer","type":"FT","paycomBadgeNumber":"992724"},{"n":"Sophia Monte","role":"Guest Relation Officer","type":"FT","paycomBadgeNumber":"992747"},{"n":"Finon Philip","role":"Guest Relation Officer","type":"PT","paycomBadgeNumber":"992731"},{"n":"Ryan William","role":"Guest Relation Officer","type":"PT","paycomBadgeNumber":"992612"},{"n":"Joel Joaquin","role":"Front Desk Officer","type":"OC","paycomBadgeNumber":"991145"},{"n":"Yudeok Seo","role":"Interns","type":"INT","paycomBadgeNumber":"992687"},{"n":"Jeongmin Lee","role":"Interns","type":"INT","paycomBadgeNumber":"002523"},{"n":"Joshiel Gastador","role":"Interns","type":"INT","paycomBadgeNumber":"002615"},{"n":"Junyong Jeong","role":"Interns","type":"INT","paycomBadgeNumber":"002611"},{"n":"Minji Kim","role":"Interns","type":"INT","paycomBadgeNumber":"002607"},{"n":"Seyeon Park","role":"Interns","type":"INT","paycomBadgeNumber":"992705"},{"n":"Hyo Jung Kang","role":"Concierge","type":"FT","paycomBadgeNumber":"991153"},{"n":"Robert Teria","role":"Concierge","type":"FT","paycomBadgeNumber":"992389"},{"n":"Yua Eclavea","role":"Concierge","type":"FT","paycomBadgeNumber":"992600"},{"n":"Julieann Ereno","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992468"},{"n":"Allen Kyle Lulu","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992489"},{"n":"Kathrina Austria","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992562"},{"n":"Warline Sanchez","role":"Dusit Club Officer","type":"PT","paycomBadgeNumber":"992589","note":"Keep the established school schedule; Saturday off when business is slow."},{"n":"Joyce Sontillanosa","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992678","note":"Morning shift every Friday.","prefer":{"Fri":"06:00-"}},{"n":"Juvir Mattson","role":"Dusit Club Officer","type":"FT","paycomBadgeNumber":"992732"},{"n":"Neil","role":"Dusit Club Officer","type":"FT","employed":false,"note":"Historical Club Lounge staff member; inactive. No further identifying details are required."},{"n":"Kai","role":"Dusit Club Officer","type":"INT","employed":false,"inactiveSince":"2026-06-18","note":"Historical Club Lounge intern; inactive. No further identifying details are required."},{"n":"Julie","role":"Dusit Club Officer","type":"INT","employed":false,"inactiveSince":"2026-08-13","note":"Historical Club Lounge intern (also spelled Julee); inactive. No further identifying details are required."},{"n":"Edgar Nonesa","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"991225","note":"10/22-11/04 source note: wife off island for training; caring for special-needs son."},{"n":"Bien Nuque","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"800432"},{"n":"Romeo Nuque","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"991228"},{"n":"R Ben Gamit","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"000169","note":"14:30-23:00 only.","noGY":true,"avail":{"Mon":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Tue":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Wed":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Thu":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Fri":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Sat":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"},"Sun":{"off":false,"from":"00:00","to":"14:30","reason":"Can work 14:30-23:00 only"}},"prefer":{"Thu":"14:30-23:00","Fri":"14:30-23:00","Sat":"14:30-23:00","Sun":"14:30-23:00","Mon":"14:30-23:00","Tue":"14:30-23:00","Wed":"14:30-23:00"}},{"n":"Craig Maurer","qualifications":"G","role":"Bell Attendants","type":"FT","paycomBadgeNumber":"992738"},{"n":"John Navarro","qualifications":"C","role":"Bell Attendants","type":"PT","paycomBadgeNumber":"992623","note":"Mon-Fri after 17:00; Sat-Sun A or B shift; no graveyard.","noGY":true,"avail":{"Mon":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Tue":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Wed":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Thu":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"},"Fri":{"off":false,"from":"00:00","to":"17:00","reason":"Can work after 17:00"}}}]};
  return cfg;
 }
 
@@ -4461,6 +4461,13 @@ function fixupDBGSOperationalDefaults(){
       ["note","noGY"].forEach(k=>{if(src[k]!=null&&cur[k]==null){cur[k]=JSON.parse(JSON.stringify(src[k]));changed=true;}});
       ["avail","prefer"].forEach(k=>{if(!src[k])return;cur[k]=cur[k]||{};Object.keys(src[k]).forEach(d=>{if(cur[k][d]==null){cur[k][d]=JSON.parse(JSON.stringify(src[k][d]));changed=true;}});});
     });
+    /* R1 seed notes, applied once per device: dated availability entries are filled only where the saved roster has none, and the one
+       role the R1 Front Office workbook moved (Joel Joaquin) is corrected only while it still holds the earlier seeded value. */
+    if(!CFG._dbgsR1NotesMig1){
+      (source.staff||[]).forEach(src=>{const cur=byName.get(String(src.n).trim().toLowerCase());if(!cur||!src.availDates)return;cur.availDates=cur.availDates||{};Object.keys(src.availDates).forEach(k=>{if(cur.availDates[k]==null){cur.availDates[k]=JSON.parse(JSON.stringify(src.availDates[k]));changed=true;}});});
+      const _joel=byName.get("joel joaquin");if(_joel&&_joel.role==="Guest Relation Officer"){_joel.role="Front Desk Officer";changed=true;}
+      CFG._dbgsR1NotesMig1=true;changed=true;
+    }
     if(!CFG._dbgsOperationalDefaultsMig1){CFG._dbgsOperationalDefaultsMig1=true;changed=true;}
     if(changed)try{localStorage.setItem("hotel_cfg",JSON.stringify(CFG));}catch(e){}
   }catch(e){console.warn("DB Guest Services operational-default migration skipped",e);}
@@ -33740,13 +33747,16 @@ begin
 end;
 $dept_key_migration$;
 
--- Project-state contract for the v2.8 client and the self-expiring compatibility window. Each deployment restores
--- the v2.8 minimum and rewrite mode and guarantees at least 14 more days; later legacy activity can extend the cutoff.
+-- Project-state contract for the v2.8 client and the self-expiring compatibility window. A rerun preserves an
+-- existing minimum version, mode and cutoff and never shortens a deliberate extension. Legacy activity extends the cutoff below.
+-- One exception: a project that ran the unreleased closed-window draft of this SQL (canonical_schema_version = 2: rejection on,
+-- a higher minimum) is returned once to the v2.8 contract - minimum 2.8, rewrite mode, a fresh 14-day window - and then behaves
+-- like any other project.
 insert into public.app_config(id,data,updated_at)
 values ('project_state',jsonb_build_object(
   'project_initialized',true,
   'canonical_dept_keys_enforced',true,
-  'canonical_schema_version',2,
+  'canonical_schema_version',1,
   'target_client_version','2.8',
   'min_client_version','2.8',
   'legacy_key_mode','rewrite',
@@ -33755,17 +33765,32 @@ values ('project_state',jsonb_build_object(
   'legacy_key_migration_started_at',now()
 ),now())
 on conflict(id) do update set
-  data=(coalesce(public.app_config.data,'{}'::jsonb)-'legacy_key_rejected_at')||jsonb_build_object(
-    'project_initialized',true,
-    'canonical_dept_keys_enforced',true,
-    'canonical_schema_version',2,
-    'target_client_version','2.8',
-    'min_client_version','2.8',
-    'legacy_key_mode','rewrite',
-    'legacy_key_cutoff_at',to_jsonb(greatest(coalesce((public.app_config.data-&gt;&gt;'legacy_key_cutoff_at')::timestamptz,now()+interval '14 days'),now()+interval '14 days')),
-    'legacy_key_quiet_days',coalesce(public.app_config.data-&gt;'legacy_key_quiet_days','7'::jsonb),
-    'legacy_key_migration_started_at',coalesce(public.app_config.data-&gt;'legacy_key_migration_started_at',to_jsonb(now()))
-  ),updated_at=now();
+  data=case
+    when public.app_config.data-&gt;&gt;'canonical_schema_version'='2' then
+      (coalesce(public.app_config.data,'{}'::jsonb)-'legacy_key_rejected_at')||jsonb_build_object(
+        'project_initialized',true,
+        'canonical_dept_keys_enforced',true,
+        'canonical_schema_version',1,
+        'target_client_version','2.8',
+        'min_client_version','2.8',
+        'legacy_key_mode','rewrite',
+        'legacy_key_cutoff_at',to_jsonb(now()+interval '14 days'),
+        'legacy_key_quiet_days',7,
+        'legacy_key_migration_started_at',coalesce(public.app_config.data-&gt;'legacy_key_migration_started_at',to_jsonb(now()))
+      )
+    else coalesce(public.app_config.data,'{}'::jsonb)||jsonb_build_object(
+      'project_initialized',true,
+      'canonical_dept_keys_enforced',true,
+      'canonical_schema_version',1,
+      'target_client_version','2.8',
+      'min_client_version',coalesce(public.app_config.data-&gt;&gt;'min_client_version','2.8'),
+      'legacy_key_mode',coalesce(public.app_config.data-&gt;&gt;'legacy_key_mode','rewrite'),
+      'legacy_key_cutoff_at',coalesce(public.app_config.data-&gt;'legacy_key_cutoff_at',to_jsonb(now()+interval '14 days')),
+      'legacy_key_quiet_days',coalesce(public.app_config.data-&gt;'legacy_key_quiet_days','7'::jsonb),
+      'legacy_key_migration_started_at',coalesce(public.app_config.data-&gt;'legacy_key_migration_started_at',to_jsonb(now()))
+    )
+  end,
+  updated_at=now();
 
 create or replace function public.hotel_config_contains_legacy_dept_keys(p_data jsonb)
 returns boolean language sql immutable as $function$
@@ -34280,15 +34305,21 @@ returns trigger
 language plpgsql security invoker
 set search_path = public
 as $function$
-declare d text;old_data jsonb:=case when tg_op='INSERT' then '{}'::jsonb else coalesce(old.data,'{}'::jsonb) end;
+declare d text;old_data jsonb;new_data jsonb;
 begin
   if new.id&lt;&gt;'depts' then return new;end if;
+  -- Dashboard SQL editor / service role (maintenance, and this migration's own repair statements) is never blocked here.
+  if coalesce(auth.role(),'')='service_role' or session_user in ('postgres','supabase_admin') then return new;end if;
+  -- This trigger fires before the canonicalization trigger. Compare the canonical form of both sides so that a cached
+  -- older client writing a retired department key (FO/HSK/DB) is checked as the department it will actually change.
+  old_data:=public.hotel_canonicalize_config_depts_json(case when tg_op='INSERT' then '{}'::jsonb else coalesce(old.data,'{}'::jsonb) end);
+  new_data:=public.hotel_canonicalize_config_depts_json(coalesce(new.data,'{}'::jsonb));
   foreach d in array array['DTFO','DTHSK','DBHSK','DBGS'] loop
-    if (old_data-&gt;d) is distinct from (new.data-&gt;d) and not public.hotel_can_edit_settings(d) then
+    if (old_data-&gt;d) is distinct from (new_data-&gt;d) and not public.hotel_can_edit_settings(d) then
       raise exception 'Settings/roster write for % requires that department''s settings-edit permission.',public.hotel_department_label(d) using errcode='42501';
     end if;
   end loop;
-  if (old_data-&gt;'appWide') is distinct from (new.data-&gt;'appWide') and not public.hotel_has_all_dept_settings_rights() then
+  if (old_data-&gt;'appWide') is distinct from (new_data-&gt;'appWide') and not public.hotel_has_all_dept_settings_rights() then
     raise exception 'App-wide settings require settings-edit permission for all departments.' using errcode='42501';
   end if;
   return new;
@@ -35695,7 +35726,7 @@ truncate table public.snapshots;
 </ul></details>
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Version log</b></summary>
 <ul class="small">
-<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
+<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
 }
