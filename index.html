@@ -12913,13 +12913,25 @@ var _storageFailed={};
 function _dirtyMirrorSet(k,obj){try{if(obj&&(typeof obj!=="object"||Object.keys(obj).length))sessionStorage.setItem("hotel_dirty_mirror_"+k,JSON.stringify(obj));else sessionStorage.removeItem("hotel_dirty_mirror_"+k);}catch(e){}}
 function _dirtyMirrorGet(k){try{const x=JSON.parse(sessionStorage.getItem("hotel_dirty_mirror_"+k)||"{}");return(x&&typeof x==="object"&&!Array.isArray(x))?x:{};}catch(e){return {};}}
 function _storageHasFailed(){try{return Object.keys(_storageFailed).length>0;}catch(e){return false;}}
+/* A failed browser-storage write only endangers data this device holds alone. Connected to live with nothing waiting to upload, the live copy
+   is the record and a reload re-reads it, so no "changes may be LOST" warning is shown (it appeared on a device where nothing had been edited). */
+function _storageAtRisk(){
+  try{return !SUPABASE_CLIENT||!!PENDING||!!_dirtyConfig||Object.keys(_dirtyAssignRows||{}).length>0||Object.keys(_dirtyDemandWeeks||{}).length>0||Object.keys(_dirtyLeaveIds||{}).length>0||Object.keys(_dirtyCheckinRows||{}).length>0;}catch(e){return true;}
+}
+/* Safety copies are the first thing to give up when the browser refuses a write for the working data. Returns true if anything was freed. */
+function _freeStorageSpace(){
+  let freed=false;
+  ["hotel_pre_overwrite_backup","hotel_pre_live_roster_backup_v1"].forEach(k=>{try{if(!freed&&localStorage.getItem(k)!=null){localStorage.removeItem(k);freed=true;console.warn("Browser storage full: removed the safety copy "+k+" to keep working data.");}}catch(e){}});
+  return freed;
+}
 function _updateStorageBanner(){
   try{let b=document.getElementById("storageBanner");
-    if(!_storageHasFailed()){if(b)b.remove();return;}
+    if(!_storageHasFailed()||!_storageAtRisk()){if(b)b.remove();return;}
     if(!b){b=document.createElement("div");b.id="storageBanner";b.setAttribute("role","alert");b.style.cssText="position:fixed;left:0;right:0;bottom:0;z-index:99999;background:#b30000;color:#fff;padding:8px 12px;font:600 13px system-ui,sans-serif;text-align:center";b.textContent="Browser storage is full or blocked - changes on this device may be LOST if you close or reload this tab. Stay connected so changes upload, export a backup (Sync & data) and free up browser storage.";(document.body||document.documentElement).appendChild(b);}
     const _only=Object.keys(_storageFailed).every(k=>k==="hotel_pre_overwrite_backup");
     let _sbT=b.querySelector("span.sbTxt");if(!_sbT){b.textContent="";_sbT=document.createElement("span");_sbT.className="sbTxt";b.appendChild(_sbT);const _sbD=document.createElement("button");_sbD.type="button";_sbD.textContent="Download backup";_sbD.title="Saves this browser's data as a JSON file (Settings, Export, JSON)";_sbD.style.cssText="margin-left:10px;font:600 12px system-ui,sans-serif;padding:2px 10px;border-radius:5px;border:1px solid #fff;background:#fff;color:#b30000;cursor:pointer";_sbD.onclick=()=>{try{exportJSON();}catch(e){_swallow("banner download",e);}};b.appendChild(_sbD);}
     _sbT.textContent=_only?"Browser storage is nearly full: a safety copy of your data could not be stored. Your changes are still saved, but export a backup (Settings, Export) and free up browser storage before importing.":"Browser storage is full or blocked - changes on this device may be LOST if you close or reload this tab. Stay connected so changes upload, export a backup (Sync & data) and free up browser storage.";
+    _sbT.textContent+=" (Not saved: "+Object.keys(_storageFailed).slice(0,4).join(", ")+")";
   }catch(e){}
 }
 /* Failures that are deliberately not shown to the user are noted here instead of vanishing: one entry per (tag, message) with a count and
@@ -12929,7 +12941,7 @@ function _swallow(tag,e){try{const m=String((e&&e.message)||e||"").slice(0,160),
   if(!r){if(Object.keys(_swallowed).length>=200)return;r=_swallowed[k]={tag:tag,message:m,count:0,first:new Date().toISOString(),last:""};console.warn("Ignored error ("+tag+"):",e);}
   r.count++;r.last=new Date().toISOString();}catch(x){}}
 function _swallowedSummary(){try{return Object.keys(_swallowed).map(k=>_swallowed[k]);}catch(x){return [];}}
-function _storageFail(k,e){try{_storageFailed[k]=(_storageFailed[k]||0)+1;try{_updateStorageBanner();}catch(_b){}if(_storageFailed[k]>1)return;console.warn("localStorage write failed for",k,e);if(Date.now()-(_storageFail._t||0)<60000)return;_storageFail._t=Date.now();if(typeof flashNote==="function")flashNote("Browser storage is full or blocked: recent changes may not survive a reload. Export a backup and clear old data.");}catch(e2){}}
+function _storageFail(k,e){try{_storageFailed[k]=(_storageFailed[k]||0)+1;try{_updateStorageBanner();}catch(_b){}if(_storageFailed[k]>1)return;console.warn("localStorage write failed for",k,e);if(Date.now()-(_storageFail._t||0)<60000)return;_storageFail._t=Date.now();if(typeof flashNote==="function"&&_storageAtRisk())flashNote("Browser storage is full or blocked: recent changes may not survive a reload. Export a backup and clear old data.");}catch(e2){}}
 function _persistDirtyAssignRows(){try{if(Object.keys(_dirtyAssignRows).length)localStorage.setItem(DIRTY_ASSIGN_ROWS_KEY,JSON.stringify(_dirtyAssignRows));else localStorage.removeItem(DIRTY_ASSIGN_ROWS_KEY);}catch(e){_dirtyMirrorSet(DIRTY_ASSIGN_ROWS_KEY,_dirtyAssignRows);_storageFail(DIRTY_ASSIGN_ROWS_KEY,e);}}
 function _hasProtectedAssignRows(){return Object.keys(_dirtyAssignRows).length>0;}
 function _isAssignRowProtected(dept,wk,name){return !!_dirtyAssignRows[_assignRowKey(dept,wk,name)];}
@@ -13575,7 +13587,11 @@ function save(k,v){
   try{_serialized=JSON.stringify(v);_priorRaw=localStorage.getItem(k);if(_priorRaw==null&&MEM[k]!==undefined)_priorRaw=MEM[k];_valueChanged=_priorRaw!==_serialized;}catch(e){}
   try{if(k==="hotel_cfg")_cfgBefore=_priorRaw?JSON.parse(_priorRaw):null;}catch(e){}
   try{_trackAssign=(k==="hotel_assign"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite());if(_trackAssign)_assignBefore=_priorRaw?JSON.parse(_priorRaw):{};}catch(e){_trackAssign=false;}
-  try{localStorage.setItem(k,_serialized===null?JSON.stringify(v):_serialized);if(MEM[k]!==undefined)delete MEM[k];if(_storageFailed[k]){delete _storageFailed[k];_updateStorageBanner();}}catch(e){MEM[k]=_serialized===null?JSON.stringify(v):_serialized;_storageFail(k,e);}
+  try{localStorage.setItem(k,_serialized===null?JSON.stringify(v):_serialized);if(MEM[k]!==undefined)delete MEM[k];if(_storageFailed[k]){delete _storageFailed[k];_updateStorageBanner();}}catch(e){
+    let _ok=false;
+    try{if(_freeStorageSpace()){localStorage.setItem(k,_serialized===null?JSON.stringify(v):_serialized);_ok=true;if(MEM[k]!==undefined)delete MEM[k];if(_storageFailed[k]){delete _storageFailed[k];_updateStorageBanner();}}}catch(e2){}
+    if(!_ok){MEM[k]=_serialized===null?JSON.stringify(v):_serialized;_storageFail(k,e);}
+  }
   if(k==="hotel_cfg"&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()){try{_cfgSharedChanged=!_cfgBefore||_syncableCfgFingerprint(_cfgBefore)!==_syncableCfgFingerprint(v);}catch(e){_cfgSharedChanged=true;}}
   if(_valueChanged&&SYNCABLE_KEYS.includes(k)&&!_syncApplying&&!_pullingConfigNow&&!_isAutomaticWrite()&&(k!=="hotel_cfg"||_cfgSharedChanged))_noteLocalSyncMutation();
   if(_trackAssign){try{_markChangedAssignmentRows(_assignBefore,v);}catch(e){console.warn("assignment dirty-row comparison skipped",e);}}
@@ -24449,8 +24465,10 @@ function _isClubSeedCorrection(scope,weeks,iso,f,live,local){
    NaN in the grid and in the staffing figures. A value is a count only when it is a finite number (or a plain numeric string). */
 function _demandNoteHtml(k,i,opts){
   const nk=_demandNoteKey(k);if(!nk)return "";
-  const row=(DEMAND[demandKey(weekKey(WEEK_START))]||{})[i]||{},nt=row[nk];if(!nt)return "";
+  const row=(DEMAND[demandKey(weekKey(WEEK_START))]||{})[i]||{},nt=row[nk];
   const can=EDIT&&!weekLocked()&&!(opts&&opts.readOnly);
+  /* Every editable Events/Transportation cell offers a note, not only the ones that already hold seeded text. */
+  if(!nt)return can?`<div class="small" onclick="editDemandNote(${i},'${nk}')" title="Add a note" style="display:block;text-align:center;font-size:10px;line-height:1.3;color:#9aa5b1;margin-top:1px;cursor:pointer">+ note</div>`:"";
   /* width:0 + min-width:100% keeps a long note from widening the column; the full text is in the tooltip */
   return `<div class="small" ${can?`onclick="editDemandNote(${i},'${nk}')"`:""} title="${esc(nt)}${can?" \u2014 click to edit":""}" style="display:block;width:0;min-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:10px;line-height:1.3;color:#6b7a8d;margin-top:1px;${can?"cursor:pointer;":""}">${esc(nt)}</div>`;
 }
@@ -24490,11 +24508,14 @@ function _normalizeAllDemandText(){
 function _demandNoteKey(f){return f==="events"?"eventsNote":f==="transportation"?"transportationNote":null;}
 async function editDemandNote(i,nk){
   if(!EDIT||weekLocked())return;
-  const wk=weekKey(WEEK_START),dk=demandKey(wk);DEMAND[dk]=DEMAND[dk]||{};DEMAND[dk][i]=DEMAND[dk][i]||{};
-  const cur=DEMAND[dk][i][nk]||"",label=nk==="eventsNote"?"events":"transportation";
+  const wk=weekKey(WEEK_START),dk=demandKey(wk);
+  const cur=((DEMAND[dk]||{})[i]||{})[nk]||"",label=nk==="eventsNote"?"events":"transportation";
   const v=await uiPrompt("Note for "+DOW[i]+" ("+label+"). Leave blank to remove it:",cur);
-  if(v===null||v===undefined)return;const s=String(v).trim().slice(0,400);
+  /* Cancel comes back as the text "Cancel", which used to be saved as the note. */
+  if(v===null||v===undefined||v==="Cancel")return;const s=String(v).trim().slice(0,400);
   if(s===cur)return;
+  if(!EDIT||weekLocked())return;
+  DEMAND[dk]=DEMAND[dk]||{};DEMAND[dk][i]=DEMAND[dk][i]||{};
   if(s)DEMAND[dk][i][nk]=s;else delete DEMAND[dk][i][nk];
   _setPendingUndoLocation({kind:"demand",dept:DEPT,week:wk,day:i,field:nk});
   _markDemandDirty(dk);save("hotel_demand",DEMAND);TOUCH&&TOUCH();pushDemand(dk);render();
@@ -30487,7 +30508,7 @@ function updateBulkSegTime(i,side){
 // bulkStamp() call if something was actually entered.
 async function _bulkStampCustom(promptText){
   const txt=await uiPrompt(promptText,"");
-  if(!txt||!txt.trim())return;
+  if(!txt||txt==="Cancel"||!txt.trim())return;
   bulkStamp(txt.trim());
 }
 // Off/Absent reset added here specifically (not inside the shared _bulkStampCustom() above, which
@@ -31178,7 +31199,7 @@ function editorButtonsHTML(){const _pre=(CFG[DEPT].shifts&&CFG[DEPT].shifts.leng
 // was typed, exactly as if that custom text were any other recognized code.
 async function pickCodeOther(){
   const txt=await uiPrompt("Enter a custom assignment label:",(SM.code&&!["OFF","R-OFF","OC"].includes(SM.code))?SM.code:"");
-  if(!txt||!txt.trim()){editorButtonsHTML();return;}
+  if(!txt||txt==="Cancel"||!txt.trim()){editorButtonsHTML();return;}
   pickCode(txt.trim());
 }
 // The Off-family dropdown's own "Other…" handler, matching pickCodeOther()'s own pattern EXCEPT the typed label
@@ -31190,7 +31211,7 @@ async function pickCodeOther(){
 // what was just entered.
 async function pickOffCodeOther(){
   const txt=await uiPrompt("Enter a custom leave/absence label:",(SM.code&&!offCodesGlobal().includes(SM.code)&&SM.offMode)?SM.code:"");
-  if(!txt||!txt.trim()){editorButtonsHTML();return;}
+  if(!txt||txt==="Cancel"||!txt.trim()){editorButtonsHTML();return;}
   SM.code=txt.trim();SM.offMode=true;SM.preset=null;SM.segs=[];
   drawSegs();editorButtonsHTML();
 }
