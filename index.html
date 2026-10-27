@@ -12725,6 +12725,9 @@ function _undoPlain(x){return x!==null&&typeof x==="object"&&!Array.isArray(x);}
 /* Normalize each roster to a name-keyed map before diffing. This makes one person's edit independent of another
    person's concurrent edit and prevents a 300-person array from being copied into every undo step. */
 function _undoNormalizeParsed(root){
+  /* An empty demand week ({}) carries no data. Editing a schedule cell can leave one behind, and counting it as a field
+     made Undo report "Undid 1 field" (and queue a redo) for a step that changed nothing visible. */
+  try{const dm=root&&root.DEMAND;if(dm&&typeof dm==="object")Object.keys(dm).forEach(k=>{const v=dm[k];if(v&&typeof v==="object"&&!Array.isArray(v)&&!Object.keys(v).length)delete dm[k];});}catch(e){}
   DEPT_KEYS.forEach(d=>{const D=root&&root.CFG&&root.CFG[d];if(!D||!Array.isArray(D.staff))return;const rec=Object.create(null),order=[];let ok=true;
     D.staff.forEach(st=>{const n=st&&st.n;if(typeof n!=="string"||!n||Object.prototype.hasOwnProperty.call(rec,n)){ok=false;return;}order.push(n);rec[n]=st;});
     if(ok)D.staff={"\u0001staff":1,order,rec};
@@ -32506,7 +32509,7 @@ let _demandCommitInProgress=false;
 // FIRST (capture phase runs before the drawer button's own bubble-phase onclick), seeing EDIT still false for
 // the tab being left and popping a spurious PIN prompt unrelated to the navigation actually intended, racing
 // against setDept() itself, which runs a moment later and correctly applies the real, already-granted access.
-document.addEventListener("click",function(ev){if(EDIT)return;const t=ev.target;if(t.closest("header"))return;if(t.closest(".modalbg"))return;if(t.closest("#settingsCard")||t.closest("#readmeCard"))return;if(t.closest("[data-checkin-action]"))return;if(t.closest("#mobileDrawer")||t.closest("#mobileDrawerOverlay"))return;if(VIEW!=="schedule")return;const _dc=t.closest?t.closest("#demandBody [data-dk]"):null;
+document.addEventListener("click",function(ev){if(EDIT)return;const t=ev.target;if(!t||!t.closest)return;if(t.closest("a[download]"))return;/* a programmatic download link (backup, export, diagnostics) is not an attempt to edit: it used to pop a PIN prompt, twice, after Discard local */if(t.closest("header"))return;if(t.closest(".modalbg"))return;if(t.closest("#settingsCard")||t.closest("#readmeCard"))return;if(t.closest("[data-checkin-action]"))return;if(t.closest("#mobileDrawer")||t.closest("#mobileDrawerOverlay"))return;if(VIEW!=="schedule")return;const _dc=t.closest?t.closest("#demandBody [data-dk]"):null;
   // Traced the actual mechanism this report most plausibly describes: clicking a read-only demand cell (e.g.
   // Credits) while still in view-only mode reaches HERE, arms PENDING_DFOCUS for that exact cell, then calls
   // unlockDeptForEdit() (an ASYNC PIN prompt that can legitimately sit open for many seconds, or be cancelled
