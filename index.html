@@ -22937,7 +22937,13 @@ function analyzeUploadChanges(localSnapshot,liveSnapshot,opts){
   // keys shown under their own on-screen names (DEMAND_FIELD_LABELS) rather than raw "occ"/"ooo"/"arr".
   {
     const localDem=_demandDateView((localSnapshot||{}).demand),liveDem=_demandDateView((liveSnapshot||{}).demand),fields=["occ","arr","dep","credits","ooo","house","events","transportation","eventsNote","transportationNote","covers1","covers2","covers3","unassigned"];
-    new Set([...localDem.keys(),...liveDem.keys()]).forEach(mapKey=>{const l=localDem.get(mapKey),r=liveDem.get(mapKey),rec=l||r,iso=rec.date,weeks=new Set([...(l?l.weeks:[]),...(r?r.weeks:[])]);if(_demandKeys&&![...weeks].some(w=>_demandKeys.has(w)))return;if(_suppressOwnEdits&&_ownDemandMatchesLive(weeks,(liveSnapshot||{}).demand))return;const lv=(l&&l.fields)||{},rv=(r&&r.fields)||{},dt=new Date(iso+"T00:00:00"),scopeLabel=propertyLabelForDept(rec.dept);fields.forEach(f=>{const a=lv[f],b=rv[f];if((a==null?"":String(a))===(b==null?"":String(b)))return;const line=`${scopeLabel} demand ${iso} ${DOW_NAMES[dt.getDay()]} — ${DEMAND_FIELD_LABELS[f]||f}: local ${_formatDiffValue("demand",f,a)} · live ${_formatDiffValue("demand",f,b)}`;changes.push(line);if(b!=null&&b!==""&&a!==b&&!!l&&!_isClubSeedCorrection(rec.scope,weeks,iso,f,b,a)&&!_isSeedTextCorrection(rec.scope,weeks,iso,f,b))conflicts.push(line);});});
+    new Set([...localDem.keys(),...liveDem.keys()]).forEach(mapKey=>{const l=localDem.get(mapKey),r=liveDem.get(mapKey),rec=l||r,iso=rec.date,weeks=new Set([...(l?l.weeks:[]),...(r?r.weeks:[])]);if(_demandKeys&&![...weeks].some(w=>_demandKeys.has(w)))return;if(_suppressOwnEdits&&_ownDemandMatchesLive(weeks,(liveSnapshot||{}).demand))return;const lv=(l&&l.fields)||{},rv=(r&&r.fields)||{},dt=new Date(iso+"T00:00:00"),scopeLabel=propertyLabelForDept(rec.dept),_merged=new Set();
+      /* Live still holds free text in Events/Transportation (written by the first seed) and this device holds the same text as a note. That is one
+         change, "the text moves to a note", not an Events difference followed by an Events-note difference, so it is listed once and is not a conflict. */
+      ["events","transportation"].forEach(f=>{const b=rv[f],nk=f+"Note";if(typeof b==="string"&&b.trim()!==""&&l&&String(lv[nk]||"").trim()===b.trim()&&(rv[nk]==null||rv[nk]===""||String(rv[nk]).trim()===b.trim())){
+        const a=_demandNum(lv[f]);_merged.add(f);_merged.add(nk);
+        changes.push(`${scopeLabel} demand ${iso} ${DOW_NAMES[dt.getDay()]} — ${DEMAND_FIELD_LABELS[f]||f}: live holds the text "${b.trim()}" in the count field; local keeps it as a note${a==null?" and leaves the count blank":" and sets the count to "+nfmt(a)}`);}});
+      fields.forEach(f=>{if(_merged.has(f))return;const a=lv[f],b=rv[f];if((a==null?"":String(a))===(b==null?"":String(b)))return;const line=`${scopeLabel} demand ${iso} ${DOW_NAMES[dt.getDay()]} — ${DEMAND_FIELD_LABELS[f]||f}: local ${_formatDiffValue("demand",f,a)} · live ${_formatDiffValue("demand",f,b)}`;changes.push(line);if(b!=null&&b!==""&&a!==b&&!!l&&!_isClubSeedCorrection(rec.scope,weeks,iso,f,b,a)&&!_isSeedTextCorrection(rec.scope,weeks,iso,f,b))conflicts.push(line);});});
   }
   // Leave Requests diff — by id, since these are whole-record objects rather than per-field cells; a genuinely NEW
   // local request (no live counterpart at all) is a safe addition, never a conflict; a request that exists in BOTH
@@ -23719,7 +23725,7 @@ function _renderPlainItemsList(items,pick,W){
     const ids=pick?pick.idsOf(x):[];
     if(head===null){if(pick)return `<li style="list-style:none;margin:0 0 4px -16px;line-height:1.5"><label class="checkboxLabel" style="cursor:pointer">${cb(ids)}<span class="wraptext" style="white-space:pre-line">${esc(strip(word(t)))}</span></label></li>`;return `<li style="margin-bottom:4px;line-height:1.5;padding-left:14px;text-indent:-14px">${jumpButton(t,t)}</li>`;}
     const childLines=body.split("\n"),hier=/, week of 20\d\d-|^(?:DT|DB) demand \w{3} \(20\d\d-/.test(head);
-    if(hier){const childHtml=childLines.map(raw=>{const cids=pick?pick.idsOf(raw):[];const txt=shortChild(head,raw);return pick?`<li style="list-style:none;margin:3px 0"><label class="checkboxLabel" style="cursor:pointer">${cb(cids)}<span class="wraptext">${esc(strip(word(txt)))}</span></label></li>`:`<li style="margin:3px 0">${jumpButton(raw,txt)}</li>`;}).join("");return `<li style="list-style:none;margin:0 0 4px -16px;line-height:1.5"><details>${pick?'<summary class="restoreItemSummary" title="Click to expand"><span class="checkboxLabel">'+cb(ids,' onclick="event.stopPropagation()"')+'<span class="wraptext">'+esc(strip(word(head)))+'</span></span></summary>':'<summary style="cursor:pointer" title="Click to expand">'+esc(strip(word(head)))+'</summary>'}<ul style="margin:3px 0 2px 20px;padding:0">${childHtml}</ul></details></li>`;}
+    if(hier){const childHtml=childLines.map(raw=>{const cids=pick?pick.idsOf(raw):[];const txt=shortChild(head,raw);return pick?`<li data-dl="${esc(String(raw))}" style="list-style:none;margin:3px 0"><label class="checkboxLabel" style="cursor:pointer">${cb(cids)}<span class="wraptext">${esc(strip(word(txt)))}</span></label></li>`:`<li data-dl="${esc(String(raw))}" style="margin:3px 0">${jumpButton(raw,txt)}</li>`;}).join("");return `<li style="list-style:none;margin:0 0 4px -16px;line-height:1.5"><details>${pick?'<summary class="restoreItemSummary" title="Click to expand"><span class="checkboxLabel">'+cb(ids,' onclick="event.stopPropagation()"')+'<span class="wraptext">'+esc(strip(word(head)))+'</span></span></summary>':'<summary style="cursor:pointer" title="Click to expand">'+esc(strip(word(head)))+'</summary>'}<ul style="margin:3px 0 2px 20px;padding:0">${childHtml}</ul></details></li>`;}
     if(pick)return `<li style="list-style:none;margin:0 0 4px -16px;line-height:1.5"><div class="checkboxLabel">${cb(ids)}<details style="flex:1;min-width:0"><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></div></li>`;
     return `<li style="list-style:none;margin:0 0 4px -16px;line-height:1.5"><details><summary style="cursor:pointer" title="Click to expand">${esc(strip(word(head)))}</summary><div class="muted" style="white-space:pre-line;margin:2px 0 0 14px">${esc(strip(word(body)))}</div></details></li>`;
   };
@@ -23899,7 +23905,7 @@ function _diffLineSides(line){
   if(/ \u2014 local only$/.test(head))return {known:true,curBlank:false,othBlank:true};
   if(/ \u2014 (?:live only|deleted here, live has them)$/.test(head))return {known:true,curBlank:true,othBlank:false};
   const pairs=[];
-  const scan=txt=>String(txt).split("\n").forEach(row=>row.split(/;\s+/).forEach(cl=>{const mm=cl.match(/local (.+?) \u00b7 live (.+?)(?: \(\d[^()]*\))?$/);if(mm)pairs.push([mm[1],mm[2]]);}));
+  const scan=txt=>String(txt).split("\n").forEach(row=>{const re=/local (.+?) \u00b7 live (.+?)(?=; [A-Za-z][^:;]*: local |$)/g;let mm;while((mm=re.exec(row))!==null){pairs.push([mm[1],mm[2].replace(/ \(\d[^()]*\)$/,"")]);}});
   scan(head);if(!pairs.length&&body)scan(body);
   if(!pairs.length)return {known:false,curBlank:false,othBlank:false};
   return {known:true,curBlank:pairs.every(p=>_diffTokBlank(p[0])),othBlank:pairs.every(p=>_diffTokBlank(p[1]))};
@@ -23920,16 +23926,18 @@ function _diffLineDepts(line,leaves){
    checkboxes are unaffected, so a ticked section still uploads every item, shown or not; each section says how many are hidden. */
 function _applyUploadReviewFilter(root){
   const f={hideCur:!!(root.querySelector("#ucFiltCur")||{}).checked,hideOth:!!(root.querySelector("#ucFiltOth")||{}).checked,dept:(root.querySelector("#ucFiltDept")||{}).value||""};
-  const leaves=Object.values(LEAVE_REQUESTS||{});let shown=0,total=0;
-  root.querySelectorAll("li[data-dl]").forEach(li=>{
-    const line=li.getAttribute("data-dl");total++;
-    const keep=_diffFilterLines([line],[],f,l=>_diffLineDepts(l,leaves)).changes.length>0;
-    li.style.display=keep?"":"none";if(keep)shown++;
-  });
+  const leaves=Object.values(LEAVE_REQUESTS||{}),lis=[...root.querySelectorAll("li[data-dl]")];
+  const isGroup=li=>li.getAttribute("data-dl").indexOf("\u0001")>=0;
+  const keepOf=line=>_diffFilterLines([line],[],f,l=>_diffLineDepts(l,leaves)).changes.length>0;
+  let shown=0,total=0;
+  /* each listed line is tested on its own, including the lines inside a "N fields differ" group */
+  lis.forEach(li=>{if(isGroup(li))return;total++;const k=keepOf(li.getAttribute("data-dl"));li.style.display=k?"":"none";if(k)shown++;});
+  /* a group is listed while any of its lines is */
+  lis.filter(isGroup).forEach(li=>{const kids=[...li.querySelectorAll("li[data-dl]")];li.style.display=(kids.length?kids.some(x=>x.style.display!=="none"):keepOf(li.getAttribute("data-dl")))?"":"none";});
   root.querySelectorAll("ul.diffReviewList").forEach(ul=>{const items=[...ul.children].filter(x=>x.hasAttribute&&x.hasAttribute("data-dl"));if(!items.length)return;const any=items.some(x=>x.style.display!=="none");ul.style.display=any?"":"none";const h=ul.previousElementSibling;if(h&&h.classList&&h.classList.contains("small"))h.style.display=any?"":"none";});
   root.querySelectorAll(".ucSec details").forEach(d=>{const items=d.querySelectorAll("li[data-dl]");if(!items.length)return;d.style.display=[...items].some(x=>x.style.display!=="none")?"":"none";});
   root.querySelectorAll(".ucSec").forEach(sec=>{
-    const all=sec.querySelectorAll("li[data-dl]"),hid=[...all].filter(x=>x.style.display==="none").length;
+    const all=[...sec.querySelectorAll("li[data-dl]")].filter(x=>!isGroup(x)),hid=all.filter(x=>x.style.display==="none").length;
     let n=sec.querySelector(".ucFiltNote");
     if(hid){if(!n){n=document.createElement("div");n.className="small muted ucFiltNote";n.style.margin="4px 0 2px";const head=sec.firstElementChild;if(head&&head.nextSibling)sec.insertBefore(n,head.nextSibling);else sec.appendChild(n);}
       n.textContent=nfmt(hid)+" of "+nfmt(all.length)+" item"+(all.length===1?"":"s")+" hidden by the filter"+(sec.querySelector(".ucSecChk")?" (still uploaded if this section is ticked).":".");}
@@ -23963,17 +23971,28 @@ function _hideUploadProgress(){if(_uploadProgressTimer){clearInterval(_uploadPro
    embedded value, and (c) live has nothing there. A cell somebody changed on this device, or a value live holds, is never a seed add, so
    a stale copy of data that was edited or cleared elsewhere is not mistaken for a seed. */
 function _seedBlank(v){return v===undefined||v===null||v==="";}
+/* How live compares with the built-in schedule for one department-week. A week where live holds a lot of values that differ from the seed was
+   edited or re-imported after the seed was built: the seed is older there, so it is never offered back to live. */
+function _seedScheduleWeekStats(dp,wk,liveRows){
+  const hist=((typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{})[wk]||{};
+  const key=n=>_canonicalStaffName(dp,n,CFG).trim().toLowerCase(),lmap=new Map(Object.keys(liveRows||{}).map(n=>[key(n),liveRows[n]||{}]));
+  let seeded=0,present=0,differ=0,missing=0,same=0;
+  Object.keys(hist).forEach(nm=>{const row=lmap.get(key(nm))||{};Object.keys(hist[nm]||{}).forEach(di=>{const sv=hist[nm][di];if(_seedBlank(sv))return;seeded++;const lv=row[di];if(_seedBlank(lv)){missing++;return;}present++;if(_sameValue(lv,sv))same++;else differ++;});});
+  return {seeded,present,differ,missing,same,livePeople:Object.keys(liveRows||{}).length,seedPeople:Object.keys(hist).length,disagrees:present>=20&&differ/present>=0.10};
+}
 function _seedAddKeys(localSnap,liveSnap,access){
   const sched=new Set(),dem=new Set();
   try{
     DEPT_KEYS.forEach(dp=>{
       if(access&&access.schedule&&!access.schedule.has(dp))return;
       const hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{},lw=((localSnap.assign||{})[dp])||{},vw=((liveSnap.assign||{})[dp])||{};
+      const ck=n=>_canonicalStaffName(dp,n,CFG).trim().toLowerCase();
       Object.keys(hist).forEach(wk=>{
-        const lrows=lw[wk]||{},vrows=vw[wk]||{},lower=new Map(Object.keys(lrows).map(n=>[String(n).trim().toLowerCase(),n])),vlower=new Map(Object.keys(vrows).map(n=>[String(n).trim().toLowerCase(),n]));
+        const lrows=lw[wk]||{},vrows=vw[wk]||{},lower=new Map(Object.keys(lrows).map(n=>[ck(n),n])),vlower=new Map(Object.keys(vrows).map(n=>[ck(n),n]));
+        if(_seedScheduleWeekStats(dp,wk,vrows).disagrees)return;/* live holds a different schedule for this week */
         Object.keys(hist[wk]||{}).forEach(nm=>{
-          const sd=hist[wk][nm]||{},ln=lower.get(String(nm).trim().toLowerCase());if(ln===undefined)return;
-          const lr=lrows[ln]||{},vn=vlower.get(String(nm).trim().toLowerCase()),vr=(vn!==undefined?vrows[vn]:null)||{};
+          const sd=hist[wk][nm]||{},ln=lower.get(ck(nm));if(ln===undefined)return;
+          const lr=lrows[ln]||{},vn=vlower.get(ck(nm)),vr=(vn!==undefined?vrows[vn]:null)||{};
           for(const day of Object.keys(sd)){if(!_seedBlank(sd[day])&&_sameValue(lr[day],sd[day])&&_seedBlank(vr[day])){sched.add(_assignRowKey(dp,wk,ln));break;}}
         });
       });
@@ -24173,10 +24192,13 @@ function fixupDBGSDemandSeedFill(force){
 }
 /* Manual, fill-blank-only version for the Backup menu: a browser that later takes a live copy which lacks seeded weeks is blank again and its
    once-only markers are already spent. Schedule cells are filled only for people on this roster who are not marked deleted. */
+function _rosterNameForSeed(dp,nm){
+  try{const c=_canonicalStaffName(dp,nm,CFG);return (((CFG[dp]||{}).staff)||[]).some(x=>x&&x.n===c)?c:null;}catch(e){return null;}
+}
 function _fillBlankDBGSSchedule(){
   const dp=DEPT_IDS.DB_GUEST_SERVICES,hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{};let n=0;
   Object.keys(hist).forEach(wk=>Object.keys(hist[wk]||{}).forEach(nm=>{
-    const roster=((CFG[dp]||{}).staff||[]).find(st=>st&&String(st.n).trim().toLowerCase()===String(nm).trim().toLowerCase());
+    const rn=_rosterNameForSeed(dp,nm),roster=rn?{n:rn}:null;/* the built-in schedule stores some people with a licence suffix, e.g. "John Navarro (C)" */
     if(!roster||(typeof isStaffTombstoned==="function"&&isStaffTombstoned(dp,roster.n)))return;
     const src=hist[wk][nm]||{};
     Object.keys(src).forEach(di=>{
@@ -24192,10 +24214,13 @@ function _fillMissingSeedData(){
   return {demand:d.filled,corrected:d.corrected,schedule:c};
 }
 async function fillMissingSeedDataMenu(){
-  if(!(await uiConfirm("Fill blank Dusit Beach demand (occupancy, arrivals, departures, Covers, transportation, events) and blank DB GS schedule cells from the data built into this app?\n\nOnly blank cells are filled. Anything that already has a value is left exactly as it is.","Fill blanks")))return;
-  const r=_fillMissingSeedData();
+  if(!(await uiConfirm("Fill blank Dusit Beach demand (occupancy, arrivals, departures, Covers, transportation, events) and blank DB GS schedule cells on THIS device from the data built into this app?\n\nOnly blank cells are filled, and only on this device. Anything that already has a value is left exactly as it is, and live is not changed.","Fill blanks")))return;
+  const r=_fillMissingSeedData(),n=r.demand+r.schedule+(r.corrected||0);
   render();
-  await uiAlert("Filled "+nfmt(r.demand)+" blank demand value"+(r.demand===1?"":"s")+(r.corrected?", corrected "+nfmt(r.corrected)+" earlier seeded value"+(r.corrected===1?"":"s"):"")+" and "+nfmt(r.schedule)+" blank schedule cell"+(r.schedule===1?"":"s")+"."+((r.demand||r.schedule)?(SUPABASE_CLIENT?"\n\nUse Review & upload to send them to live; they are listed as additions.":"\n\nThey will be offered for upload the next time this device connects."):"\n\nNothing was missing."));
+  if(!n){await uiAlert("Nothing was blank on this device: it already holds every seeded Dusit Beach demand value and DB GS schedule cell.\n\nThis action never changes live. To see what live is missing, use Backup \u2192 Seeded data on live; anything this device has that live lacks is sent with Review & upload.");return;}
+  const msg="Filled "+nfmt(r.demand)+" blank demand value"+(r.demand===1?"":"s")+(r.corrected?", corrected "+nfmt(r.corrected)+" earlier seeded value"+(r.corrected===1?"":"s"):"")+" and "+nfmt(r.schedule)+" blank schedule cell"+(r.schedule===1?"":"s")+" on this device.";
+  if(SUPABASE_CLIENT){if(await uiConfirm(msg+"\n\nThey are not on live yet. Open Review & upload now to send them?","Open Review & upload"))reviewAndUpload();}
+  else await uiAlert(msg+"\n\nThey will be offered for upload the next time this device connects.");
 }
 /* True when live still holds exactly the previous seed value and this device holds exactly the corrected one: nobody has typed anything
    there, so the difference is the known correction and not a conflict. */
@@ -24298,10 +24323,10 @@ function fixupPartialHistoricalWeeks(){
       const hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{};
       Object.keys(hist).forEach(wk=>{
         let h=0,l=0;
-        Object.keys(hist[wk]||{}).forEach(nm=>{const row=((((ASSIGN[dp]||{})[wk])||{})[nm])||{};Object.keys(hist[wk][nm]||{}).forEach(di=>{if(blank(hist[wk][nm][di]))return;h++;if(!blank(row[di]))l++;});});
+        Object.keys(hist[wk]||{}).forEach(nm=>{const rn=_rosterNameForSeed(dp,nm)||nm,row=((((ASSIGN[dp]||{})[wk])||{})[rn])||{};Object.keys(hist[wk][nm]||{}).forEach(di=>{if(blank(hist[wk][nm][di]))return;h++;if(!blank(row[di]))l++;});});
         if(h<20||l>=h*0.25)return;
         Object.keys(hist[wk]||{}).forEach(nm=>{
-          const rost=((CFG[dp]||{}).staff||[]).find(st=>st&&String(st.n).trim().toLowerCase()===String(nm).trim().toLowerCase()),name=rost?rost.n:nm;
+          const name=_rosterNameForSeed(dp,nm);if(!name)return;/* a seeded name that is not on the roster is not created as a new person */
           if(typeof isStaffTombstoned==="function"&&isStaffTombstoned(dp,name))return;
           Object.keys(hist[wk][nm]||{}).forEach(di=>{
             const sv=hist[wk][nm][di];if(blank(sv))return;
@@ -24313,7 +24338,7 @@ function fixupPartialHistoricalWeeks(){
     });
     CFG._histPartialFillV28=true;
     const _p=_syncApplying;_syncApplying=true;try{if(filled)save("hotel_assign",ASSIGN);save("hotel_cfg",CFG);}finally{_syncApplying=_p;}
-    touched.forEach(k=>{const p=k.split("\u0000");_markAssignDirty(p[0],p[1],p.slice(2).join("\u0000"));});
+    /* Not queued for upload here: the connect-time seed offer decides that, and it skips any week where live holds a different schedule. */
     if(filled)console.info("Seeded weeks that were skipped by the first load: filled "+filled+" blank cell(s).");
   }catch(e){console.warn("partial historical week fill skipped (non-fatal):",e);}
 }
@@ -24329,34 +24354,43 @@ function _seedLiveClass(sv,lv){
 async function showSeedLiveCheck(){
   if(!SUPABASE_CLIENT){uiAlert("Connect to the shared copy first.");return;}
   const bg=document.createElement("div");bg.className="modalbg";bg.style.display="flex";bg.id="seedCheckModal";
-  bg.innerHTML=`<div class="modal" style="max-width:780px;width:96%"><div style="font-weight:600;margin-bottom:6px">Seeded data on live</div><div id="scBody" class="small">Reading the live copy\u2026</div><div class="mrow" style="justify-content:flex-end;margin-top:10px;gap:6px"><button type="button" id="scReview" title="Opens Review &amp; upload, where anything missing on live is listed as an addition." disabled>Review &amp; upload\u2026</button><button type="button" id="scClose" class="brand">Close</button></div></div>`;
+  bg.innerHTML=`<div class="modal" style="max-width:820px;width:96%"><div style="font-weight:600;margin-bottom:6px">Seeded data on live</div><div id="scBody" class="small">Reading the live copy\u2026</div><div id="scMsg" class="small" style="margin-top:6px"></div><div class="mrow" style="justify-content:flex-end;margin-top:10px;gap:6px"><button type="button" id="scFill" title="Fills blank cells on THIS device from the built-in data. It does not change live." disabled>Fill blanks on this device</button><button type="button" id="scReview" title="Opens Review &amp; upload, where seeded values that are missing on live are listed as additions." disabled>Review &amp; upload\u2026</button><button type="button" id="scClose" class="brand">Close</button></div></div>`;
   document.body.appendChild(bg);bg.dataset.ownKeys="1";const close=()=>bg.remove();
   bg.querySelector("#scClose").onclick=close;bg.addEventListener("mousedown",e=>{if(e.target===bg)close();});
   const body=bg.querySelector("#scBody");
   let r;try{r=await _readLiveForReview();}catch(e){r={ok:false};}
   if(!r.ok){body.textContent="The live copy could not be read completely, so nothing is reported. Try again when the connection is steady.";return;}
-  const PR=_lastPulledRows,liveCfg=_lastPulledAppConfig||{},cat={};
+  const PR=_lastPulledRows,liveCfg=_lastPulledAppConfig||{},cat={},weekRows=[];
   const add=(c,cls,detail)=>{const o=cat[c]=cat[c]||{same:0,missing:0,differs:0,ex:{missing:[],differs:[]}};o[cls]++;if(cls!=="same"&&o.ex[cls].length<40)o.ex[cls].push(detail);};
+  const show=v=>v==null||v===""?"blank":String(v);
   DEPT_KEYS.forEach(dp=>{
     const hist=(typeof HISTORICAL_ASSIGN!=="undefined"&&HISTORICAL_ASSIGN[dp])||{},lab=deptLabel(dp);
-    Object.keys(hist).forEach(wk=>Object.keys(hist[wk]||{}).forEach(nm=>{
-      const cn=_canonicalStaffName(dp,nm,CFG),row=(((PR.assign[dp]||{})[wk])||{})[cn]||{},src=hist[wk][nm]||{};
-      Object.keys(src).forEach(di=>{const cls=_seedLiveClass(src[di],row[di]);if(!cls)return;const d=new Date(wk+"T00:00:00");d.setDate(d.getDate()+Number(di));add(lab+" schedule",cls,cn+" \u2014 "+weekKey(d)+": Excel "+src[di]+" \u00b7 live "+(row[di]==null||row[di]===""?"blank":row[di]));});
-    }));
+    Object.keys(hist).forEach(wk=>{
+      const liveRows=((PR.assign[dp]||{})[wk])||{},st=_seedScheduleWeekStats(dp,wk,liveRows);
+      if(st.disagrees)weekRows.push({lab,wk,st});
+      Object.keys(hist[wk]||{}).forEach(nm=>{
+        const cn=_canonicalStaffName(dp,nm,CFG),lk=Object.keys(liveRows).find(k=>_canonicalStaffName(dp,k,CFG)===cn),row=(lk!==undefined?liveRows[lk]:{})||{},src=hist[wk][nm]||{},dev=((((ASSIGN[dp]||{})[wk])||{})[cn])||{};
+        Object.keys(src).forEach(di=>{let cls=_seedLiveClass(src[di],row[di]);if(!cls)return;if(st.disagrees&&cls==="missing")cls="differs";const d=new Date(wk+"T00:00:00");d.setDate(d.getDate()+Number(di));add(lab+" schedule",cls,cn+" \u2014 "+weekKey(d)+": Excel "+src[di]+" \u00b7 this device "+show(dev[di])+" \u00b7 live "+show(row[di]));});
+      });
+    });
     const hd=(typeof HISTORICAL_DEMAND!=="undefined"&&HISTORICAL_DEMAND[dp])||{};
-    Object.keys(hd).forEach(wk=>{const dk=demandKeyFor(dp,wk),lrow=PR.demand[dk]||{};Object.keys(hd[wk]||{}).forEach(di=>Object.keys(hd[wk][di]||{}).forEach(f=>{const cls=_seedLiveClass(hd[wk][di][f],(lrow[di]||{})[f]);if(!cls)return;const d=new Date(wk+"T00:00:00");d.setDate(d.getDate()+Number(di));add((dp===DEPT_IDS.DB_GUEST_SERVICES?"Dusit Beach":propertyLabelForDept(dp))+" demand",cls,weekKey(d)+" "+(DEMAND_FIELD_LABELS[f]||f)+": Excel "+_formatDiffValue("demand",f,hd[wk][di][f])+" \u00b7 live "+_formatDiffValue("demand",f,(lrow[di]||{})[f]));}));});
-    const sd=((seed()||{})[dp]||{}).staff||[],ls=((liveCfg[dp]||{}).staff)||[],lmap=new Map(ls.map(s=>[String(s.n).trim().toLowerCase(),s]));
-    sd.forEach(s=>{const k=String(s.n).trim().toLowerCase(),l=lmap.get(k);if(!l){add(lab+" roster",_seedLiveClass(s.n,null),s.n+" \u2014 person not on live roster");return;}
-      ["role","type","paycomBadgeNumber","note"].forEach(f=>{const a=f==="paycomBadgeNumber"?_padBadge(s[f]):s[f],b=f==="paycomBadgeNumber"?_padBadge(l[f]):l[f],cls=_seedLiveClass(a,b);if(cls)add(lab+" roster",cls,s.n+" \u2014 "+(STAFF_FIELD_LABELS[f]||f)+": Excel "+a+" \u00b7 live "+(b==null||b===""?"blank":b));});
-      ["avail","availDates"].forEach(f=>{const a=s[f]&&typeof s[f]==="object"?Object.keys(s[f]):[];a.forEach(k=>{const lv=(l[f]||{})[k];const cls=lv?"same":"missing";add(lab+" availability",cls,s.n+" \u2014 "+(STAFF_FIELD_LABELS[f]||f)+" "+k);});});
+    Object.keys(hd).forEach(wk=>{const dk=demandKeyFor(dp,wk),lrow=PR.demand[dk]||{},drow=DEMAND[dk]||{};Object.keys(hd[wk]||{}).forEach(di=>Object.keys(hd[wk][di]||{}).forEach(f=>{const cls=_seedLiveClass(hd[wk][di][f],(lrow[di]||{})[f]);if(!cls)return;const d=new Date(wk+"T00:00:00");d.setDate(d.getDate()+Number(di));add((dp===DEPT_IDS.DB_GUEST_SERVICES?"Dusit Beach":propertyLabelForDept(dp))+" demand",cls,weekKey(d)+" "+(DEMAND_FIELD_LABELS[f]||f)+": Excel "+_formatDiffValue("demand",f,hd[wk][di][f])+" \u00b7 this device "+_formatDiffValue("demand",f,(drow[di]||{})[f])+" \u00b7 live "+_formatDiffValue("demand",f,(lrow[di]||{})[f]));}));});
+    const sd=((seed()||{})[dp]||{}).staff||[],ls=((liveCfg[dp]||{}).staff)||[],lmap=new Map(ls.map(s=>[String(s.n).trim().toLowerCase(),s])),dmap=new Map((((CFG[dp]||{}).staff)||[]).map(s=>[String(s.n).trim().toLowerCase(),s]));
+    sd.forEach(s=>{const k=String(s.n).trim().toLowerCase(),l=lmap.get(k),dv=dmap.get(k)||{};if(!l){add(lab+" roster",_seedLiveClass(s.n,null),s.n+" \u2014 person not on live roster");return;}
+      ["role","type","paycomBadgeNumber","note"].forEach(f=>{const a=f==="paycomBadgeNumber"?_padBadge(s[f]):s[f],b=f==="paycomBadgeNumber"?_padBadge(l[f]):l[f],c=f==="paycomBadgeNumber"?_padBadge(dv[f]):dv[f],cls=_seedLiveClass(a,b);if(cls)add(lab+" roster",cls,s.n+" \u2014 "+(STAFF_FIELD_LABELS[f]||f)+": Excel "+show(a)+" \u00b7 this device "+show(c)+" \u00b7 live "+show(b));});
+      ["avail","availDates"].forEach(f=>{const a=s[f]&&typeof s[f]==="object"?Object.keys(s[f]):[];a.forEach(k=>{const lv=(l[f]||{})[k];add(lab+" availability",lv?"same":"missing",s.n+" \u2014 "+(STAFF_FIELD_LABELS[f]||f)+" "+k);});});
     });
   });
   const names=Object.keys(cat).sort();let totM=0,totD=0;
   const rows=names.map(c=>{const o=cat[c],n=o.same+o.missing+o.differs;totM+=o.missing;totD+=o.differs;return `<tr style="${(o.missing||o.differs)?"background:#fff6d6":""}"><td>${esc(c)}</td><td align="right">${nfmt(n)}</td><td align="right">${nfmt(o.same)}</td><td align="right">${nfmt(o.missing)}</td><td align="right">${nfmt(o.differs)}</td></tr>`;}).join("");
-  const lists=names.filter(c=>cat[c].missing||cat[c].differs).map(c=>{const o=cat[c],part=(lab,arr,n)=>n?`<div class="small" style="margin-top:4px"><b>${lab}</b> (${nfmt(n)}${n>arr.length?", first "+arr.length:""})</div><ul style="margin:2px 0 4px 18px;padding:0">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:"";return `<details style="margin-top:6px"><summary style="cursor:pointer"><b>${esc(c)}</b></summary>${part("Missing on live",o.ex.missing,o.missing)}${part("Different on live (changed on live since, or a different value)",o.ex.differs,o.differs)}</details>`;}).join("");
-  body.innerHTML=`<div style="margin-bottom:6px">${totM||totD?`<b>${nfmt(totM)}</b> seeded value${totM===1?"":"s"} ${totM===1?"is":"are"} missing on live and <b>${nfmt(totD)}</b> differ${totD===1?"s":""}.`:"Every seeded value is on live and matches."} Differences can be correct: they include values people changed on live after the first load.</div><div style="max-height:56vh;overflow:auto"><table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th align="left">Seeded data</th><th align="right">Values</th><th align="right">Same on live</th><th align="right">Missing on live</th><th align="right">Different on live</th></tr>${rows}</table>${lists}</div>`;
-  const rb=bg.querySelector("#scReview");rb.disabled=false;rb.onclick=()=>{close();reviewAndUpload();};
+  const weeksHtml=weekRows.length?`<div style="margin:8px 0;padding:6px 8px;border:1px solid #e0c060;background:#fff6d6;border-radius:6px"><b>Weeks where live holds a different schedule</b><div class="small" style="margin-top:2px">These weeks were edited or re-imported on live after the built-in schedule was made, so the built-in values there are older. They are counted as "different", are not a loading problem, and are never offered for upload.</div><ul style="margin:4px 0 0 18px;padding:0">${weekRows.map(w=>`<li>${esc(w.lab)} \u2014 week of ${esc(w.wk)}: live has ${nfmt(w.st.livePeople)} people and the seed ${nfmt(w.st.seedPeople)}; of ${nfmt(w.st.seeded)} seeded cells, ${nfmt(w.st.same)} match, ${nfmt(w.st.differ)} differ and ${nfmt(w.st.missing)} are blank on live</li>`).join("")}</ul></div>`:"";
+  const lists=names.filter(c=>cat[c].missing||cat[c].differs).map(c=>{const o=cat[c],part=(lab,arr,n)=>n?`<div class="small" style="margin-top:4px"><b>${lab}</b> (${nfmt(n)}${n>arr.length?", first "+arr.length:""})</div><ul style="margin:2px 0 4px 18px;padding:0">${arr.map(x=>`<li>${esc(x)}</li>`).join("")}</ul>`:"";return `<details style="margin-top:6px"><summary style="cursor:pointer"><b>${esc(c)}</b></summary>${part("Missing on live \u2014 live is blank where the Excel has a value",o.ex.missing,o.missing)}${part("Different on live \u2014 live holds another value",o.ex.differs,o.differs)}</details>`;}).join("");
+  body.innerHTML=`<div style="margin-bottom:6px">${totM||totD?`<b>${nfmt(totM)}</b> seeded value${totM===1?"":"s"} ${totM===1?"is":"are"} missing on live and <b>${nfmt(totD)}</b> differ${totD===1?"s":""}.`:"Every seeded value is on live and matches."} A difference is not always wrong: people change values on live after the first load.</div><div class="small muted" style="margin-bottom:4px">Each example shows the Excel value, this device's value and live's value. Missing values that this device holds are sent with <b>Review &amp; upload</b>. <b>Fill blanks on this device</b> only fills this device and never changes live.</div><div style="max-height:52vh;overflow:auto">${weeksHtml}<table style="width:100%;border-collapse:collapse;font-size:12px"><tr><th align="left">Seeded data</th><th align="right">Values</th><th align="right">Same on live</th><th align="right">Missing on live</th><th align="right">Different on live</th></tr>${rows}</table>${lists}</div>`;
+  const rb=bg.querySelector("#scReview"),fb=bg.querySelector("#scFill"),msg=bg.querySelector("#scMsg");rb.disabled=false;fb.disabled=false;
+  rb.onclick=()=>{close();reviewAndUpload();};
+  fb.onclick=()=>{const x=_fillMissingSeedData();render();msg.textContent=(x.demand||x.schedule||x.corrected)?("Filled "+nfmt(x.demand)+" blank demand value"+(x.demand===1?"":"s")+" and "+nfmt(x.schedule)+" blank schedule cell"+(x.schedule===1?"":"s")+" on this device. Use Review & upload to send them to live."):"Nothing to fill: this device already holds every seeded value. Values missing on live are sent with Review & upload; values that differ are left as they are.";};
 }
+
 function _reviewSectionForLine(line){const c=_categorizeConflictLine(line);return _DIFF_SECTIONS.find(S=>S.cats.indexOf(c)>=0)||null;}
 function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(_isCfgSecKey(S.k))return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
 /* Why nothing could be offered, in terms the person can act on. Server-recognised rights come from the live sign-in or live
@@ -24649,26 +24683,31 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
     const ticked=()=>chk().filter(c=>c.checked&&!c.disabled).map(c=>c.dataset.sec);
     const goBtn=bg.querySelector("#ucGo");
     const refresh=()=>{goBtn.disabled=!ticked().length;};
+    /* every item/group box shows what is actually selected: ticked when all of its lines are, part-ticked when some are */
+    const syncBoxes=()=>{bg.querySelectorAll(".diffItemPick").forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);if(!ids.length)return;const n=ids.filter(id=>_selectedDiffLines.has(id)).length;x.checked=n===ids.length;x.indeterminate=!!x.closest("summary")&&n>0&&n<ids.length;});};
     chk().forEach(c=>c.onchange=()=>{const S=SECS.find(x=>x.k===c.dataset.sec);if(S&&_PICK_SECS.has(S.k)){S.items.reduce((a,x)=>a.concat(_pick.idsOf(x)),[]).forEach(id=>c.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));bg.querySelectorAll('.diffItemPick').forEach(x=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);x.checked=ids.length&&ids.every(id=>_selectedDiffLines.has(id));});}refresh();});
-    bg.querySelectorAll('.diffItemPick').forEach(x=>x.onchange=()=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);ids.forEach(id=>x.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));const sec=x.closest('.ucSec'),sc=sec&&sec.querySelector('.ucSecChk');if(sc){const all=[...sec.querySelectorAll('.diffItemPick')],n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}refresh();});bg.querySelectorAll('.ucSec').forEach(sec=>{const all=[...sec.querySelectorAll('.diffItemPick')],sc=sec.querySelector('.ucSecChk');if(sc&&all.length){const n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}});refresh();
+    bg.querySelectorAll('.diffItemPick').forEach(x=>x.onchange=()=>{const ids=(x.dataset.ids||"").split(",").filter(Boolean);ids.forEach(id=>x.checked?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));syncBoxes();const sec=x.closest('.ucSec'),sc=sec&&sec.querySelector('.ucSecChk');if(sc){const all=[...sec.querySelectorAll('.diffItemPick')],n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}refresh();});bg.querySelectorAll('.ucSec').forEach(sec=>{const all=[...sec.querySelectorAll('.diffItemPick')],sc=sec.querySelector('.ucSecChk');if(sc&&all.length){const n=all.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<all.length;}});refresh();
     ["#ucFiltCur","#ucFiltOth","#ucFiltDept"].forEach(sel=>{const x=bg.querySelector(sel);if(x)x.onchange=()=>_applyUploadReviewFilter(bg);});
     /* Select / Deselect shown: act only on what the filter currently lists, so "select all > filter > deselect shown > clear filter"
        uploads everything except what was filtered. Items with their own checkbox are toggled individually; a section that can only be
        ticked as a whole (settings, leave requests) is toggled only when the filter hides none of it. */
     const _bulk=on=>{
-      bg.querySelectorAll("li[data-dl]").forEach(li=>{
-        if(li.style.display==="none")return;
-        li.querySelectorAll(".diffItemPick").forEach(x=>{if(x.disabled||x.checked===on)return;x.checked=on;(x.dataset.ids||"").split(",").filter(Boolean).forEach(id=>on?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));});
+      /* Only lines that are listed are changed. A group's own box is then recomputed from its lines, so hidden lines keep their state. */
+      const hiddenUp=cb=>{for(let n=cb.closest("li");n&&bg.contains(n);n=n.parentElement&&n.parentElement.closest("li")){if(n.style.display==="none")return true;}return false;};
+      bg.querySelectorAll(".diffItemPick").forEach(x=>{
+        if(x.disabled||x.closest("summary")||hiddenUp(x))return;
+        (x.dataset.ids||"").split(",").filter(Boolean).forEach(id=>on?_selectedDiffLines.add(id):_selectedDiffLines.delete(id));
       });
+      syncBoxes();
       bg.querySelectorAll(".ucSec").forEach(sec=>{
         const sc=sec.querySelector(".ucSecChk");if(!sc||sc.disabled)return;
         const picks=sec.querySelectorAll(".diffItemPick");
-        if(picks.length){const n=[...picks].filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<picks.length;}
+        if(picks.length){const leafs=[...picks].filter(y=>!y.closest("summary")),n=leafs.filter(y=>y.checked).length;sc.checked=n>0;sc.indeterminate=n>0&&n<leafs.length;}
         else{const hidden=[...sec.querySelectorAll("li[data-dl]")].some(li=>li.style.display==="none");if(!hidden){sc.checked=on;sc.indeterminate=false;}}
       });
       refresh();
     };
-    const _sb=bg.querySelector("#ucSelShown"),_db=bg.querySelector("#ucDeselShown");if(_sb)_sb.onclick=()=>_bulk(true);if(_db)_db.onclick=()=>_bulk(false);
+        const _sb=bg.querySelector("#ucSelShown"),_db=bg.querySelector("#ucDeselShown");if(_sb)_sb.onclick=()=>_bulk(true);if(_db)_db.onclick=()=>_bulk(false);
     const _ack=bg.querySelector("#ucAckRemove");
     if(_ack)_ack.onchange=()=>{
       /* Allowing the roster upload enables the roster sections and items, and ticks only the items that replace nothing on live. */
@@ -36360,7 +36399,7 @@ truncate table public.snapshots;
 </ul></details>
 <details style="margin-left:18px;margin-top:8px"><summary style="cursor:pointer"><b>Version log</b></summary>
 <ul class="small">
-<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; offered seeded values live lacks on a device's first connect (fill only, never over a live value) and added per-person roster selection with Select shown / Deselect shown in the upload review; added a Workweek check (live vs this device, stray week keys, empty stray rows, and a move of stray values into blank cells of their proper weeks) and fixed workweek changes leaving empty rows on live; made the review easier to read (separators, one set of filters, deeper indents, plain-language rules, a short default-shifts difference, leave requests that say what differs) and fixed text in the Events/Transportation counts (NaN); stopped the header from flickering between Connected and Review needed while a push is in flight or the live feed is re-opened (it now reads Uploading… / Syncing… until settled); applied the Club-governs occupancy/arrivals/departures for 10/01 and 10/08 and filled blank seeded demand (Covers, transportation, events) on browsers that had loaded an earlier seed; showed upload progress (rows sent, elapsed time) after the review closes; added review filters for blank-on-this-device, blank-on-live and department (display only); split the roster review into separate sections (adds what live is missing, replaces live values, active/inactive status, and live-only values that are kept and never sent) with an upload that applies exactly the ticked ones; padded Paycom badge numbers to six digits on load, edit, import and live read; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
+<li><b>2.8</b>: aligned reviewed uploads with the exact rows shown and selected; applied the same live-permission scope to background and direct schedule/demand/check-in/leave/settings writes; kept out-of-scope changes local without treating them as failed pushes; cleared the pending revision and push-failure latch after Discard local; limited roster warnings to departments the identity can upload; took an established nonempty live copy without a no-pending seed dialog while preserving review for an actually empty live copy; seeded R1-authoritative schedule corrections, Covers 1/2/3, transportation and dated events; offered seeded values live lacks on a device's first connect (fill only, never over a live value) and added per-person roster selection with Select shown / Deselect shown in the upload review; added a Workweek check (live vs this device, stray week keys, empty stray rows, and a move of stray values into blank cells of their proper weeks) and fixed workweek changes leaving empty rows on live; made the review easier to read (separators, one set of filters, deeper indents, plain-language rules, a short default-shifts difference, leave requests that say what differs) and fixed text in the Events/Transportation counts (NaN); stopped the header from flickering between Connected and Review needed while a push is in flight or the live feed is re-opened (it now reads Uploading… / Syncing… until settled); applied the Club-governs occupancy/arrivals/departures for 10/01 and 10/08 and filled blank seeded demand (Covers, transportation, events) on browsers that had loaded an earlier seed; showed upload progress (rows sent, elapsed time) after the review closes; filled seeded schedule cells for people the built-in schedule lists with a licence suffix (Edgar Nonesa (G), John Navarro (C) and four others); fixed the review's blank filters so they hide the lines inside each group, listed Events/Transportation text moving to a note as one change, made Seeded data on live say where weeks differ as a whole and show this device's value, and added review filters for blank-on-this-device, blank-on-live and department (display only); split the roster review into separate sections (adds what live is missing, replaces live values, active/inactive status, and live-only values that are kept and never sent) with an upload that applies exactly the ticked ones; padded Paycom badge numbers to six digits on load, edit, import and live read; seeded Vinecia Pangelinan's 10/31 off request, R Ben Gamit's 14:30-23:00-only weekly availability and Joel Joaquin's R1 Front Desk Officer role (applied once to saved rosters); stopped the migration from storing an empty DB GS placeholder and preserved the project's existing minimum version, mode and cutoff on re-run; completed an authoritative full live pull after either review outcome; preserved own-write suppression in the updates badge; retained the canonical DBGS key with the DB GS label; restored the v2.8 minimum with an at-least-14-day legacy-key rewrite window; and kept deployment icon tokens for workflow stamping.</li>
 </ul></details>
 <p class="muted">Version ${APP_VERSION}.</p>`;
 }
