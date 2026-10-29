@@ -4145,7 +4145,25 @@ function _storeLivePinSession(rec,keepOthers){
   list.unshift(rec);sessionStorage.setItem(LIVE_PIN_SESSION_KEY,JSON.stringify(list.slice(0,5)));
   try{_cfgBlockedUntil=0;}catch(e){}/* A new PIN may now cover the departments a blocked config save needed */
 }
-function _supabaseClientOptions(){const l=_livePinSessionList(),headers={"X-Hotel-Client-Version":APP_VERSION};if(l.length)headers["X-Hotel-Session"]=l.map(r=>r.token).join(",");return{global:{headers}};}
+function _supabaseClientOptions(){
+  const headers={"X-Hotel-Client-Version":APP_VERSION};
+  const l=_livePinSessionList();
+  if(l.length)headers["X-Hotel-Session"]=l.map(r=>r.token).join(",");
+  const pinFetch=(input,init)=>{
+    try{
+      const u=typeof input==="string"?input:((input&&input.url)||"");
+      if(u.indexOf("/rest/v1/")>-1){
+        const h=new Headers((init&&init.headers)||(input&&input.headers)||{});
+        const t=_livePinSessionList().map(r=>r.token).join(",");
+        if(t)h.set("X-Hotel-Session",t);else h.delete("X-Hotel-Session");
+        h.set("X-Hotel-Client-Version",APP_VERSION);
+        return fetch(input,Object.assign({},init||{},{headers:h}));
+      }
+    }catch(e){}
+    return fetch(input,init);
+  };
+  return{global:{headers,fetch:pinFetch}};
+}
 let _livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};
 function _setLiveClientRequestHeaders(client){try{if(!client)return;const tokens=_livePinSessionList().map(r=>r.token).join(","),sets=[client.headers,client.rest&&client.rest.headers,client.functions&&client.functions.headers].filter(Boolean);sets.forEach(h=>{h["X-Hotel-Client-Version"]=APP_VERSION;if(tokens)h["X-Hotel-Session"]=tokens;else delete h["X-Hotel-Session"];});}catch(e){console.warn("Could not refresh live request headers",e);}}
 async function _refreshLivePermissions(){const empty=()=>{_livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};};if(!SUPABASE_CLIENT){empty();return _livePermissions;}try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);const r=await SUPABASE_CLIENT.rpc("hotel_my_permissions");if(r.error)throw r.error;const d=r.data||{};_livePermissions={schedule:new Set((d.schedule||[]).map(canonicalDeptKey).filter(x=>DEPT_KEYS.includes(x))),settings:new Set((d.settings||[]).map(canonicalDeptKey).filter(x=>DEPT_KEYS.includes(x))),allSettings:d.all_settings===true,manager:d.manager===true,loaded:true,error:null,raw:{schedule:d.schedule,settings:d.settings,all_settings:d.all_settings,manager:d.manager}};}catch(error){empty();_livePermissions.error=error;
