@@ -16775,7 +16775,7 @@ function _noUploadAccessMessage(scope,note){
   return note+"\n\n"+why+"\n\nYour changes stay on this device.";
 }
 function _reviewAccessLabel(scope){const s=[...scope.schedule].map(deptLabel),t=[...scope.settings].map(deptLabel),parts=[];if(s.length)parts.push("schedule: "+s.join(", "));if(t.length)parts.push("roster/settings: "+t.join(", "));if(scope.allowAppWide)parts.push("app-wide settings");return parts.join("; ")||"no live write access";}
-function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[];(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly")eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>labels.add(deptLabel(d)));else labels.add(_categorizeConflictLine(line));}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly";});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
+function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[],cnt={},dkeys=new Set();(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly")eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>{const L=deptLabel(d);labels.add(L);cnt[L]=(cnt[L]||0)+1;dkeys.add(d);});else{const L=_categorizeConflictLine(line);labels.add(L);cnt[L]=(cnt[L]||0)+1;}}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.excludedCounts=cnt;scope.excludedDepts=[...dkeys];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly";});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
 function _demandPropertyOfKey(k){return String(k||"").indexOf(DEMAND_DB_PREFIX)===0?"DBPROP":"DTPROP";}
 function _markUneditableReviewWork(local,live,scope,cfgDiff){DEPT_KEYS.filter(d=>!scope.schedule.has(d)).forEach(d=>{const a=(local.assign||{})[d]||{},b=(live.assign||{})[d]||{};new Set([...Object.keys(a),...Object.keys(b)]).forEach(w=>{const aw=a[w]||{},bw=b[w]||{};new Set([...Object.keys(aw),...Object.keys(bw)]).forEach(n=>{if(!_sameValue(_normalizedAssignRow(aw[n]),_normalizedAssignRow(bw[n])))_markAssignDirty(d,w,n);});});const ac=(local.checkins||{})[d]||{},bc=(live.checkins||{})[d]||{};new Set([...Object.keys(ac),...Object.keys(bc)]).forEach(w=>{const aw=ac[w]||{},bw=bc[w]||{};new Set([...Object.keys(aw),...Object.keys(bw)]).forEach(n=>{if(!_sameValue(_normalizedAssignRow(aw[n]),_normalizedAssignRow(bw[n])))_markCheckinDirty(d,w,n);});});});new Set([...Object.keys(local.demand||{}),...Object.keys(live.demand||{})]).forEach(k=>{if(!scope.demand.has(_demandPropertyOfKey(k))&&!_sameValue(_nullIfEmpty((local.demand||{})[k]),_nullIfEmpty((live.demand||{})[k])))_markDemandDirty(k);});new Set([...Object.keys(local.leaveRequests||{}),...Object.keys(live.leaveRequests||{})]).forEach(id=>{const r=(local.leaveRequests||{})[id]||(live.leaveRequests||{})[id],d=deptKeyFromAny(r&&r.dept);if(!scope.schedule.has(d)&&!_sameValue((local.leaveRequests||{})[id],(live.leaveRequests||{})[id]))_protectLeaveId(id);});if(scope.localOnlyConfig&&cfgDiff&&cfgDiff.changes&&cfgDiff.changes.length)_markConfigDirty();}
 function _replaceDemandScope(target,source,properties){Object.keys(target||{}).forEach(k=>{if(properties.has(_demandPropertyOfKey(k)))delete target[k];});Object.keys(source||{}).forEach(k=>{if(properties.has(_demandPropertyOfKey(k)))target[k]=JSON.parse(JSON.stringify(source[k]));});}
@@ -17006,7 +17006,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       </div>
       <div id="ucMain" class="mrow" style="justify-content:flex-end;margin-top:12px;gap:6px">
         <button data-c="cancel" title="Nothing is uploaded. The connection is dropped and this device stays in local mode with the changes above.">Cancel</button>
-        <button id="ucDiscard" style="color:#b30000;border-color:#e0a8a8" title="Nothing is uploaded. This device connects, takes the live copy, and the local changes listed above are dropped.">Discard local</button>
+        ${(accessScope&&accessScope.excludedCount&&accessScope.canLogin)?'<button id="ucLogin" title="Enter a PIN for the departments whose changes are held back, then review again.">Log in\u2026</button>':''}<button id="ucDiscard" style="color:#b30000;border-color:#e0a8a8" title="Nothing is uploaded. This device connects, takes the live copy, and the local changes listed above are dropped.">Discard local</button>
         <button class="brand" id="ucGo" disabled title="Sends the ticked sections, replacing the live version of each item listed in them. In unticked sections, live values replace the local ones.">Upload selected</button>
       </div>
       <div id="ucConfirm" style="display:none;margin-top:4px">
@@ -17102,7 +17102,7 @@ function showUploadChoiceDialog(changes,conflicts,cfgChanged,isFirstAppWideSync,
       msg+=_infoNote;
       askConfirm("Confirm upload selection",msg,"Upload",send,goBtn,true);
     };
-    const discardBtn=bg.querySelector("#ucDiscard");
+    const _lg=bg.querySelector("#ucLogin");if(_lg)_lg.onclick=()=>{_reviewLoginRequest={depts:(accessScope.excludedDepts||[]).slice()};done("cancel");};const discardBtn=bg.querySelector("#ucDiscard");
     discardBtn.onclick=()=>{
       const n=SECS.reduce((a,S)=>a+S.items.length,0);
       askConfirm("Discard local changes?",n?nfmt(n)+" "+(n===1?"change":"changes")+" will be discarded without being uploaded to the live version.":"This device takes the live version. Nothing is uploaded.","Discard",()=>{_downloadDiscardedLocalBackup();done("live");},discardBtn);
@@ -17148,7 +17148,7 @@ function _downloadDiscardedLocalBackup(){
 async function maybeUploadOnConnect(fromOnlineEvent,review,opt){
   if(!_hasLocalSyncWork()&&!review)return;
   if(_syncReviewFlowPromise)return _syncReviewFlowPromise;
-  const run=(async()=>{_syncReviewPending=true;try{return await _maybeUploadOnConnect(fromOnlineEvent,review,opt);}finally{_syncReviewPending=false;try{_restoreHoldActive();}catch(e){}try{syncNav();}catch(e){}}})();
+  const run=(async()=>{_syncReviewPending=true;try{return await _maybeUploadOnConnect(fromOnlineEvent,review,opt);}finally{_syncReviewPending=false;try{_restoreHoldActive();}catch(e){}try{syncNav();}catch(e){}try{if(_reviewLoginRequest){const _r=_reviewLoginRequest;_reviewLoginRequest=null;setTimeout(()=>{_reviewLogin(_r.depts);},0);}}catch(e){}}})();
   _syncReviewFlowPromise=run;
   try{return await run;}finally{if(_syncReviewFlowPromise===run)_syncReviewFlowPromise=null;}
 }
@@ -17245,7 +17245,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _access=_reviewAccessScope(),_reviewLeaves=[...Object.values(localSnapshot.leaveRequests||{}),...Object.values(liveSnapshot.leaveRequests||{})];
   const _af=_filterReviewByAccess(changes,conflicts,_access,_reviewLeaves);changes=_af.changes;conflicts=_af.conflicts;
   _markUneditableReviewWork(localSnapshot,liveSnapshot,_access,_cfgDiff);
-  const _accessNote=(_access.excludedCount?(nfmt(_access.excludedCount)+" change"+(_access.excludedCount===1?"":"s")+" outside your live permissions "+(_access.excludedCount===1?"stays":"stay")+" on this device and "+(_access.excludedCount===1?"is":"are")+" not offered for upload"+(_access.excludedLabels.length?" ("+_access.excludedLabels.join(", ")+")":"")+". "):"")+"Current live upload access: "+_reviewAccessLabel(_access)+".";
+  const _accessNote=(_access.excludedCount?(nfmt(_access.excludedCount)+" change"+(_access.excludedCount===1?"":"s")+" outside your live permissions "+(_access.excludedCount===1?"stays":"stay")+" on this device and "+(_access.excludedCount===1?"is":"are")+" not offered for upload"+(_access.excludedLabels.length?" ("+_access.excludedLabels.map(l=>l+((_access.excludedCounts||{})[l]?" \u00d7"+_access.excludedCounts[l]:"")).join(", ")+")":"")+". "):"")+"Current live upload access: "+_reviewAccessLabel(_access)+".";
   if(_pendingAtReviewStart&&!_granularDirty){
     // Rebuild missing row registries from the full local/live comparison before any Upload can be selected. This is
     // idempotent and deliberately marks both edits and deletions; the review remains the authority on what is sent.
@@ -17265,7 +17265,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   if(!_nUpload&&_access.excludedCount){
     _connectUiPhase=null;setPending(true);_applySyncUiState();try{syncNav();}catch(e){}render();
     _awaitingSyncChoice=false;_syncReviewPending=false;
-    try{const _c=await uiDialog(_noUploadAccessMessage(_access,_accessNote),["Recheck access","Close"],false,null,"Close","Close");if(_c==="Recheck access")setTimeout(()=>{try{reviewAndUpload();}catch(e){}},50);}catch(e){}
+    try{const _c=await uiDialog(_noUploadAccessMessage(_access,_accessNote),["Log in\u2026","Recheck access","Close"],false,null,"Close","Log in\u2026");if(_c==="Recheck access")setTimeout(()=>{try{reviewAndUpload();}catch(e){}},50);else if(_c==="Log in\u2026")setTimeout(()=>{try{_reviewLogin(_access.excludedDepts||[]);}catch(e){}},50);}catch(e){}
     return {localOnly:true,accessScope:_serialReviewScope(_access)};
   }
   if(!_nUpload&&!_cfgChanged){
@@ -17298,7 +17298,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
     // Compared against what was actually pulled (_lastPulledAppConfig), not against CFG, which at this point may
     // already hold this device's own re-seeded roster; comparing the suspect roster with itself would find nothing.
     const _safety=rosterUploadSafety(_lastPulledAppConfig,_access.settings);_connectUiPhase=null;_applySyncUiState();try{syncNav();}catch(e){}
-    try{choice=_autoLive?"live":await showUploadChoiceDialog(changes,conflicts,_cfgChanged,_isFirstAppWideSync,_safety,_noPending,_pendingAtReviewStart,_accessNote,_access); }
+    _access.canLogin=!!_stay;try{choice=_autoLive?"live":await showUploadChoiceDialog(changes,conflicts,_cfgChanged,_isFirstAppWideSync,_safety,_noPending,_pendingAtReviewStart,_accessNote,_access); }
     finally{ _awaitingSyncChoice=false;_syncReviewPending=false; }
   // The choice is "cancel", "live", or {c:"upload",sections,dropped,deliberate} from the sectioned dialog.
   if(choice==="keep"){/* this device's differing values become its own changes, then the full review (with Upload) runs */
@@ -18181,6 +18181,34 @@ function setOnePinPerTab(on){
 function _sessionCovers(rec,d){return !!rec&&(!rec.dept||rec.dept===d);}
 function _sessionsCover(list,d){return (list||[]).some(r=>_sessionCovers(r,d));}
 function _sessionLabel(rec){return rec&&rec.dept?((CFG[rec.dept]&&CFG[rec.dept].label)||rec.dept):"shared manager";}
+var _reviewLoginRequest=null;
+/* Locking removes the stored live PIN sessions that no longer back an unlocked department, so a lock really ends live write access from this tab. A shared-manager session stays only while at least one department it covers is still unlocked. [C-lock] */
+function _pruneLivePinSessions(){
+  try{
+    const list=_livePinSessionList();if(!list.length)return 0;
+    const open=DEPT_KEYS.filter(d=>EDITMEM[d]&&EDITMEM[d].livePin===true);
+    const keep=list.filter(r=>open.some(d=>_sessionCovers(r,d)));
+    if(keep.length===list.length)return 0;
+    if(keep.length)sessionStorage.setItem(LIVE_PIN_SESSION_KEY,JSON.stringify(keep));else sessionStorage.removeItem(LIVE_PIN_SESSION_KEY);
+    try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);}catch(e){}
+    try{_refreshLivePermissions().then(()=>{try{_applySyncUiState();syncNav();}catch(e){}});}catch(e){}
+    return list.length-keep.length;
+  }catch(e){return 0;}
+}
+function _lockedPrune(){const n=_pruneLivePinSessions();if(n){try{flashNote("Locked. Live access from this tab was removed"+(_hasLocalSyncWork()?"; changes not yet uploaded stay on this device. Use Review & Upload to log in and send them.":"."));}catch(e){}}}
+/* From the upload review: ask for a PIN covering the departments whose changes could not be uploaded, then review again. [C-login] */
+async function _reviewLogin(depts){
+  if(_pinBusy())return;
+  const names=(depts||[]).map(deptLabel).join(", ");
+  const pin=await uiPrompt("Enter the PIN for "+(names||"the departments with waiting changes")+" to upload the changes held on this device:","");
+  if(pin===null||pin==="Cancel"||!String(pin).trim())return;
+  const u=await _resolvePinUser(String(pin).trim(),null);
+  if(!u){uiAlert("PIN not recognized.");return;}
+  if(u.role==="viewer"){uiAlert(u.name+" has view-only access.");return;}
+  grantEditMemFor(u);if(!CURRENT_USER)CURRENT_USER=u;try{updateAuth();}catch(e){}
+  if(u.dept&&depts&&depts.length&&!depts.includes(u.dept))flashNote("This PIN covers "+deptLabel(u.dept)+", not "+names+". Changes in other departments still need their own PIN.");
+  if(!u.livePin&&SUPABASE_CLIENT){try{await reviewAndUpload();}catch(e){}}
+}
 function _revokeEditForDept(d){try{delete EDITMEM[d];if(EDIT&&EDIT_DEPT===d){EDIT=false;EDIT_DEPT=null;CURRENT_USER=null;}}catch(e){}}
 function _applyOnePinPerTab(prev,next){
   if(!_onePinPerTab()||!prev||!next)return [];
@@ -22334,7 +22362,7 @@ async function lockOneDepartment(){
   delete EDITMEM[d];
   if(EDIT_DEPT===d){EDIT=false;EDIT_DEPT=null;CURRENT_USER=null;}
   try{_saveEditSession();}catch(e){}
-  updateAuth&&updateAuth();syncNav();render();
+  _lockedPrune();updateAuth&&updateAuth();syncNav();render();
   flashNote(CFG[d].label+" locked. "+(DEPT_KEYS.filter(x=>EDITMEM[x]).length||"No")+" department(s) still unlocked.");
 }
 async function toggleEdit(){
@@ -22342,7 +22370,7 @@ async function toggleEdit(){
   // Clicking the "View-only" lock button previously only ever cleared EDITMEM[EDIT_DEPT] — the ONE department that happened to be active at that exact moment — leaving any OTHER department's… [C1459]
   if(EDIT||partialEditDepts().length){ EDIT=false; // leaving edit mode: re-lock a past week we had overridden
     const wk=weekKey(WEEK_START); if(weekIsPast()&&(LOCKS[DEPT]||{})[wk]==="override"){LOCKS[DEPT][wk]=true;save("hotel_locks",LOCKS);}
-    CURRENT_USER=null;EDITMEM={};updateAuth(); return; }
+    CURRENT_USER=null;EDITMEM={};_lockedPrune();updateAuth(); return; }
   await unlockDeptForEdit();
 }
 // Cause: the document-level "ambient click" handler below (which exists so clicking anywhere on a locked schedule area summons a PIN prompt, without needing a dedicated "unlock" button)… [C1460]
