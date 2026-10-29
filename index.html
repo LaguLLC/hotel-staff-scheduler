@@ -4145,27 +4145,19 @@ function _storeLivePinSession(rec,keepOthers){
   list.unshift(rec);sessionStorage.setItem(LIVE_PIN_SESSION_KEY,JSON.stringify(list.slice(0,5)));
   try{_cfgBlockedUntil=0;}catch(e){}/* A new PIN may now cover the departments a blocked config save needed */
 }
-function _supabaseClientOptions(){
-  const headers={"X-Hotel-Client-Version":APP_VERSION};
-  const l=_livePinSessionList();
-  if(l.length)headers["X-Hotel-Session"]=l.map(r=>r.token).join(",");
-  const pinFetch=(input,init)=>{
-    try{
-      const u=typeof input==="string"?input:((input&&input.url)||"");
-      if(u.indexOf("/rest/v1/")>-1){
-        const h=new Headers((init&&init.headers)||(input&&input.headers)||{});
-        const t=_livePinSessionList().map(r=>r.token).join(",");
-        if(t)h.set("X-Hotel-Session",t);else h.delete("X-Hotel-Session");
-        h.set("X-Hotel-Client-Version",APP_VERSION);
-        return fetch(input,Object.assign({},init||{},{headers:h}));
-      }
-    }catch(e){}
-    return fetch(input,init);
-  };
-  return{global:{headers,fetch:pinFetch}};
+/* The live PIN tokens are attached by this fetch wrapper at the moment each request is sent, so a PIN entered, replaced or removed after connecting takes effect on the very next request. Setting header objects on an existing client is not reliable: the client library may hold its own copy (or a Headers object), and the new token then only arrived after a reload. [C-hdr] */
+function _hotelFetch(input,init){
+  try{
+    const tok=_livePinSessionList().map(r=>r.token).join(","),isReq=(typeof Request!=="undefined")&&input instanceof Request;
+    const h=new Headers((init&&init.headers)||(isReq?input.headers:undefined));
+    h.set("X-Hotel-Client-Version",APP_VERSION);
+    if(tok)h.set("X-Hotel-Session",tok);else h.delete("X-Hotel-Session");
+    return fetch(isReq?new Request(input,{headers:h}):input,Object.assign({},init||{},{headers:h}));
+  }catch(e){return fetch(input,init);}
 }
+function _supabaseClientOptions(){const l=_livePinSessionList(),headers={"X-Hotel-Client-Version":APP_VERSION};if(l.length)headers["X-Hotel-Session"]=l.map(r=>r.token).join(",");return{global:{headers,fetch:_hotelFetch}};}
 let _livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};
-function _setLiveClientRequestHeaders(client){try{if(!client)return;const tokens=_livePinSessionList().map(r=>r.token).join(","),sets=[client.headers,client.rest&&client.rest.headers,client.functions&&client.functions.headers].filter(Boolean);sets.forEach(h=>{h["X-Hotel-Client-Version"]=APP_VERSION;if(tokens)h["X-Hotel-Session"]=tokens;else delete h["X-Hotel-Session"];});}catch(e){console.warn("Could not refresh live request headers",e);}}
+function _setLiveClientRequestHeaders(client){try{if(!client)return;const tokens=_livePinSessionList().map(r=>r.token).join(","),sets=[client.headers,client.rest&&client.rest.headers].filter(Boolean);/* plain objects or Headers instances; edge functions are never called through this client */sets.forEach(h=>{const put=(k,v)=>{if(typeof h.set==="function")h.set(k,v);else h[k]=v;},del=k=>{if(typeof h.delete==="function")h.delete(k);else delete h[k];};put("X-Hotel-Client-Version",APP_VERSION);if(tokens)put("X-Hotel-Session",tokens);else del("X-Hotel-Session");});}catch(e){console.warn("Could not refresh live request headers",e);}}
 async function _refreshLivePermissions(){const empty=()=>{_livePermissions={schedule:new Set(),settings:new Set(),allSettings:false,manager:false,loaded:false,error:null};};if(!SUPABASE_CLIENT){empty();return _livePermissions;}try{_setLiveClientRequestHeaders(SUPABASE_CLIENT);const r=await SUPABASE_CLIENT.rpc("hotel_my_permissions");if(r.error)throw r.error;const d=r.data||{};_livePermissions={schedule:new Set((d.schedule||[]).map(canonicalDeptKey).filter(x=>DEPT_KEYS.includes(x))),settings:new Set((d.settings||[]).map(canonicalDeptKey).filter(x=>DEPT_KEYS.includes(x))),allSettings:d.all_settings===true,manager:d.manager===true,loaded:true,error:null,raw:{schedule:d.schedule,settings:d.settings,all_settings:d.all_settings,manager:d.manager}};}catch(error){empty();_livePermissions.error=error;
     /* The permission lookup function is installed by the v2.8 SQL. When the server does not have it yet (SQL not run), the server's own row rules are still the ones from before, so this tab's… [C66]
     */
@@ -4173,7 +4165,9 @@ async function _refreshLivePermissions(){const empty=()=>{_livePermissions={sche
     if(_missing){_livePermissions.loaded=true;_livePermissions.fallback="local";console.warn("Live permission lookup is not installed on this server (run the v2.8 SQL); using this tab's unlocked departments. Server rules still decide each write.",error);}
     else console.warn("Live permissions could not be read; automatic and reviewed uploads default to no write access.",error);}return _livePermissions;}
 function _localUnlockedDepts(){try{return DEPT_KEYS.filter(d=>!!(EDITMEM&&EDITMEM[d])||(EDIT&&EDIT_DEPT===d));}catch(e){return [];}}
-function _reviewAccessScope(){const p=_livePermissions||{},_loc=p.fallback==="local"?_localUnlockedDepts():null,schedule=new Set(_loc||p.schedule||[]),settings=new Set(_loc||p.settings||[]),demand=new Set();if(_loc&&_loc.length===DEPT_KEYS.length)p.allSettings=true;else if(_loc)p.allSettings=false;if(schedule.has("DTFO")||schedule.has("DTHSK"))demand.add("DTPROP");if(schedule.has("DBGS")||schedule.has("DBHSK"))demand.add("DBPROP");return{schedule,settings,demand,allowAppWide:!!p.allSettings,loaded:!!p.loaded,error:p.error||null};}
+function _reviewAccessScope(){const p=_livePermissions||{},_loc=p.fallback==="local"?_localUnlockedDepts():null,schedule=new Set(_loc||p.schedule||[]),settings=new Set(_loc||p.settings||[]),demand=new Set();
+  /* The server reports the union of every token this tab sends (a shared-manager token covers all four departments even after one is locked). What this tab may upload is that union narrowed to the departments still unlocked here, so a locked department's changes wait for a login. A signed-in account is not narrowed. */
+  if(!_loc&&!(typeof SUPA_USER!=="undefined"&&SUPA_USER)&&_livePinSessionList().length){const _unl=new Set([..._localUnlockedDepts(),...(_scopeExtraUnlocked||[])]);[...schedule].forEach(d=>{if(!_unl.has(d))schedule.delete(d);});[...settings].forEach(d=>{if(!_unl.has(d))settings.delete(d);});}if(_loc&&_loc.length===DEPT_KEYS.length)p.allSettings=true;else if(_loc)p.allSettings=false;if(schedule.has("DTFO")||schedule.has("DTHSK"))demand.add("DTPROP");if(schedule.has("DBGS")||schedule.has("DBHSK"))demand.add("DBPROP");return{schedule,settings,demand,allowAppWide:!!p.allSettings,loaded:!!p.loaded,error:p.error||null};}
 function _serialReviewScope(sc){sc=sc||_reviewAccessScope();return{schedule:[...sc.schedule],settings:[...sc.settings],demand:[...sc.demand],allowAppWide:!!sc.allowAppWide,localOnlyConfig:!!sc.localOnlyConfig,excludedCount:Number(sc.excludedCount)||0,excludedLabels:(sc.excludedLabels||[]).slice()};}
 function _deserialReviewScope(sc){sc=sc||{};return{schedule:new Set(sc.schedule||[]),settings:new Set(sc.settings||[]),demand:new Set(sc.demand||[]),allowAppWide:!!sc.allowAppWide,localOnlyConfig:!!sc.localOnlyConfig,excludedCount:Number(sc.excludedCount)||0,excludedLabels:(sc.excludedLabels||[]).slice()};}
 function _localOnlyWriteResult(kind){return{ok:true,localOnly:true,skipped:true,outsideScope:true,reason:(kind||"Change")+" stays on this device because its live write permission is not available."};}
@@ -14991,7 +14985,7 @@ function _resolvedSyncState(){
       /* comparing this device with live before any question has been asked: not a result yet, so the label does not change */
       const checking=(_syncReviewPending||_awaitingSyncChoice)&&!awaitingReal&&!_reviewUploadInProgress;
       if(_reviewUploadInProgress&&!hard){_uiSoftSince=_uiSoftSince||now;out={status:"uploading…",color:"#c9891b",action:"uploading"};}
-      else if(checking&&!hard){out=(prev==="connecting…")?_uiConnecting():_uiSyncing();_syncUiSchedule(500);}
+      else if(checking&&!hard){out=_pinRebindActive?{status:"checking PIN…",color:"#c9891b",action:"checkingpin"}:(prev==="connecting…")?_uiConnecting():_uiSyncing();_syncUiSchedule(500);}
       else if(raw.status==="connected"){_uiSoftSince=0;_uiFeedSince=0;}
       else if(hard){_uiSoftSince=0;_uiFeedSince=0;}
       else if(raw.action==="review"){
@@ -15011,15 +15005,26 @@ function _resolvedSyncState(){
   }catch(e){out=raw;}
   _uiShown=out;return out;
 }
+function _heldBackWork(){
+  const sc=_reviewAccessScope();if(!sc.loaded)return{total:0};
+  const cnt={},depts=new Set();let total=0;const add=d=>{if(!d)return;const L=deptLabel(d);cnt[L]=(cnt[L]||0)+1;depts.add(d);total++;};
+  Object.keys(_dirtyAssignRows||{}).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&!sc.schedule.has(p.dept))add(p.dept);});
+  Object.keys(_dirtyCheckinRows||{}).forEach(k=>{const p=_parseAssignRowKey(k);if(p&&!sc.schedule.has(p.dept))add(p.dept);});
+  Object.keys(_dirtyLeaveIds||{}).forEach(id=>{if(!_leaveWriteAllowed(id,sc)){const r=(LEAVE_REQUESTS||{})[id];add(deptKeyFromAny(r&&r.dept));}});
+  return{total,counts:cnt,labels:Object.keys(cnt),depts:[...depts]};
+}
 function _rawSyncState(){
   if(_connectUiPhase==="connecting")return {status:"connecting…",color:"#c9891b",action:"connecting"};
   if(!SUPABASE_CLIENT)return {status:"local",color:"#c7d0da",action:"connect"};
+  if(_pinRebindActive)return {status:"checking PIN…",color:"#c9891b",action:"checkingpin"};
+  /* Everything still waiting is in a department this tab cannot write to right now: say so, and make the header button the login. */
+  if(!_awaitingSyncChoice&&!_syncReviewPending&&!_reviewUploadInProgress&&!_pushFailureLatched&&!(_comparisonMismatchCount>0)&&_hasLocalSyncWork()&&(_livePermissions||{}).loaded){const _hb=_heldBackWork();if(_hb.total&&!_hasPermissionScopedDirty())return {status:"login needed ("+_hb.labels.join(", ")+")",color:"#e0a800",action:"review",held:true,depts:_hb.depts,heldText:_hb.labels.map(l=>l+" ("+_hb.counts[l]+")").join(", ")};}
   if(_awaitingSyncChoice||_syncReviewPending||_reviewUploadInProgress||_hasLocalSyncWork()||_comparisonMismatchCount>0)return {status:"review needed",color:"#e0a800",action:"review"};
   if(SYNC_ERR||!navigator.onLine||(!_realtimeTransportHealthy()&&Date.now()>=_realtimeGraceUntil))return {status:"review needed",color:"#e0a800",action:"retry"};
   if(document.visibilityState==="visible"&&_lastSyncVerifiedAt&&Date.now()-_lastSyncVerifiedAt>180000)return {status:"review needed",color:"#e0a800",action:"retry"};
   return {status:"connected",color:"#2c9e5f",action:"disconnect"};
 }
-function _applyHeaderSyncAction(s){const hc=el("headerConnect");if(!hc)return;if(s.action==="connecting"){hc.textContent="Connecting…";hc.title="Connecting to and verifying the shared live copy.";hc.onclick=null;}else if(s.action==="connect"){hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="review"){hc.textContent="Review & Upload…";hc.title="This device has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}else if(s.action==="uploading"){hc.textContent="Uploading…";hc.title="A reviewed upload is in progress. Keep this tab open until it finishes.";hc.onclick=null;}else if(s.action==="syncing"){hc.textContent="Syncing…";hc.title="Changes are being confirmed with the live copy.";hc.onclick=null;}else if(s.action==="retry"){hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}else{hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}hc.style.display="inline";}
+function _applyHeaderSyncAction(s){const hc=el("headerConnect");if(!hc)return;if(s.action==="connecting"){hc.textContent="Connecting…";hc.title="Connecting to and verifying the shared live copy.";hc.onclick=null;}else if(s.action==="connect"){hc.textContent="Connect…";hc.title="Connect to the shared live copy — available even if Settings is hidden from view-only users";hc.onclick=headerConnectOrDisconnect;}else if(s.action==="checkingpin"){hc.textContent="Checking PIN…";hc.title="Checking this PIN with the live server.";hc.onclick=null;}else if(s.action==="review"&&s.held){hc.textContent="Log in\u2026";hc.title="Changes in "+s.heldText+" cannot be uploaded until you log in for that department.";hc.onclick=()=>_reviewLogin(s.depts);}else if(s.action==="review"){hc.textContent="Review & Upload…";hc.title="This device has changes that still need review. Nothing is sent until you choose.";hc.onclick=reviewAndUpload;}else if(s.action==="uploading"){hc.textContent="Uploading…";hc.title="A reviewed upload is in progress. Keep this tab open until it finishes.";hc.onclick=null;}else if(s.action==="syncing"){hc.textContent="Syncing…";hc.title="Changes are being confirmed with the live copy.";hc.onclick=null;}else if(s.action==="retry"){hc.textContent="Retry sync…";hc.title="This device is connected but is not currently receiving a confirmed live feed. Retry without discarding local data.";hc.onclick=retrySyncNow;}else{hc.textContent="Disconnect";hc.title="This device is connected to the shared live copy. Disconnect returns it to local-only mode.";hc.onclick=headerConnectOrDisconnect;}hc.style.display="inline";}
 function _applySyncUiState(){const s=_resolvedSyncState();setStatus(s.status,s.color);_applyHeaderSyncAction(s);return s;}
 function _waitForScheduleSubscription(gen,timeoutMs){
   if(_realtimeScheduleReceiving&&gen===_subscriptionGeneration)return Promise.resolve(true);
@@ -16782,15 +16787,21 @@ function _reviewSectionForLine(line){const c=_categorizeConflictLine(line);retur
 function _reviewLineAllowed(line,scope,leaves){const S=_reviewSectionForLine(line),ds=_diffLineDepts(line,leaves);if(!S)return false;if(S.k==="demand"){if(/^DB demand /.test(String(line)))return scope.demand.has("DBPROP");if(/^DT demand /.test(String(line)))return scope.demand.has("DTPROP");return false;}if(_isCfgSecKey(S.k))return ds.length?ds.some(d=>scope.settings.has(d)):scope.allowAppWide;if(S.k==="leave"||S.k==="schedule")return ds.length&&ds.some(d=>scope.schedule.has(d));return false;}
 /* Why nothing could be offered, in terms the person can act on. Server-recognised rights come from the live sign-in or live PIN sessions; a PIN that only unlocked this device (no live session… [C1057]
 */
+function _heldSummary(scope){const c=scope.excludedCounts||{};return (scope.excludedLabels||[]).map(l=>l+(c[l]?" ("+c[l]+")":"")).join(", ");}
 function _noUploadAccessMessage(scope,note){
-  const p=_livePermissions||{},live=_livePinSessionList().length,loc=_localUnlockedDepts().map(deptLabel);
-  let why;
-  if(p.error&&!p.loaded)why="The live permission check could not be completed ("+String((p.error&&(p.error.message||p.error.code))||"unknown error")+"). Nothing was uploaded. Reconnect and try Review & upload again.";
-  else if(!live&&!(typeof SUPA_USER!=="undefined"&&SUPA_USER))why="This tab is unlocked for "+(loc.length?loc.join(", "):"no department")+" on this device only. No live PIN session was issued and no live account is signed in, so the live server treats this tab as view-only and would refuse the upload. Lock and re-enter the PIN while connected (the live PIN service must be available), or sign in with a live account.";
-  else{const _raw=p.raw||{},_fmt=v=>Array.isArray(v)?(v.length?v.join(", "):"none"):(v==null?"not returned":String(v));
-    const _ses=_livePinSessionList().map(r=>(r.displayName||"PIN user")+" ("+(r.dept?deptLabel(canonicalDeptKey(r.dept)):"no department")+", "+(r.role||"?")+")").join("; ");
-    why="This tab holds "+live+" live PIN session"+(live===1?"":"s")+(_ses?" ["+_ses+"]":"")+(typeof SUPA_USER!=="undefined"&&SUPA_USER?" and a signed-in account":"")+", but the live server's permission check returned no edit rights for the departments that changed.\nServer reply: schedule = "+_fmt(_raw.schedule)+"; settings = "+_fmt(_raw.settings)+"; manager = "+_fmt(_raw.manager)+".\nIf this tab's PIN shows the right department but the server lists none, the PIN's department or the session is not set up on the server (Supabase). Choose Recheck access after fixing it, or lock and re-enter the PIN."}
-  return note+"\n\n"+why+"\n\nYour changes stay on this device.";
+  const p=_livePermissions||{},live=_livePinSessionList(),acct=(typeof SUPA_USER!=="undefined"&&SUPA_USER),unl=_localUnlockedDepts(),ex=scope.excludedDepts||[];
+  const locked=ex.filter(d=>!unl.includes(d)).map(deptLabel),open=ex.filter(d=>unl.includes(d)).map(deptLabel);
+  const lines=["Can't upload: "+_heldSummary(scope)+".","These changes stay on this device."];
+  if(p.error&&!p.loaded)lines.push("Permission check failed ("+String(p.error.message||p.error.code||"unknown error")+"). Try Recheck access.");
+  else{
+    if(locked.length)lines.push("Locked here: "+locked.join(", ")+". Log in to send.");
+    if(open.length||!ex.length){
+      const where=open.length?" for "+open.join(", "):"";
+      if(!live.length&&!acct)lines.push("No live PIN session"+where+" (unlocked on this device only). Log in with a live PIN.");
+      else{const r=p.raw||{};lines.push("The server grants this tab no edit rights"+where+" (server: schedule "+(Array.isArray(r.schedule)?(r.schedule.length?r.schedule.join(", "):"none"):"not returned")+").");}
+    }
+  }
+  return lines.join("\n");
 }
 function _reviewAccessLabel(scope){const s=[...scope.schedule].map(deptLabel),t=[...scope.settings].map(deptLabel),parts=[];if(s.length)parts.push("schedule: "+s.join(", "));if(t.length)parts.push("roster/settings: "+t.join(", "));if(scope.allowAppWide)parts.push("app-wide settings");return parts.join("; ")||"no live write access";}
 function _filterReviewByAccess(changes,conflicts,scope,leaves){const cf=new Set(conflicts||[]),keep=[],drop=[],labels=new Set(),eligibleCfg=[],cnt={},dkeys=new Set();(changes||[]).forEach(line=>{if(_reviewLineAllowed(line,scope,leaves)){keep.push(line);const S=_reviewSectionForLine(line);if(S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly")eligibleCfg.push(line);}else{drop.push(line);const ds=_diffLineDepts(line,leaves);if(ds.length)ds.forEach(d=>{const L=deptLabel(d);labels.add(L);cnt[L]=(cnt[L]||0)+1;dkeys.add(d);});else{const L=_categorizeConflictLine(line);labels.add(L);cnt[L]=(cnt[L]||0)+1;}}});scope.excludedCount=drop.length;scope.excludedLabels=[...labels];scope.excludedCounts=cnt;scope.excludedDepts=[...dkeys];scope.localOnlyConfig=drop.some(line=>{const S=_reviewSectionForLine(line);return S&&_isCfgSecKey(S.k)&&S.k!=="liveOnly";});scope.eligibleCfgCount=eligibleCfg.length;return{changes:keep,conflicts:keep.filter(x=>cf.has(x)),excluded:drop};}
@@ -17263,7 +17274,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   const _access=_reviewAccessScope(),_reviewLeaves=[...Object.values(localSnapshot.leaveRequests||{}),...Object.values(liveSnapshot.leaveRequests||{})];
   const _af=_filterReviewByAccess(changes,conflicts,_access,_reviewLeaves);changes=_af.changes;conflicts=_af.conflicts;
   _markUneditableReviewWork(localSnapshot,liveSnapshot,_access,_cfgDiff);
-  const _accessNote=(_access.excludedCount?(nfmt(_access.excludedCount)+" change"+(_access.excludedCount===1?"":"s")+" outside your live permissions "+(_access.excludedCount===1?"stays":"stay")+" on this device and "+(_access.excludedCount===1?"is":"are")+" not offered for upload"+(_access.excludedLabels.length?" ("+_access.excludedLabels.map(l=>l+((_access.excludedCounts||{})[l]?" \u00d7"+_access.excludedCounts[l]:"")).join(", ")+")":"")+". "):"")+"Current live upload access: "+_reviewAccessLabel(_access)+".";
+  const _accessNote=(_access.excludedCount?("Held back on this device: "+_heldSummary(_access)+". "):"")+"Upload access: "+_reviewAccessLabel(_access)+".";
   if(_pendingAtReviewStart&&!_granularDirty){
     // Rebuild missing row registries from the full local/live comparison before any Upload can be selected. This is
     // idempotent and deliberately marks both edits and deletions; the review remains the authority on what is sent.
@@ -17283,7 +17294,7 @@ async function _maybeUploadOnConnect(fromOnlineEvent,review,opt){
   if(!_nUpload&&_access.excludedCount){
     _connectUiPhase=null;setPending(true);_applySyncUiState();try{syncNav();}catch(e){}render();
     _awaitingSyncChoice=false;_syncReviewPending=false;
-    try{const _c=await uiDialog(_noUploadAccessMessage(_access,_accessNote),["Log in\u2026","Recheck access","Close"],false,null,"Close","Log in\u2026");if(_c==="Recheck access")setTimeout(()=>{try{reviewAndUpload();}catch(e){}},50);else if(_c==="Log in\u2026")setTimeout(()=>{try{_reviewLogin(_access.excludedDepts||[]);}catch(e){}},50);}catch(e){}
+    try{if(opt&&opt.quietNoAccess){flashNote("Held on this device: "+_heldSummary(_access)+". Log in for those departments to upload.");}else{const _c=await uiDialog(_noUploadAccessMessage(_access,_accessNote),["Log in\u2026","Recheck access","Close"],false,null,"Close","Log in\u2026");if(_c==="Recheck access")setTimeout(()=>{try{reviewAndUpload();}catch(e){}},50);else if(_c==="Log in\u2026")setTimeout(()=>{try{_reviewLogin(_access.excludedDepts||[]);}catch(e){}},50);}}catch(e){}
     return {localOnly:true,accessScope:_serialReviewScope(_access)};
   }
   if(!_nUpload&&!_cfgChanged){
@@ -18227,6 +18238,7 @@ async function _reviewLogin(depts){
   if(u.dept&&depts&&depts.length&&!depts.includes(u.dept))flashNote("This PIN covers "+deptLabel(u.dept)+", not "+names+". Changes in other departments still need their own PIN.");
   if(!u.livePin&&SUPABASE_CLIENT){try{await reviewAndUpload();}catch(e){}}
 }
+function _isoDateOk(v){const m=/^(\d{4})-(\d{2})-(\d{2})$/.exec(String(v||""));if(!m)return false;const y=+m[1],mo=+m[2],d=+m[3];if(mo<1||mo>12||d<1)return false;return d<=new Date(Date.UTC(y,mo,0)).getUTCDate();}
 function _revokeEditForDept(d){try{delete EDITMEM[d];if(EDIT&&EDIT_DEPT===d){EDIT=false;EDIT_DEPT=null;CURRENT_USER=null;}}catch(e){}}
 function _applyOnePinPerTab(prev,next){
   if(!_onePinPerTab()||!prev||!next)return [];
@@ -26802,7 +26814,7 @@ function _renderSettingsInner(){
            single input no longer needs a flex row to sit in — and this column's own colgroup width is narrowed to
            match (see that colgroup's own comment), closing off the leftover empty space the wider, pill-sized
            column used to reserve even for a person with no pill shown at all (no hire date entered yet). -->
-    <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate?esc(st.hireDate):''}" title="${st.hireDate?'':'Not recorded — no hire-date data exists in the source Excel; enter the real date if known'}"></td>
+    <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate&&_isoDateOk(st.hireDate)?esc(st.hireDate):''}" title="${st.hireDate?(_isoDateOk(st.hireDate)?'':'Stored value '+esc(st.hireDate)+' is not a real calendar date; enter the correct date'):'Not recorded — no hire-date data exists in the source Excel; enter the real date if known'}"></td>
         <!-- Stored as one full ISO date in a native date input. Birthday stamping compares only month and day;
              the year is retained because the roster explicitly collects a complete birth date. -->
         <!-- Two REAL, confirmed bugs fixed together "birthday doesn't stick, I put 8/20 then went to hsk and went
@@ -26872,7 +26884,7 @@ function _renderSettingsInner(){
     <td><input class="sfield" style="width:100%;color:#8a94a0" data-si="${i}" data-k="qualifications" value="${esc(qualificationRosterText(st))}" placeholder="e.g. G license, C license"></td>
     <td><select class="sfield" style="color:#8a94a0;width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" data-si="${i}" data-k="type">${["FT","PT","OC","INT","OUT"].map(t=>`<option value="${t}" ${st.type===t?"selected":""}>${esc(TYPE_LABEL[t]||t)}</option>`).join("")}</select></td>
     <td><input class="sfield" style="width:64px;color:#8a94a0" data-si="${i}" data-k="rate" value="${(st.rate!=null?(+st.rate):(DEFAULT_RATE[st.type]||11)).toFixed(2)}"></td>
-    <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate?esc(st.hireDate):''}"></td>
+    <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="hireDate" value="${st.hireDate&&_isoDateOk(st.hireDate)?esc(st.hireDate):''}"></td>
     
     <td><input type="date" required class="sfield" style="width:130px" data-si="${i}" data-k="birthday" value="${st.birthday?esc(st.birthday):''}"></td>
     <td><input class="sfield no-spin" type="number" min="0" max="5" step="0.1" style="width:56px;text-align:center" data-si="${i}" data-k="guestRating" value="${st.guestRating!=null?st.guestRating:''}"></td>
@@ -27588,18 +27600,18 @@ async function _rebindLiveClientForPin(){
   if(!SUPABASE_CLIENT)return;
   // Supabase global headers are mutable on the existing PostgREST client. Refresh them in place instead of
   // createClient() again: one tab now owns exactly one GoTrueClient/realtime socket set for its entire lifetime.
-  _setLiveClientRequestHeaders(SUPABASE_CLIENT);await _refreshLivePermissions();_syncReviewPending=true;
-  try{await maybeUploadOnConnect(false,true,{stayConnected:true});if(SUPABASE_CLIENT)await pullAll(false,true);}finally{_syncReviewPending=false;}
+  _pinRebindActive=true;_setLiveClientRequestHeaders(SUPABASE_CLIENT);try{_applySyncUiState();}catch(e){}try{await _refreshLivePermissions();}catch(e){_pinRebindActive=false;throw e;}_syncReviewPending=true;
+  try{await maybeUploadOnConnect(false,true,{stayConnected:true,quietNoAccess:true});if(SUPABASE_CLIENT)await pullAll(false,true);}finally{_syncReviewPending=false;_pinRebindActive=false;}
   if(SUPABASE_CLIENT){_startSyncWatchdogs();if(!_realtimeScheduleReceiving)await subscribe(true);_applySyncUiState();try{syncNav();}catch(e){}render();}
 }
 async function _requestLivePinSession(pin){
   const saved=load("hotel_supa",null),url=(saved&&saved.url)||(el("supaUrl")&&el("supaUrl").value.trim()),key=(saved&&saved.key)||(el("supaKey")&&el("supaKey").value.trim());
   if(!url||!key||!pin)return null;
-  try{const r=await fetch(url.replace(/\/+$/ ,"")+"/functions/v1/hotel-pin-session",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({pin:String(pin)})});const body=await r.json().catch(()=>({}));if(!r.ok){if(r.status!==401)console.warn("Live PIN session not available:",body.error||("HTTP "+r.status));return null;}const expiresAt=Date.parse(body.expiresAt||"")||0;if(!body.token||expiresAt<=Date.now())return null;const rec={token:body.token,expiresAt,displayName:body.displayName||"PIN user",role:body.role||"manager",dept:body.dept||null,canEditSettings:body.canEditSettings!==false};const _prevLive=_activeLivePinSession();_storeLivePinSession(rec,!_onePinPerTab());_applyOnePinPerTab(_prevLive,rec);await _rebindLiveClientForPin();return{name:rec.displayName,role:rec.role,dept:rec.dept||undefined,livePin:true};}catch(e){console.warn("Live PIN session request failed:",e);return null;}
+  try{const r=await fetch(url.replace(/\/+$/ ,"")+"/functions/v1/hotel-pin-session",{method:"POST",headers:{apikey:key,Authorization:"Bearer "+key,"Content-Type":"application/json"},body:JSON.stringify({pin:String(pin)})});const body=await r.json().catch(()=>({}));if(!r.ok){if(r.status!==401)console.warn("Live PIN session not available:",body.error||("HTTP "+r.status));return null;}const expiresAt=Date.parse(body.expiresAt||"")||0;if(!body.token||expiresAt<=Date.now())return null;const rec={token:body.token,expiresAt,displayName:body.displayName||"PIN user",role:body.role||"manager",dept:body.dept||null,canEditSettings:body.canEditSettings!==false};const _prevLive=_activeLivePinSession();_storeLivePinSession(rec,!_onePinPerTab());_applyOnePinPerTab(_prevLive,rec);_scopeExtraUnlocked=(rec.role==="viewer")?null:(rec.dept?[canonicalDeptKey(rec.dept)]:DEPT_KEYS.slice());try{await _rebindLiveClientForPin();}finally{_scopeExtraUnlocked=null;}return{name:rec.displayName,role:rec.role,dept:rec.dept||undefined,livePin:true};}catch(e){console.warn("Live PIN session request failed:",e);return null;}
 }
 /* While a PIN is being checked (server session request plus the live re-read) further lock and unlock clicks are ignored and the header says so.
    The 60 s limit releases the guard if a request never returns. */
-var _pinCheckingSince=0;
+var _pinCheckingSince=0,_pinRebindActive=false,_scopeExtraUnlocked=null;
 function _pinBusy(){if(_pinCheckingSince&&Date.now()-_pinCheckingSince<60000){try{flashNote("Checking PIN\u2026");}catch(e){}return true;}return false;}
 function _setPinChecking(on){
   _pinCheckingSince=on?Date.now():0;
@@ -33497,7 +33509,7 @@ function seedRoster(){try{
           _conflicts.push(st.n+": kept "+st.paycomBadgeNumber+" (roster file says "+d.e+", not overwritten)");
         }
       }
-      if(d.d&&!st.hireDate){st.hireDate=d.d;_n++;}
+      if(d.d&&!st.hireDate){if(_isoDateOk(d.d)){st.hireDate=d.d;_n++;}else console.info("Dusit Beach roster: hire date "+d.d+" for "+st.n+" is not a real calendar date, so it was not applied. Enter the correct date in Settings.");}
       if(d.t&&st.type!==d.t&&st.employed!==false){st.type=d.t;_n++;}
     });
     if(_conflicts.length){
